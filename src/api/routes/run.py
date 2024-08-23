@@ -2,6 +2,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 import modal
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from .utils import select
 
 # from sqlalchemy import select
@@ -14,6 +15,8 @@ from uuid import UUID
 import logging
 from datetime import datetime
 import logfire
+from pprint import pprint
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +25,20 @@ router = APIRouter(tags=["runs"])
 
 @router.get("/run")
 async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_db)):
-    query = select(WorkflowRun).where(WorkflowRun.id == run_id).apply_org_check(request)
+    query = select(WorkflowRun).options(joinedload(WorkflowRun.outputs)).where(WorkflowRun.id == run_id).apply_org_check(request)
 
     result = await db.execute(query)
-    run = result.scalar_one_or_none()
+    run = result.unique().scalar_one_or_none()
 
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-
-    return {
-        "id": run.id,
-        "workflow_version_id": run.workflow_version_id,
-        "machine_id": run.machine_id,
-        "status": run.status,
-        "ended_at": run.ended_at,
-        "created_at": run.created_at,
-    }
+    
+    run = cast(WorkflowRun, run)
+    
+    # Convert the run to a dictionary and remove the run_log
+    run_dict = {k: v for k, v in vars(run).items() if k != 'run_log'}
+    
+    return run_dict
 
 
 class WorkflowRunRequest(BaseModel):

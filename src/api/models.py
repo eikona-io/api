@@ -80,7 +80,7 @@ class WorkflowRun(Base):
     webhook_intermediate_status = Column(Boolean, nullable=False, default=False)
 
     # workflow = relationship("Workflow", back_populates="runs")
-    # outputs = relationship("WorkflowRunOutput", back_populates="run")
+    outputs = relationship("WorkflowRunOutput", back_populates="run")
 
 class WorkflowRunOutput(Base):
     __tablename__ = "workflow_run_outputs"
@@ -93,7 +93,7 @@ class WorkflowRunOutput(Base):
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
 
-    # run = relationship("WorkflowRun", back_populates="outputs")
+    run = relationship("WorkflowRun", back_populates="outputs")
 
 class APIKey(Base):
     __tablename__ = "api_keys"

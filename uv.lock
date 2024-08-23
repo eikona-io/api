@@ -140,7 +140,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "logfire", extras = ["fastapi"], specifier = ">=0.51.0" },
     { name = "modal", specifier = ">=0.64.51" },
-    { name = "opentelemetry-instrumentation-asyncio" },
+    { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
     { name = "protobuf", specifier = ">=4.25.4" },
     { name = "psycopg2-binary", specifier = ">=2.9.9" },
