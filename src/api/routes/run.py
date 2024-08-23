@@ -1,3 +1,4 @@
+import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 import modal
@@ -166,8 +167,8 @@ async def create_run(
                     "prompt_id": str(new_run.id),
                     "workflow_api_raw": workflow_version.workflow_api,
                     "inputs": data.inputs,
-                    "status_endpoint": "https://deer-light-gull.ngrok-free.app/api/update-run",
-                    "file_upload_endpoint": "https://deer-light-gull.ngrok-free.app/api/file-upload",
+                    "status_endpoint": os.environ.get("LEGACY_API_URL") + "/api/update-run",
+                    "file_upload_endpoint": os.environ.get("LEGACY_API_URL") + "/api/file-upload",
                 }
             )
 
