@@ -108,7 +108,7 @@ class WorkflowRunRequest(BaseModel):
     inputs: Dict[str, Any] = Field(default_factory=dict)
     machine_id: Optional[UUID] = None
 
-    execution_mode: Literal["async", "sync", "sync_first_result"] = "async"
+    execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = "async"
 
     webhook: Optional[str] = None
     webhook_intermediate_status: Optional[bool] = False
@@ -118,7 +118,7 @@ class DeploymentRunRequest(BaseModel):
     deployment_id: UUID
     inputs: Dict[str, Any] = Field(default_factory=dict)
     
-    execution_mode: Literal["async", "sync", "sync_first_result"] = "async"
+    execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = "async"
     
     webhook: Optional[str] = None
     webhook_intermediate_status: Optional[bool] = False
@@ -256,7 +256,7 @@ async def create_run(
             return {"run_id": new_run.id}
         elif data.execution_mode in ["sync", "sync_first_result"]:
             with logfire.span("run-sync"):
-                result = await ComfyDeployRunner().run.remote.aio(params)
+                result = await ComfyDeployRunner().run.remote.aio(params) 
 
             first_output_query = select(WorkflowRunOutput).where(
                 WorkflowRunOutput.run_id == new_run.id
