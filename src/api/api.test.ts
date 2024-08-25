@@ -73,45 +73,86 @@ describe("POST /api/run", () => {
     //     );
     // });
 
-    // test("POST /api/run should return 200", async () => {
-    //     const response = await fetch(`${API_URL}/api/run`,
-    //         {
-    //             method: "POST",
-    //             headers: {
-    //                 "Authorization": `Bearer ${token}`
-    //             },
-    //             body: JSON.stringify({
-    //                 deployment_id: deployment_id,
-    //                 inputs: {
-    //                     "input1": "value1"
-    //                 }
-    //             })
-    //         }
-    //     );
+    test("POST /api/run should return 200", async () => {
+        const response = await fetch(`${API_URL}/api/run`,
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    deployment_id: deployment_id,
+                    inputs: {
+                        "input1": "value1"
+                    }
+                })
+            }
+        );
 
-    //     expect(response.status).toBe(404);
-    //     const data = await response.json();
-    //     expect(data).toHaveProperty("detail");
-    //     expect(data.detail).toBe("Deployment not found");
-    // });
-    
-    // test("POST /api/run should return 200", async () => {
-    //     const response = await fetch(`${API_URL}/api/run`,
-    //         {
-    //             method: "POST",
-    //             headers: {
-    //                 "Authorization": `Bearer ${token}`
-    //             },
-    //             body: JSON.stringify({
-    //                 deployment_id: "0d4e1bd3-9c35-45d4-882d-ae008c7fc9e3",
-    //                 inputs: {
-    //                     "input1": "value1"
-    //                 }
-    //             })
-    //         }
-    //     );
+        expect(response.status).toBe(404);
+        const data = await response.json();
+        expect(data).toHaveProperty("detail");
+        expect(data.detail).toBe("Deployment not found");
+    });
 
-    //     expect(response.status).toBe(200);
-    //     const data = await response.json();
-    // });
+    test("POST /api/run should return 200", async () => {
+        const response = await fetch(`${API_URL}/api/run`,
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    deployment_id: "0d4e1bd3-9c35-45d4-882d-ae008c7fc9e3",
+                    inputs: {
+                        "input1": "value1"
+                    }
+                })
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const data = await response.json();
+    });
 });
+
+describe("File upload", () => {
+    test("POST /api/run should return 200", async () => {
+        const imageUrl = 'https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/e129217b-c386-48e4-a0ab-5ab53bc2f66d/ComfyUI_00009_.png';
+        const imageReponse = await fetch(imageUrl);
+        const arrayBuffer = await imageReponse.arrayBuffer();
+        const blob = new Blob([arrayBuffer], { type: 'image/png' });
+
+        const response = await fetch(`${API_URL}/api/file-upload?file_name=test&run_id=11df9525-e089-41a3-94a0-3109766e39f2&type=image/png`,
+            {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const data = await response.json();
+        expect(data).toHaveProperty("url");
+        expect(data).toHaveProperty("download_url");
+
+        console.log(data);
+
+        const upload_response = await fetch(data.url, {
+            method: "PUT",
+            body: blob,
+            headers: {
+                'Content-Type': 'image/png',
+                'x-amz-acl': 'public-read'  // Add this line
+            }
+        });
+
+        if (!upload_response.ok) {
+            const errorText = await upload_response.text();
+            console.error(`Upload failed with status ${upload_response.status}:`, errorText);
+        }
+
+        expect(upload_response.status).toBe(200);
+    });
+})

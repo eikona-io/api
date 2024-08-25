@@ -1,0 +1,8 @@
+{
+  "workbench.colorCustomizations": {
+    "[Anysphere]": {
+      "titleBar.activeBackground": "#4a5127cc",
+      "titleBar.activeForeground": "#ffffff"
+    }
+  }
+}

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, hello
+from api.routes import run, hello, internal
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
@@ -36,6 +36,7 @@ logfire.instrument_sqlalchemy(
 
 # Include routers
 app.include_router(run.router, prefix="/api")
+app.include_router(internal.router, prefix="/api")
 app.include_router(hello.router)
 
 # Initialize database
@@ -98,7 +99,10 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 async def check_auth(request: Request, call_next):
     logger.info(f"Received request: {request.method} {request.url.path}")
 
-    if request.url.path.startswith("/api"):
+    # List of routes to ignore for authentication
+    ignored_routes = ["/api/update-run", "/api/file-upload", "/api/gpu_event", "/api/machine_built"]
+
+    if request.url.path.startswith("/api") and request.url.path not in ignored_routes:
         try:
             async with AsyncSessionLocal() as db:
                 request.state.current_user = await get_current_user(request, db)
@@ -107,10 +111,10 @@ async def check_auth(request: Request, call_next):
             logger.error(f"Authentication error: {e.detail}")
             return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
     else:
-        logger.info("Skipping auth check for non-API route")
+        logger.info("Skipping auth check for non-API route or ignored route")
 
     response = await call_next(request)
-    # logger.info(f"Request completed: {response.status_code}")
+    logger.info(f"Request completed: {response.status_code}")
     return response
 
 

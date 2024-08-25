@@ -24,6 +24,8 @@ dependencies = [
     "logfire[fastapi]>=0.51.0",
     "opentelemetry-instrumentation-sqlalchemy>=0.47b0",
     "opentelemetry-instrumentation-asyncio>=0.47b0",
+    "clickhouse-connect>=0.7.19",
+    "boto3>=1.35.5",
 ]
 
 [build-system]
