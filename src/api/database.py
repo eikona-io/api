@@ -1,4 +1,5 @@
 import os
+import clickhouse_connect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -21,3 +22,16 @@ async def get_db():
 def init_db():
     # You can add any initialization logic here if needed
     pass
+
+clickhouse_client = None
+
+async def get_clickhouse_client():
+    global clickhouse_client
+    if clickhouse_client is None:
+        clickhouse_client = await clickhouse_connect.get_async_client(
+            host=os.getenv("CLICKHOUSE_HOST"),
+            user=os.getenv("CLICKHOUSE_USER"),
+            password=os.getenv("CLICKHOUSE_PASSWORD"),
+            secure=True,
+        )
+    return clickhouse_client

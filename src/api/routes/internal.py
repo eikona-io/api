@@ -27,14 +27,12 @@ import logging
 
 from sqlalchemy import select, update
 
-from api.database import AsyncSessionLocal, get_db
+from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import WorkflowRun, WorkflowRunOutput
 
 from fastapi import Query
 
 router = APIRouter()
-
-clickhouse_client = None
 
 
 async def send_webhook(workflow_run, updatedAt, run_id):
@@ -65,17 +63,6 @@ async def send_webhook(workflow_run, updatedAt, run_id):
     except Exception as error:
         return {"status": "error", "message": str(error)}
 
-
-async def get_clickhouse_client():
-    global clickhouse_client
-    if clickhouse_client is None:
-        clickhouse_client = await clickhouse_connect.get_async_client(
-            host="en6bs3ekae.us-east-1.aws.clickhouse.cloud",
-            user="default",
-            password="eic56w46_v3rK",
-            secure=True,
-        )
-    return clickhouse_client
 
 
 class WorkflowRunStatus(str, Enum):
@@ -120,6 +107,15 @@ async def update_run(
     fixed_time = updated_at
     
     if request.logs is not None:
+        existing_run = await db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == request.run_id)
+        )
+        workflow_run = existing_run.scalar_one_or_none()
+        workflow_run = cast(WorkflowRun, workflow_run)
+
+        if not workflow_run:
+            raise HTTPException(status_code=404, detail="WorkflowRun not found")
+        
         # Sending to clickhouse
         await client.insert(
             table="log_entries",
@@ -127,6 +123,8 @@ async def update_run(
                 (
                     uuid4(),
                     request.run_id,
+                    workflow_run.workflow_id,
+                    workflow_run.machine_id,
                     updated_at,
                     "info",
                     str(request.logs),
@@ -170,10 +168,12 @@ async def update_run(
                 (
                     uuid4(),
                     request.run_id,
+                    workflow_run.workflow_id,
+                    workflow_run.machine_id,
                     updated_at,
                     request.progress,
                     request.live_status,
-                    workflow_run.status,
+                    request.status,
                     # request.node_meta.get('node_class', '') if request.node_meta else ''
                 )
             ],
@@ -187,14 +187,16 @@ async def update_run(
         return {"status": "success"}
 
     if request.log_data is not None:
-        update_stmt = (
-            update(WorkflowRun)
-            .where(WorkflowRun.id == request.run_id)
-            .values(run_log=request.log_data, updated_at=updated_at)
-        )
-        await db.execute(update_stmt)
-        await db.commit()
+        # Cause all the logs will be sent to clickhouse now.
         return {"status": "success"}
+        # update_stmt = (
+        #     update(WorkflowRun)
+        #     .where(WorkflowRun.id == request.run_id)
+        #     .values(run_log=request.log_data, updated_at=updated_at)
+        # )
+        # await db.execute(update_stmt)
+        # await db.commit()
+        # return {"status": "success"}
 
     if request.status == "started" and fixed_time is not None:
         update_stmt = (
@@ -216,7 +218,7 @@ async def update_run(
         await db.execute(update_stmt)
         await db.commit()
         # await db.refresh(workflow_run)
-        return {"status": "success"}
+        # return {"status": "success"}
 
     ended = request.status in ["success", "failed", "timeout", "cancelled"]
     if request.output_data is not None:
@@ -238,6 +240,7 @@ async def update_run(
             select(WorkflowRun).where(WorkflowRun.id == request.run_id)
         )
         workflow_run = existing_run.scalar_one_or_none()
+        workflow_run = cast(WorkflowRun, workflow_run)
 
         if not workflow_run:
             raise HTTPException(status_code=404, detail="WorkflowRun not found")
@@ -250,6 +253,24 @@ async def update_run(
         update_data = {"status": request.status, "updated_at": updated_at}
         if ended and fixed_time is not None:
             update_data["ended_at"] = fixed_time
+            
+        # Sending to clickhouse
+        await client.insert(
+            table="progress_updates",
+            data=[
+                (
+                    uuid4(),
+                    request.run_id,
+                    workflow_run.workflow_id,
+                    workflow_run.machine_id,
+                    updated_at,
+                    request.progress,
+                    request.live_status,
+                    request.status,
+                    # request.node_meta.get('node_class', '') if request.node_meta else ''
+                )
+            ],
+        )
 
         update_stmt = (
             update(WorkflowRun)
