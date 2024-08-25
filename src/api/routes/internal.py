@@ -120,6 +120,20 @@ async def update_run(
     fixed_time = updated_at
     
     if request.logs is not None:
+        # Sending to clickhouse
+        await client.insert(
+            table="log_entries",
+            data=[
+                (
+                    uuid4(),
+                    request.run_id,
+                    updated_at,
+                    "info",
+                    str(request.logs),
+                    # request.node_meta.get('node_class', '') if request.node_meta else ''
+                )
+            ],
+        )
         await send_workflow_update(str(request.run_id), {"logs": request.logs})
         return {"status": "success"}
 
@@ -138,8 +152,10 @@ async def update_run(
         )
         result = await db.execute(update_stmt)
         await db.commit()
+        # await db.refresh(WorkflowRun)
 
         workflow_run = result.scalar_one()
+        workflow_run = cast(WorkflowRun, workflow_run)
 
         # Sending a real-time update to connected clients
         await send_workflow_update(
@@ -157,6 +173,7 @@ async def update_run(
                     updated_at,
                     request.progress,
                     request.live_status,
+                    workflow_run.status,
                     # request.node_meta.get('node_class', '') if request.node_meta else ''
                 )
             ],
