@@ -264,7 +264,7 @@ async def create_run(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    async def run(batch_id: Optional[UUID] = None):
+    async def run(inputs: Dict[str, Any], batch_id: Optional[UUID] = None):
         prompt_id = uuid.uuid4()
 
         # Create a new run
@@ -272,7 +272,7 @@ async def create_run(
             id=prompt_id,
             workflow_id=workflow_id,
             workflow_version_id=workflow_version_id,
-            workflow_inputs=data.inputs,
+            workflow_inputs=inputs if inputs is not None else data.inputs,
             workflow_api=workflow_api_raw,
             # User
             user_id=request.state.current_user["user_id"],
@@ -397,11 +397,11 @@ async def create_run(
                 print(new_inputs)
 
                 # # Create a new request object with the updated inputs
-                # new_data = data.model_copy(update={"inputs": new_inputs})
+                new_data = data.model_copy(update={"inputs": new_inputs})
 
-                # # Run the workflow with the new inputs
-                # result = await run(new_data)
-                # results.append(result)
+                # Run the workflow with the new inputs
+                result = await run(new_data.inputs, batch_id)
+                results.append(result)
             return results
 
         results = await batch_run()
