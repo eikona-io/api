@@ -333,10 +333,10 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
                 headers=dict(response.headers),
             )
             
-@router.post("/machine_built")
+@router.post("/machine-built")
 async def machine_built(request: Request, data: Any = Body(...)):
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    new_url = f"{legacy_api_url}/api/machine_built"
+    new_url = f"{legacy_api_url}/api/machine-built"
 
     # Get headers from the incoming request
     headers = dict(request.headers)

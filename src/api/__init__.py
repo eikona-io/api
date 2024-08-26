@@ -100,7 +100,7 @@ async def check_auth(request: Request, call_next):
     logger.info(f"Received request: {request.method} {request.url.path}")
 
     # List of routes to ignore for authentication
-    ignored_routes = ["/api/update-run", "/api/file-upload", "/api/gpu_event", "/api/machine_built"]
+    ignored_routes = ["/api/update-run", "/api/file-upload", "/api/gpu_event", "/api/machine-built"]
 
     if request.url.path.startswith("/api") and request.url.path not in ignored_routes:
         try:
