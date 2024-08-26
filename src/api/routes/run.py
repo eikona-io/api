@@ -264,7 +264,7 @@ async def create_run(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    async def run(inputs: Dict[str, Any], batch_id: Optional[UUID] = None):
+    async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         prompt_id = uuid.uuid4()
 
         # Create a new run
@@ -279,7 +279,7 @@ async def create_run(
             org_id=request.state.current_user["org_id"],
             origin=data.origin,
             # Machine
-            machine_id=machine.id,
+            machine_id=machine_id,
             machine_type=machine.type,
             gpu=machine.gpu,
             # Webhook
@@ -291,7 +291,8 @@ async def create_run(
         await db.commit()
         await db.refresh(new_run)
 
-        ComfyDeployRunner = modal.Cls.lookup(str(machine.id), "ComfyDeployRunner")
+        print("shit",str(machine_id))
+        ComfyDeployRunner = modal.Cls.lookup(str(machine_id), "ComfyDeployRunner")
 
         params = {
             "prompt_id": str(new_run.id),
