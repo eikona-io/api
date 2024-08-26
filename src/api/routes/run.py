@@ -3,6 +3,7 @@ import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 import modal
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -47,6 +48,7 @@ class WorkflowRunOutputModel(BaseModel):
     node_meta: Optional[Dict[str, Any]]
     created_at: datetime
     updated_at: datetime
+
 
 class WorkflowRunModel(BaseModel):
     id: UUID
@@ -104,10 +106,12 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
 
     return run_dict
 
+
 class WorkflowRunOrigin(str, Enum):
     MANUAL = "manual"
     API = "api"
     PUBLIC_SHARE = "public-share"
+
 
 class WorkflowRequestShare(BaseModel):
     execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = "async"
@@ -115,29 +119,43 @@ class WorkflowRequestShare(BaseModel):
 
     webhook: Optional[str] = None
     webhook_intermediate_status: Optional[bool] = False
-    
+
     origin: Optional[str] = "api"
     batch_number: Optional[int] = None
+
+    batch_input_params: Optional[Dict[str, List[Any]]] = Field(
+        default=None,
+        example={
+            "input_number": [1, 2, 3],
+            "input_text": ["apple", "banana", "cherry"],
+        },
+        description="Optional dictionary of batch input parameters. Keys are input names, values are lists of inputs.",
+    )
+
 
 class WorkflowRunRequest(WorkflowRequestShare):
     workflow_id: UUID
     workflow_api_json: str
     machine_id: Optional[UUID] = None
-    
+
+
 class WorkflowRunVersionRequest(WorkflowRequestShare):
     workflow_version_id: UUID
     machine_id: Optional[UUID] = None
+
 
 class DeploymentRunRequest(WorkflowRequestShare):
     deployment_id: UUID
 
 
-CreateRunRequest = Union[WorkflowRunVersionRequest, WorkflowRunRequest, DeploymentRunRequest]
+CreateRunRequest = Union[
+    WorkflowRunVersionRequest, WorkflowRunRequest, DeploymentRunRequest
+]
 
 
 class CreateRunResponse(BaseModel):
     run_id: UUID
-    
+
 
 class Input(BaseModel):
     prompt_id: str
@@ -146,6 +164,7 @@ class Input(BaseModel):
     workflow_api_raw: dict
     status_endpoint: str
     file_upload_endpoint: str
+
 
 class WorkflowRunOutputModel(BaseModel):
     id: UUID
@@ -164,15 +183,25 @@ class WorkflowRunOutputModel(BaseModel):
 async def create_run(
     request: Request, data: CreateRunRequest, db: AsyncSession = Depends(get_db)
 ):
+    if (
+        data.batch_number is not None
+        and data.batch_number > 1
+        and data.execution_mode == "sync_first_result"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Batch number is not supported for sync_first_result execution mode",
+        )
+
     machine = None
     machine_id = None
-    
+
     workflow_version_version = None
     workflow_version_id = None
-    
+
     workflow_id = None
     workflow_api_raw = None
-    
+
     if isinstance(data, WorkflowRunVersionRequest):
         workflow_version_id = data.workflow_version_id
         machine_id = data.machine_id
@@ -193,7 +222,7 @@ async def create_run(
 
         if not deployment:
             raise HTTPException(status_code=404, detail="Deployment not found")
-        
+
         workflow_version_id = deployment.workflow_version_id
         machine_id = deployment.machine_id
 
@@ -210,7 +239,7 @@ async def create_run(
             raise HTTPException(
                 status_code=404, detail="Workflow version not found for this deployment"
             )
-            
+
         workflow_api_raw = workflow_version.workflow_api
         workflow_id = workflow_version.workflow_id
         workflow_version_version = workflow_version.version
@@ -218,9 +247,7 @@ async def create_run(
     if machine_id is not None:
         # Get the machine associated with the deployment
         machine_query = (
-            select(Machine)
-            .where(Machine.id == machine_id)
-            .apply_org_check(request)
+            select(Machine).where(Machine.id == machine_id).apply_org_check(request)
         )
         machine_result = await db.execute(machine_query)
         machine = machine_result.scalar_one_or_none()
@@ -232,97 +259,166 @@ async def create_run(
             )
 
     if not workflow_api_raw:
-        raise HTTPException(
-            status_code=404, detail="Workflow API not found"
-        )
-    
+        raise HTTPException(status_code=404, detail="Workflow API not found")
+
     if not machine:
-        raise HTTPException(
-            status_code=404, detail="Machine not found"
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    async def run(batch_id: Optional[UUID] = None):
+        prompt_id = uuid.uuid4()
+
+        # Create a new run
+        new_run = WorkflowRun(
+            id=prompt_id,
+            workflow_id=workflow_id,
+            workflow_version_id=workflow_version_id,
+            workflow_inputs=data.inputs,
+            workflow_api=workflow_api_raw,
+            # User
+            user_id=request.state.current_user["user_id"],
+            org_id=request.state.current_user["org_id"],
+            origin=data.origin,
+            # Machine
+            machine_id=machine.id,
+            machine_type=machine.type,
+            gpu=machine.gpu,
+            # Webhook
+            webhook=data.webhook,
+            webhook_intermediate_status=data.webhook_intermediate_status,
+            batch_id=batch_id,
         )
-    
-    prompt_id = uuid.uuid4()
-
-    # Create a new run
-    new_run = WorkflowRun(
-        id=prompt_id,
-        workflow_id=workflow_id,
-        workflow_version_id=workflow_version_id,
-        workflow_inputs=data.inputs,
-        workflow_api=workflow_api_raw,
-        # User
-        user_id=request.state.current_user["user_id"],
-        org_id=request.state.current_user["org_id"],
-        origin=data.origin,
-        # Machine
-        machine_id=machine.id,
-        machine_type=machine.type,
-        gpu=machine.gpu,
-        # Webhook
-        webhook=data.webhook,
-        webhook_intermediate_status=data.webhook_intermediate_status,
-    )
-    db.add(new_run)
-    await db.commit()
-    await db.refresh(new_run)
-
-    ComfyDeployRunner = modal.Cls.lookup(str(machine.id), "ComfyDeployRunner")
-
-    params = {
-        "prompt_id": str(new_run.id),
-        "workflow_api_raw": workflow_api_raw,
-        "inputs": data.inputs,
-        "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
-        "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
-        + "/api/file-upload",
-    }
-    
-    new_run_data = new_run.to_dict()
-    new_run_data["version"] = {
-        "version": workflow_version_version,
-    }
-    new_run_data["machine"] = {
-        "name": machine.name,
-    }
-    await send_workflow_update(str(new_run.workflow_id), new_run_data)
-    await send_realtime_update(str(new_run.id), new_run.to_dict())
-
-    if data.execution_mode == "async":
-        with logfire.span("spawn-run"):
-            result = ComfyDeployRunner().run.spawn(params)
-
-        new_run.modal_function_call_id = result.object_id
+        db.add(new_run)
         await db.commit()
         await db.refresh(new_run)
 
-        return {"run_id": new_run.id}
-    elif data.execution_mode in ["sync", "sync_first_result"]:
-        with logfire.span("run-sync"):
-            result = await ComfyDeployRunner().run.remote.aio(params) 
+        ComfyDeployRunner = modal.Cls.lookup(str(machine.id), "ComfyDeployRunner")
 
-        first_output_query = select(WorkflowRunOutput).where(
-            WorkflowRunOutput.run_id == new_run.id
-        ).order_by(WorkflowRunOutput.created_at.desc()).limit(1)
-        
-        result = await db.execute(first_output_query)
-        output = result.scalar_one_or_none()
-        
-        if data.execution_mode == "sync_first_result":
-            if output and output.data and isinstance(output.data, dict):
-                images = output.data.get('images', [])
-                for image in images:
-                    if isinstance(image, dict):
-                        if 'url' in image:
-                            # Fetch the image/video data
-                            async with httpx.AsyncClient() as client:
-                                response = await client.get(image['url'])
-                                if response.status_code == 200:
-                                    content_type = response.headers.get('content-type')
-                                    if content_type:
-                                        return Response(content=response.content, media_type=content_type)
+        params = {
+            "prompt_id": str(new_run.id),
+            "workflow_api_raw": workflow_api_raw,
+            "inputs": data.inputs,
+            "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
+            "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
+            + "/api/file-upload",
+        }
+
+        # Get the count of runs for this workflow
+        run_count_query = select(func.count(WorkflowRun.id)).where(
+            WorkflowRun.workflow_id == workflow_id
+        )
+        result = await db.execute(run_count_query)
+        run_count = result.scalar_one()
+
+        new_run_data = new_run.to_dict()
+        new_run_data["version"] = {
+            "version": workflow_version_version,
+        }
+        new_run_data["machine"] = {
+            "name": machine.name,
+        }
+        new_run_data["number"] = run_count
+        await send_workflow_update(str(new_run.workflow_id), new_run_data)
+        await send_realtime_update(str(new_run.id), new_run.to_dict())
+
+        if data.execution_mode == "async":
+            with logfire.span("spawn-run"):
+                result = ComfyDeployRunner().run.spawn(params)
+
+            new_run.modal_function_call_id = result.object_id
+            await db.commit()
+            await db.refresh(new_run)
+
+            return {"run_id": new_run.id}
+        elif data.execution_mode in ["sync", "sync_first_result"]:
+            with logfire.span("run-sync"):
+                result = await ComfyDeployRunner().run.remote.aio(params)
+
+            first_output_query = (
+                select(WorkflowRunOutput)
+                .where(WorkflowRunOutput.run_id == new_run.id)
+                .order_by(WorkflowRunOutput.created_at.desc())
+                .limit(1)
+            )
+
+            result = await db.execute(first_output_query)
+            output = result.scalar_one_or_none()
+
+            if data.execution_mode == "sync_first_result":
+                if output and output.data and isinstance(output.data, dict):
+                    images = output.data.get("images", [])
+                    for image in images:
+                        if isinstance(image, dict):
+                            if "url" in image:
+                                # Fetch the image/video data
+                                async with httpx.AsyncClient() as client:
+                                    response = await client.get(image["url"])
+                                    if response.status_code == 200:
+                                        content_type = response.headers.get(
+                                            "content-type"
+                                        )
+                                        if content_type:
+                                            return Response(
+                                                content=response.content,
+                                                media_type=content_type,
+                                            )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No output found is matching, please check the workflow or disable output_first_result",
+                    )
             else:
-                raise HTTPException(status_code=400, detail="No output found is matching, please check the workflow or disable output_first_result")
+                return output
         else:
-            return output
+            raise HTTPException(status_code=400, detail="Invalid execution_mode")
+
+    if data.batch_input_params is not None:
+        batch_id = uuid.uuid4()
+
+        # Generate a grid of all combinations of input parameters
+        import itertools
+
+        # Get all parameter names and their corresponding values
+        param_names = list(data.batch_input_params.keys())
+        param_values = list(data.batch_input_params.values())
+
+        # Generate all combinations
+        combinations = list(itertools.product(*param_values))
+        
+        # print(combinations)
+
+        async def batch_run():
+            results = []
+            for combination in combinations:
+                # Create a new input dictionary for each combination
+                new_inputs = data.inputs.copy()
+                for name, value in zip(param_names, combination):
+                    new_inputs[name] = value
+                    
+                print(new_inputs)
+
+                # # Create a new request object with the updated inputs
+                # new_data = data.model_copy(update={"inputs": new_inputs})
+
+                # # Run the workflow with the new inputs
+                # result = await run(new_data)
+                # results.append(result)
+            return results
+
+        results = await batch_run()
+
+        return {"status": "success", "run_id": str(batch_id)}
+
+    elif data.batch_number is not None and data.batch_number > 1:
+
+        async def batch_run():
+            results = []
+            for _ in range(data.batch_number):
+                result = await run()
+                results.append(result)
+            return results
+
+        await batch_run()
+
+        return {"status": "success"}
     else:
-        raise HTTPException(status_code=400, detail="Invalid execution_mode")
+        return await run()

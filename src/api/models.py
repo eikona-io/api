@@ -171,6 +171,8 @@ class WorkflowRun(SerializableMixin, Base):
         Enum("success", "failed", "not-started", "running", name="webhook_status")
     )
     webhook_intermediate_status = Column(Boolean, nullable=False, default=False)
+    
+    batch_id = Column(UUID(as_uuid=True))
 
     # workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")

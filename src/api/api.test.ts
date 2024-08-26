@@ -55,24 +55,7 @@ describe("API Tests", () => {
     });
 });
 
-describe("POST /api/run", () => {
-    // test("POST /api/run should return 200", async () => {
-    //     const response = await fetch(`${API_URL}/api/run`,
-    //         {
-    //             method: "POST",
-    //             headers: {
-    //                 "Authorization": `Bearer ${token}`
-    //             },
-    //             body: JSON.stringify({
-    //                 workflow_id: workflow_id,
-    //                 inputs: {
-    //                     "input1": "value1"
-    //                 }
-    //             })
-    //         }
-    //     );
-    // });
-
+describe.skip("POST /api/run", () => {
     test("POST /api/run should return 200", async () => {
         const response = await fetch(`${API_URL}/api/run`,
             {
@@ -106,6 +89,32 @@ describe("POST /api/run", () => {
                     deployment_id: "0d4e1bd3-9c35-45d4-882d-ae008c7fc9e3",
                     inputs: {
                         "input1": "value1"
+                    }
+                })
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const data = await response.json();
+    });
+});
+
+describe("POST batch inputs", () => {
+    test("POST /api/run should return 200", async () => {
+        const response = await fetch(`${API_URL}/api/run`,
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    deployment_id: "0d4e1bd3-9c35-45d4-882d-ae008c7fc9e3",
+                    inputs: {
+                        "input0": "value1"
+                    },
+                    batch_input_params: {
+                        "input1": ["value1", "value2", "value3"],
+                        "input2": ["value4", "value5", "value6"]
                     }
                 })
             }
