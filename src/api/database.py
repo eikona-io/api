@@ -1,8 +1,13 @@
 import os
+from typing import AsyncGenerator
 import clickhouse_connect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+import asyncio
+from clickhouse_connect.driver import httputil
+
 load_dotenv()
 
 # Use environment variables for database connection
@@ -15,7 +20,9 @@ if DATABASE_URL and not DATABASE_URL.startswith("postgresql+asyncpg://"):
 engine = create_async_engine(DATABASE_URL)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-async def get_db():
+big_pool_mgr = httputil.get_pool_manager(maxsize=16, num_pools=12)
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
 
@@ -33,5 +40,37 @@ async def get_clickhouse_client():
             user=os.getenv("CLICKHOUSE_USER"),
             password=os.getenv("CLICKHOUSE_PASSWORD"),
             secure=True,
+            # pool_mgr=big_pool_mgr,
         )
     return clickhouse_client
+
+@asynccontextmanager
+async def get_db_context():
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+# @asynccontextmanager
+# async def get_clickhouse_client_context():
+#     try:
+#         client = await clickhouse_connect.get_async_client(
+#             host=os.getenv("CLICKHOUSE_HOST"),
+#             user=os.getenv("CLICKHOUSE_USER"),
+#             password=os.getenv("CLICKHOUSE_PASSWORD"),
+#             secure=True,
+#             # pool_mgr=big_pool_mgr,
+#         )
+#         try:
+#             yield client
+#         finally:
+#             pass
+#             # await client.close()
+#     except Exception as e:
+#         print(f"Error creating ClickHouse client: {e}")
+#         raise

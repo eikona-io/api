@@ -97,6 +97,10 @@ class MyRequest(BaseModel):
 router = APIRouter()
 
 
+async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
+    await client.insert(table=table, data=data)
+
+
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
     request: MyRequest,
@@ -121,22 +125,22 @@ async def update_run(
         if not workflow_run:
             raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
-        # Sending to clickhouse
-        await client.insert(
-            table="log_entries",
-            data=[
-                (
-                    uuid4(),
-                    request.run_id,
-                    workflow_run.workflow_id,
-                    workflow_run.machine_id,
-                    updated_at,
-                    "info",
-                    json.dumps(request.logs),
-                    # request.node_meta.get('node_class', '') if request.node_meta else ''
-                )
-            ],
-        )
+        # Prepare data for ClickHouse insert
+        log_data = [
+            (
+                uuid4(),
+                request.run_id,
+                workflow_run.workflow_id,
+                workflow_run.machine_id,
+                updated_at,
+                "info",
+                json.dumps(request.logs),
+            )
+        ]
+
+        # Add ClickHouse insert to background tasks
+        background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+
         await send_workflow_update(str(request.run_id), {"logs": request.logs})
         return {"status": "success"}
 
@@ -167,22 +171,20 @@ async def update_run(
         await send_realtime_update(str(workflow_run.id), workflow_run.to_dict())
 
         # Sending to clickhouse
-        await client.insert(
-            table="progress_updates",
-            data=[
-                (
-                    uuid4(),
-                    request.run_id,
-                    workflow_run.workflow_id,
-                    workflow_run.machine_id,
-                    updated_at,
-                    request.progress,
-                    request.live_status,
-                    request.status,
-                    # request.node_meta.get('node_class', '') if request.node_meta else ''
-                )
-            ],
-        )
+        progress_data = [
+            (
+                uuid4(),
+                request.run_id,
+                workflow_run.workflow_id,
+                workflow_run.machine_id,
+                updated_at,
+                request.progress,
+                request.live_status,
+                request.status,
+            )
+        ]
+
+        background_tasks.add_task(insert_to_clickhouse, client, "progress_updates", progress_data)
 
         if workflow_run.webhook and workflow_run.webhook_intermediate_status:
             background_tasks.add_task(
@@ -260,22 +262,20 @@ async def update_run(
             update_data["ended_at"] = fixed_time
 
         # Sending to clickhouse
-        await client.insert(
-            table="progress_updates",
-            data=[
-                (
-                    uuid4(),
-                    request.run_id,
-                    workflow_run.workflow_id,
-                    workflow_run.machine_id,
-                    updated_at,
-                    request.progress,
-                    request.live_status,
-                    request.status,
-                    # request.node_meta.get('node_class', '') if request.node_meta else ''
-                )
-            ],
-        )
+        progress_data = [
+            (
+                uuid4(),
+                request.run_id,
+                workflow_run.workflow_id,
+                workflow_run.machine_id,
+                updated_at,
+                request.progress,
+                request.live_status,
+                request.status,
+            )
+        ]
+
+        background_tasks.add_task(insert_to_clickhouse, client, "progress_updates", progress_data)
 
         update_stmt = (
             update(WorkflowRun)

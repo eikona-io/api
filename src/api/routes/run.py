@@ -21,7 +21,7 @@ from api.models import (
     WorkflowVersion,
     Workflow,
 )
-from api.database import get_db, get_clickhouse_client
+from api.database import get_db, get_clickhouse_client, get_db_context
 from typing import Literal, Optional, Union, cast
 from pydantic import BaseModel, Field
 from typing import Dict, Any
@@ -433,7 +433,7 @@ async def stream_logs_endpoint(
     run_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
     machine_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    # db: AsyncSession = Depends(get_db),
     client=Depends(get_clickhouse_client),
 ):
     if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
@@ -445,77 +445,79 @@ async def stream_logs_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_logs(id_type, id_value, request, db, client),
+        stream_logs(id_type, id_value, request, client),
         media_type="text/event-stream",
     )
 
 
 async def stream_logs(
-    id_type: str, id_value: str, request: Request, db: AsyncSession, client
+    id_type: str, id_value: str, request: Request, client
 ):
-    try:
-        # Get the current user from the request state
-        current_user = request.state.current_user
+    async with get_db_context() as db:
+        try:
+            # Get the current user from the request state
+            current_user = request.state.current_user
 
-        # Verify the entity exists and check permissions
-        model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
-            id_type
-        )
-        if not model:
-            raise HTTPException(status_code=400, detail="Invalid ID type")
-
-        entity_query = select(model).where(model.id == id_value)
-        result = await db.execute(entity_query)
-        entity = result.scalar_one_or_none()
-
-        if not entity:
-            raise HTTPException(
-                status_code=404, detail=f"{id_type.capitalize()} not found"
+            # Verify the entity exists and check permissions
+            model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
+                id_type
             )
+            if not model:
+                raise HTTPException(status_code=400, detail="Invalid ID type")
 
-        # Check permissions based on org_id or user_id
-        has_permission = False
-        if hasattr(entity, "org_id") and entity.org_id is not None:
-            has_permission = entity.org_id == current_user.get("org_id")
-        elif hasattr(entity, "user_id") and entity.user_id is not None:
-            has_permission = (
-                entity.user_id == current_user.get("user_id")
-                and current_user.get("org_id") is None
-            )
+            entity_query = select(model).where(model.id == id_value)
+            result = await db.execute(entity_query)
+            entity = result.scalar_one_or_none()
+            await db.close()
+            
+            if not entity:
+                raise HTTPException(
+                    status_code=404, detail=f"{id_type.capitalize()} not found"
+                )
 
-        if not has_permission:
-            raise HTTPException(
-                status_code=403, detail="Not authorized to access these logs"
-            )
+            # Check permissions based on org_id or user_id
+            has_permission = False
+            if hasattr(entity, "org_id") and entity.org_id is not None:
+                has_permission = entity.org_id == current_user.get("org_id")
+            elif hasattr(entity, "user_id") and entity.user_id is not None:
+                has_permission = (
+                    entity.user_id == current_user.get("user_id")
+                    and current_user.get("org_id") is None
+                )
 
-        # Stream logs
-        last_timestamp = None
-        while True:
-            query = f"""
-            SELECT timestamp, log_level, message
-            FROM log_entries
-            WHERE {id_type}_id = '{id_value}'
-            {f"AND timestamp > '{last_timestamp}'" if last_timestamp else ""}
-            ORDER BY timestamp ASC
-            LIMIT 100
-            """
-            result = await client.query(query)
-            for row in result.result_rows:
-                timestamp, level, message = row
-                last_timestamp = timestamp
-                # print(message)
-                yield f"data: {json.dumps({'message': message})}\n\n"
+            if not has_permission:
+                raise HTTPException(
+                    status_code=403, detail="Not authorized to access these logs"
+                )
 
-            if not result.result_rows:
-                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+            # Stream logs
+            last_timestamp = None
+            while True:
+                query = f"""
+                SELECT timestamp, log_level, message
+                FROM log_entries
+                WHERE {id_type}_id = '{id_value}'
+                {f"AND timestamp > '{last_timestamp}'" if last_timestamp else ""}
+                ORDER BY timestamp ASC
+                LIMIT 100
+                """
+                result = await client.query(query)
+                for row in result.result_rows:
+                    timestamp, level, message = row
+                    last_timestamp = timestamp
+                    # print(message)
+                    yield f"data: {json.dumps({'message': message})}\n\n"
 
-            await asyncio.sleep(1)  # Wait for 1 second before next query
+                if not result.result_rows:
+                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
 
-    except Exception as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        raise
-    # finally:
-    #     await client.close()  # Ensure the client is closed
+                await asyncio.sleep(1)  # Wait for 1 second before next query
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            raise
+        # finally:
+        #     await client.close()  # Ensure the client is closed
 
 
 @router.get("/stream-progress")
@@ -524,7 +526,7 @@ async def stream_progress_endpoint(
     run_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
     machine_id: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    # db: AsyncSession = Depends(get_db),
     client=Depends(get_clickhouse_client),
 ):
     if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
@@ -536,83 +538,85 @@ async def stream_progress_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_progress(id_type, id_value, request, db, client),
+        stream_progress(id_type, id_value, request, client),
         media_type="text/event-stream"
     )
 
 
 async def stream_progress(
-    id_type: str, id_value: str, request: Request, db: AsyncSession, client
+    id_type: str, id_value: str, request: Request,  client
 ):
-    try:
-        # Get the current user from the request state
-        current_user = request.state.current_user
+    async with get_db_context() as db:
+        try:
+            # Get the current user from the request state
+            current_user = request.state.current_user
 
-        # Verify the entity exists and check permissions
-        model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
-            id_type
-        )
-        if not model:
-            raise HTTPException(status_code=400, detail="Invalid ID type")
-
-        entity_query = select(model).where(model.id == id_value)
-        result = await db.execute(entity_query)
-        entity = result.scalar_one_or_none()
-
-        if not entity:
-            raise HTTPException(
-                status_code=404, detail=f"{id_type.capitalize()} not found"
+            # Verify the entity exists and check permissions
+            model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
+                id_type
             )
+            if not model:
+                raise HTTPException(status_code=400, detail="Invalid ID type")
 
-        # Check permissions based on org_id or user_id
-        has_permission = False
-        if hasattr(entity, "org_id") and entity.org_id is not None:
-            has_permission = entity.org_id == current_user.get("org_id")
-        elif hasattr(entity, "user_id") and entity.user_id is not None:
-            has_permission = (
-                entity.user_id == current_user.get("user_id")
-                and current_user.get("org_id") is None
-            )
+            entity_query = select(model).where(model.id == id_value)
+            result = await db.execute(entity_query)
+            await db.close()
+            entity = result.scalar_one_or_none()
 
-        if not has_permission:
-            raise HTTPException(
-                status_code=403, detail="Not authorized to access this progress"
-            )
+            if not entity:
+                raise HTTPException(
+                    status_code=404, detail=f"{id_type.capitalize()} not found"
+                )
 
-        # Stream progress updates from ClickHouse
-        last_update_time = None
-        while True:
-            query = f"""
-            SELECT timestamp, progress, node_class, status
-            FROM progress_updates
-            WHERE {id_type}_id = '{id_value}'
-            {f"AND timestamp > '{last_update_time}'" if last_update_time else ""}
-            ORDER BY timestamp ASC
-            LIMIT 100
-            """
-            result = await client.query(query)
-            
-            # print(result.result_rows)
-            
-            if result.result_rows:
-                for row in result.result_rows:
-                    timestamp, progress, node_class, status = row
-                    last_update_time = timestamp
-                    progress_data = {
-                        "progress": progress,
-                        "status": status,
-                        "node_class": node_class,
-                        "updated_at": timestamp.isoformat(),
-                    }
-                    yield f"data: {json.dumps(progress_data)}\n\n"
+            # Check permissions based on org_id or user_id
+            has_permission = False
+            if hasattr(entity, "org_id") and entity.org_id is not None:
+                has_permission = entity.org_id == current_user.get("org_id")
+            elif hasattr(entity, "user_id") and entity.user_id is not None:
+                has_permission = (
+                    entity.user_id == current_user.get("user_id")
+                    and current_user.get("org_id") is None
+                )
 
-                    if status in ["success", "failed", "timeout", "cancelled"]:
-                        return  # Exit the function if the final status is reached
-            else:
-                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+            if not has_permission:
+                raise HTTPException(
+                    status_code=403, detail="Not authorized to access this progress"
+                )
 
-            await asyncio.sleep(1)  # Wait for 1 second before next query
+            # Stream progress updates from ClickHouse
+            last_update_time = None
+            while True:
+                query = f"""
+                SELECT timestamp, progress, node_class, status
+                FROM progress_updates
+                WHERE {id_type}_id = '{id_value}'
+                {f"AND timestamp > '{last_update_time}'" if last_update_time else ""}
+                ORDER BY timestamp ASC
+                LIMIT 100
+                """
+                result = await client.query(query)
+                
+                # print(result.result_rows)
+                
+                if result.result_rows:
+                    for row in result.result_rows:
+                        timestamp, progress, node_class, status = row
+                        last_update_time = timestamp
+                        progress_data = {
+                            "progress": progress,
+                            "status": status,
+                            "node_class": node_class,
+                            "updated_at": timestamp.isoformat(),
+                        }
+                        yield f"data: {json.dumps(progress_data)}\n\n"
 
-    except Exception as e:
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        raise
+                        if status in ["success", "failed", "timeout", "cancelled"]:
+                            return  # Exit the function if the final status is reached
+                else:
+                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+
+                await asyncio.sleep(1)  # Wait for 1 second before next query
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            raise
