@@ -84,7 +84,7 @@ class WorkflowRunStatus(str, Enum):
 class MyRequest(BaseModel):
     run_id: str
     status: Optional[WorkflowRunStatus] = None
-    time: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    time: Optional[datetime] = None
     output_data: Optional[Any] = None
     node_meta: Optional[Any] = None
     log_data: Optional[Any] = None
