@@ -42,7 +42,7 @@ class SerializableMixin:
             return str(value)
         if isinstance(value, datetime):
             # .replace(tzinfo=timezone.utc)
-            return value.isoformat()
+            return value.isoformat()[:-3]+'Z'
         if isinstance(value, list):
             return [self._serialize_value(item) for item in value]
         if isinstance(value, dict):
@@ -100,6 +100,10 @@ class WorkflowVersion(SerializableMixin, Base):
 
     # workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")
+    
+    
+def lazy_utc_now():
+    return datetime.now(tz=timezone.utc)
 
 
 class WorkflowRun(SerializableMixin, Base):
@@ -142,8 +146,8 @@ class WorkflowRun(SerializableMixin, Base):
         default="not-started",
     )
     ended_at = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lazy_utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lazy_utc_now)
     queued_at = Column(DateTime(timezone=True))
     started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
