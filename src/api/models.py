@@ -41,7 +41,8 @@ class SerializableMixin:
         if isinstance(value, uuid.UUID):
             return str(value)
         if isinstance(value, datetime):
-            return value.replace(tzinfo=timezone.utc).isoformat()
+            # .replace(tzinfo=timezone.utc)
+            return value.isoformat()
         if isinstance(value, list):
             return [self._serialize_value(item) for item in value]
         if isinstance(value, dict):
@@ -65,8 +66,8 @@ class Workflow(SerializableMixin, Base):
     selected_machine_id = Column(
         UUID(as_uuid=True), ForeignKey("machines.id", ondelete="set null")
     )
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
     pinned = Column(Boolean, nullable=False, default=False)
 
     # user = relationship("User", back_populates="workflows")
@@ -94,8 +95,8 @@ class WorkflowVersion(SerializableMixin, Base):
     version = Column(Integer, nullable=False)
     snapshot = Column(JSON)
     dependencies = Column(JSON)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
     # workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")
@@ -140,11 +141,11 @@ class WorkflowRun(SerializableMixin, Base):
         nullable=False,
         default="not-started",
     )
-    ended_at = Column(DateTime)
-    created_at = Column(DateTime, nullable=False, default=func.now())
-    updated_at = Column(DateTime, nullable=False, default=func.now())
-    queued_at = Column(DateTime)
-    started_at = Column(DateTime)
+    ended_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    queued_at = Column(DateTime(timezone=True))
+    started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
     gpu = Column(Enum("T4", "L4", "A10G", "A100", "H100", name="machine_gpu"))
     machine_version = Column(String)
@@ -190,8 +191,8 @@ class WorkflowRunOutput(SerializableMixin, Base):
     )
     data = Column(JSON)
     node_meta = Column(JSON)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
     run = relationship("WorkflowRun", back_populates="outputs")
 
@@ -206,8 +207,8 @@ class APIKey(SerializableMixin, Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     org_id = Column(String)
     revoked = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
     # user = relationship("User", back_populates="api_keys")
 
@@ -257,8 +258,8 @@ class Deployment(SerializableMixin, Base):
         ),
         nullable=False,
     )
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
 
     # machine = relationship("Machine")
     # version = relationship("WorkflowVersion")
@@ -275,8 +276,8 @@ class Machine(SerializableMixin, Base):
     name = Column(String, nullable=False)
     org_id = Column(String)
     endpoint = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
     disabled = Column(Boolean, nullable=False, default=False)
     auth_token = Column(String)
     type = Column(

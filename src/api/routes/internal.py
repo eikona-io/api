@@ -24,13 +24,18 @@ from clickhouse_connect.driver.asyncclient import AsyncClient
 from botocore.config import Config
 import aiohttp
 import logging
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select, update
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
-from api.models import WorkflowRun, WorkflowRunOutput
+from api.models import Machine, Workflow, WorkflowRun, WorkflowRunOutput
 
 from fastapi import Query
+from datetime import datetime, timezone
+import datetime as dt
+
+from fastapi import Depends
 
 router = APIRouter()
 
@@ -62,7 +67,6 @@ async def send_webhook(workflow_run, updatedAt, run_id):
             }
     except Exception as error:
         return {"status": "error", "message": str(error)}
-
 
 
 class WorkflowRunStatus(str, Enum):
@@ -97,15 +101,16 @@ router = APIRouter()
 async def update_run(
     request: MyRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSessionLocal = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
-    updated_at = datetime.utcnow()
+    # updated_at = datetime.utcnow()
+    updated_at = dt.datetime.now(dt.UTC)
 
     # Ensure request.time is timezone-aware
     # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
     fixed_time = updated_at
-    
+
     if request.logs is not None:
         existing_run = await db.execute(
             select(WorkflowRun).where(WorkflowRun.id == request.run_id)
@@ -115,7 +120,7 @@ async def update_run(
 
         if not workflow_run:
             raise HTTPException(status_code=404, detail="WorkflowRun not found")
-        
+
         # Sending to clickhouse
         await client.insert(
             table="log_entries",
@@ -127,7 +132,7 @@ async def update_run(
                     workflow_run.machine_id,
                     updated_at,
                     "info",
-                    str(request.logs),
+                    json.dumps(request.logs),
                     # request.node_meta.get('node_class', '') if request.node_meta else ''
                 )
             ],
@@ -253,7 +258,7 @@ async def update_run(
         update_data = {"status": request.status, "updated_at": updated_at}
         if ended and fixed_time is not None:
             update_data["ended_at"] = fixed_time
-            
+
         # Sending to clickhouse
         await client.insert(
             table="progress_updates",
@@ -332,11 +337,32 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
                 status_code=response.status,
                 headers=dict(response.headers),
             )
-            
+
+
 @router.post("/machine-built")
 async def machine_built(request: Request, data: Any = Body(...)):
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     new_url = f"{legacy_api_url}/api/machine-built"
+
+    # Get headers from the incoming request
+    headers = dict(request.headers)
+    # Remove host header as it will be set by aiohttp
+    headers.pop("host", None)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(new_url, json=data, headers=headers) as response:
+            content = await response.read()
+            return Response(
+                content=content,
+                status_code=response.status,
+                headers=dict(response.headers),
+            )
+            
+            
+@router.post("/fal-webhook")
+async def fal_webhook(request: Request, data: Any = Body(...)):
+    legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
+    new_url = f"{legacy_api_url}/api/fal-webhook"
 
     # Get headers from the incoming request
     headers = dict(request.headers)
