@@ -220,7 +220,7 @@ export const WorkflowRunStatusSchema = z.enum(workflowRunStatus.enumValues);
 export const WorkflowRunOriginSchema = z.enum(workflowRunOrigin.enumValues);
 export type WorkflowRunOriginType = z.infer<typeof WorkflowRunOriginSchema>;
 
-export const machineGPUOptions = ["T4", "L4", "A10G", "A100", "H100"] as const;
+export const machineGPUOptions = ["T4", "L4", "A10G", "A100", "A100-80GB", "H100"] as const;
 export const machineGPUOptionsTypes = pgEnum("machine_gpu", machineGPUOptions);
 export type machineGPUOptionsTypes = (typeof machineGPUOptions)[number];
 

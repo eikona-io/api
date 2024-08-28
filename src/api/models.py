@@ -151,7 +151,7 @@ class WorkflowRun(SerializableMixin, Base):
     queued_at = Column(DateTime(timezone=True))
     started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
-    gpu = Column(Enum("T4", "L4", "A10G", "A100", "H100", name="machine_gpu"))
+    gpu = Column(Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu"))
     machine_version = Column(String)
     machine_type = Column(
         Enum(
@@ -331,7 +331,7 @@ class Machine(SerializableMixin, Base):
     )
     snapshot = Column(JSON)
     models = Column(JSON)
-    gpu = Column(Enum("T4", "L4", "A10G", "A100", "H100", name="machine_gpu"))
+    gpu = Column(Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu"))
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     pod_id = Column(String)
     base_docker_image = Column(String)
