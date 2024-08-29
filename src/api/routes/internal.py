@@ -25,8 +25,9 @@ from botocore.config import Config
 import aiohttp
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
+from pprint import pprint
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, case
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import Machine, Workflow, WorkflowRun, WorkflowRunOutput
@@ -220,7 +221,10 @@ async def update_run(
         update_stmt = (
             update(WorkflowRun)
             .where(WorkflowRun.id == request.run_id)
-            .values(queued_at=fixed_time, updated_at=updated_at)
+            .values(
+                queued_at=fixed_time, 
+                updated_at=updated_at
+            )
         )
         await db.execute(update_stmt)
         await db.commit()
@@ -276,15 +280,24 @@ async def update_run(
         ]
 
         background_tasks.add_task(insert_to_clickhouse, client, "progress_updates", progress_data)
+        
+        
+        update_values = {
+            "status": request.status,
+            "ended_at": updated_at if ended else None,
+            "updated_at": updated_at,
+        }
+        
+        # Add modal_function_call_id if it's provided and the existing value is empty
+        if request.modal_function_call_id:
+            update_values["modal_function_call_id"] = request.modal_function_call_id
 
+        # print("modal_function_call_id", request.modal_function_call_id)
+        
         update_stmt = (
             update(WorkflowRun)
             .where(WorkflowRun.id == request.run_id)
-            .values(
-                status=request.status,
-                ended_at=updated_at if ended else None,
-                updated_at=updated_at,
-            )
+            .values(**update_values)
             .returning(WorkflowRun)
         )
         result = await db.execute(update_stmt)
