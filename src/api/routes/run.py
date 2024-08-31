@@ -299,7 +299,7 @@ async def create_run(
         params = {
             "prompt_id": str(new_run.id),
             "workflow_api_raw": workflow_api_raw,
-            "inputs": data.inputs,
+            "inputs": inputs,
             "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
             "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
             + "/api/file-upload",
