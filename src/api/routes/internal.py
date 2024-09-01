@@ -345,6 +345,8 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
     async with aiohttp.ClientSession() as session:
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
+            if response.status >= 400:
+                raise HTTPException(status_code=response.status, detail=content.decode())
             return Response(
                 content=content,
                 status_code=response.status,
