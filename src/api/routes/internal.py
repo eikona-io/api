@@ -185,7 +185,9 @@ async def update_run(
             )
         ]
 
-        background_tasks.add_task(insert_to_clickhouse, client, "progress_updates", progress_data)
+        background_tasks.add_task(
+            insert_to_clickhouse, client, "progress_updates", progress_data
+        )
 
         if workflow_run.webhook and workflow_run.webhook_intermediate_status:
             background_tasks.add_task(
@@ -221,10 +223,7 @@ async def update_run(
         update_stmt = (
             update(WorkflowRun)
             .where(WorkflowRun.id == request.run_id)
-            .values(
-                queued_at=fixed_time, 
-                updated_at=updated_at
-            )
+            .values(queued_at=fixed_time, updated_at=updated_at)
         )
         await db.execute(update_stmt)
         await db.commit()
@@ -279,21 +278,22 @@ async def update_run(
             )
         ]
 
-        background_tasks.add_task(insert_to_clickhouse, client, "progress_updates", progress_data)
-        
-        
+        background_tasks.add_task(
+            insert_to_clickhouse, client, "progress_updates", progress_data
+        )
+
         update_values = {
             "status": request.status,
             "ended_at": updated_at if ended else None,
             "updated_at": updated_at,
         }
-        
+
         # Add modal_function_call_id if it's provided and the existing value is empty
         if request.modal_function_call_id:
             update_values["modal_function_call_id"] = request.modal_function_call_id
 
         # print("modal_function_call_id", request.modal_function_call_id)
-        
+
         update_stmt = (
             update(WorkflowRun)
             .where(WorkflowRun.id == request.run_id)
@@ -332,7 +332,7 @@ async def update_run(
     return {"status": "success"}
 
 
-@router.post("/gpu_event")
+@router.post("/gpu_event", include_in_schema=False)
 async def create_gpu_event(request: Request, data: Any = Body(...)):
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     new_url = f"{legacy_api_url}/api/gpu_event"
@@ -346,7 +346,9 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             if response.status >= 400:
-                raise HTTPException(status_code=response.status, detail=content.decode())
+                raise HTTPException(
+                    status_code=response.status, detail=content.decode()
+                )
             return Response(
                 content=content,
                 status_code=response.status,
@@ -354,7 +356,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
             )
 
 
-@router.post("/machine-built")
+@router.post("/machine-built", include_in_schema=False)
 async def machine_built(request: Request, data: Any = Body(...)):
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     new_url = f"{legacy_api_url}/api/machine-built"
@@ -372,9 +374,9 @@ async def machine_built(request: Request, data: Any = Body(...)):
                 status_code=response.status,
                 headers=dict(response.headers),
             )
-            
-            
-@router.post("/fal-webhook")
+
+
+@router.post("/fal-webhook", include_in_schema=False)
 async def fal_webhook(request: Request, data: Any = Body(...)):
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     new_url = f"{legacy_api_url}/api/fal-webhook"
