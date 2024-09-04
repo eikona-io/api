@@ -24,6 +24,9 @@ class OrgAwareSelect(Select[Tuple[T]]):
     
     def apply_org_check(self, request: Request) -> Self:
         return self.where(get_org_or_user_condition(self.column_descriptions[0]['entity'], request))
+    
+    def paginate(self, limit: int, offset: int) -> Self:
+        return self.limit(limit).offset(offset)
 
 def select(__ent0: _ColumnsClauseArgument[T], /, *entities: Any) -> OrgAwareSelect[T]:
     return OrgAwareSelect(__ent0, *entities)

@@ -26,6 +26,8 @@ dependencies = [
     "opentelemetry-instrumentation-asyncio>=0.47b0",
     "clickhouse-connect>=0.7.19",
     "boto3>=1.35.5",
+    "scalar-fastapi>=1.0.3",
+    "fastapi-pagination>=0.12.26",
 ]
 
 [build-system]

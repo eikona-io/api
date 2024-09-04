@@ -27,10 +27,11 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
 
-from sqlalchemy import select, update, case
+from .utils import select
+from sqlalchemy import update, case
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
-from api.models import Machine, Workflow, WorkflowRun, WorkflowRunOutput
+from api.models import Machine, UserSettings, Workflow, WorkflowRun, WorkflowRunOutput
 
 from fastapi import Query
 from datetime import datetime, timezone
@@ -398,6 +399,7 @@ async def fal_webhook(request: Request, data: Any = Body(...)):
 
 @router.get("/file-upload", include_in_schema=False)
 async def get_file_upload_url(
+    request: Request,
     file_name: str = Query(..., description="Name of the file to upload"),
     run_id: UUID4 = Query(..., description="UUID of the run"),
     size: Optional[int] = Query(None, description="Size of the file in bytes"),
@@ -405,20 +407,47 @@ async def get_file_upload_url(
     public: bool = Query(
         True, description="Whether to make the file publicly accessible"
     ),
+    db: AsyncSession = Depends(get_db)
 ):
     try:
+        user_query = (
+            select(UserSettings).apply_org_check(request)
+        )
+        user_settings = await db.execute(user_query)
+        user_settings = user_settings.scalar_one_or_none()
+        user_settings = cast(Optional[UserSettings], user_settings)
+        
+        bucket=os.getenv("SPACES_BUCKET_V2")
+        region=os.getenv("SPACES_REGION_V2")
+        access_key=os.getenv("SPACES_KEY_V2")
+        secret_key=os.getenv("SPACES_SECRET_V2")
+        
+        if user_settings is not None:
+            if user_settings.output_visibility == "private":
+                public = False
+                
+            if user_settings.custom_output_bucket:
+                bucket=user_settings.s3_bucket_name
+                region=user_settings.s3_region
+                access_key=user_settings.s3_access_key_id
+                secret_key=user_settings.s3_secret_access_key
+        
         # Generate the object key
         object_key = f"outputs/runs/{run_id}/{file_name}"
 
         # Generate pre-signed S3 upload URL
         upload_url = generate_presigned_url(
-            bucket=os.getenv("SPACES_BUCKET_V2"),
             object_key=object_key,
             expiration=3600,  # URL expiration time in seconds
             http_method="PUT",
             size=size,
             content_type=type,
             public=public,
+            
+            bucket=bucket,
+            region=region,
+            access_key=access_key,
+            secret_key=secret_key,
         )
 
         # Generate static download URL
@@ -428,7 +457,7 @@ async def get_file_upload_url(
         #     # Set the object ACL to public-read after upload
         #     set_object_acl_public(os.getenv("SPACES_BUCKET_V2"), object_key)
 
-        return {"url": upload_url, "download_url": download_url, "include_acl": public}
+        return {"url": upload_url, "download_url": download_url, "include_acl": public, "is_public": public}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -436,6 +465,9 @@ async def get_file_upload_url(
 def generate_presigned_url(
     bucket,
     object_key,
+    region: str,
+    access_key: str,
+    secret_key: str,
     expiration=3600,
     http_method="PUT",
     size=None,
@@ -444,9 +476,9 @@ def generate_presigned_url(
 ):
     s3_client = boto3.client(
         "s3",
-        region_name=os.getenv("SPACES_REGION_V2"),
-        aws_access_key_id=os.getenv("SPACES_KEY_V2"),
-        aws_secret_access_key=os.getenv("SPACES_SECRET_V2"),
+        region_name=region,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
         config=Config(signature_version="s3v4"),
     )
     params = {

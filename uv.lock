@@ -115,6 +115,7 @@ dependencies = [
     { name = "boto3" },
     { name = "clickhouse-connect" },
     { name = "fastapi" },
+    { name = "fastapi-pagination" },
     { name = "greenlet" },
     { name = "httpx" },
     { name = "logfire", extra = ["fastapi"] },
@@ -129,6 +130,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-jose" },
     { name = "ruff" },
+    { name = "scalar-fastapi" },
     { name = "sqlalchemy" },
     { name = "trio" },
     { name = "uvicorn" },
@@ -140,6 +142,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.35.5" },
     { name = "clickhouse-connect", specifier = ">=0.7.19" },
     { name = "fastapi", specifier = ">=0.112.1" },
+    { name = "fastapi-pagination" },
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "logfire", extras = ["fastapi"], specifier = ">=0.51.0" },
@@ -154,6 +157,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-jose", specifier = ">=3.3.0" },
     { name = "ruff", specifier = ">=0.6.2" },
+    { name = "scalar-fastapi", specifier = ">=1.0.3" },
     { name = "sqlalchemy", specifier = ">=2.0.32" },
     { name = "trio", specifier = ">=0.26.2" },
     { name = "uvicorn", specifier = ">=0.30.6" },
@@ -384,6 +388,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2c/09/71a961740a1121d7cc90c99036cc3fbb507bf0c69860d08d4388f842196b/fastapi-0.112.1.tar.gz", hash = "sha256:b2537146f8c23389a7faa8b03d0bd38d4986e6983874557d95eed2acc46448ef", size = 291025 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/b0/0981f9eb5884245ed6678af234f2cbcd40f44570718caddc0360bdb4015d/fastapi-0.112.1-py3-none-any.whl", hash = "sha256:bcbd45817fc2a1cd5da09af66815b84ec0d3d634eb173d1ab468ae3103e183e4", size = 93163 },
+]
+
+[[package]]
+name = "fastapi-pagination"
+version = "0.12.26"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/64/f0/a107b5391bf58488a5ec5a3757d1daa947dc3cd0b174cce164c24b1b5c9c/fastapi_pagination-0.12.26.tar.gz", hash = "sha256:40b18c312ed5c3a631106c2f19bb4b8d71b1773c1d83f6ae7555071b13822845", size = 25564 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/b0/283e2708c72940c5debec3f630f18c7bb2c4ddd36524a54115e7da920d2d/fastapi_pagination-0.12.26-py3-none-any.whl", hash = "sha256:b59711d162e04b9b67efbdbba388c29bad0aac69da93fefaf0a85e2bb090853d", size = 41847 },
 ]
 
 [[package]]
@@ -1146,6 +1163,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/cb/67/94c6730ee4c34505b14d94040e2f31edf144c230b6b49e971b4f25ff8fab/s3transfer-0.10.2.tar.gz", hash = "sha256:0711534e9356d3cc692fdde846b4a1e4b0cb6519971860796e6bc4c7aea00ef6", size = 144095 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3c/4a/b221409913760d26cf4498b7b1741d510c82d3ad38381984a3ddc135ec66/s3transfer-0.10.2-py3-none-any.whl", hash = "sha256:eca1c20de70a39daee580aef4986996620f365c4e0fda6a86100231d62f1bf69", size = 82716 },
+]
+
+[[package]]
+name = "scalar-fastapi"
+version = "1.0.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/04/08ae9e86f24cd9b43bc5b2068fc5d1dcd3e7efa6db860290734d7d742512/scalar_fastapi-1.0.3.tar.gz", hash = "sha256:9e9cb8398e298cd435a0171eebe1675b8899eb21e47c238db0d48783143f0ffb", size = 4107 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/9e/ca0ffc3fc4788c6e1367b96a70f2d6ee33f91d580664a8142ba7ee292ef2/scalar_fastapi-1.0.3-py3-none-any.whl", hash = "sha256:4a47a140795097ad034518ce0e32940f2c54f0f4bc60e4c3289ca30a7e6f954d", size = 4579 },
 ]
 
 [[package]]

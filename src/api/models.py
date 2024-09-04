@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime
 import json
 from datetime import timezone
+from sqlalchemy.orm import column_property
 
 Base = declarative_base()
 
@@ -181,6 +182,27 @@ class WorkflowRun(SerializableMixin, Base):
 
     # workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")
+
+
+# Add these properties to your WorkflowRun model
+WorkflowRun.number = column_property(
+    func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
+)
+# WorkflowRun.total = column_property(
+#     func.count().over().label("total")
+# )
+WorkflowRun.duration = column_property(
+    (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.created_at)).label("duration")
+)
+WorkflowRun.cold_start_duration = column_property(
+    (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.queued_at)).label("cold_start_duration")
+)
+WorkflowRun.cold_start_duration_total = column_property(
+    (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.created_at)).label("cold_start_duration_total")
+)
+WorkflowRun.run_duration = column_property(
+    (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.started_at)).label("run_duration")
+)
 
 
 class WorkflowRunOutput(SerializableMixin, Base):
@@ -365,5 +387,25 @@ class Machine(SerializableMixin, Base):
     filename_list_cache = Column(JSON)
     extensions = Column(JSON)
 
+
+class UserSettings(SerializableMixin, Base):
+    __tablename__ = "user_settings"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
+    org_id = Column(String)
+    output_visibility = Column(Enum("public", "private", name="output_visibility"), default="public")
+    custom_output_bucket = Column(Boolean, default=False)
+    s3_access_key_id = Column(String)
+    s3_secret_access_key = Column(String)
+    s3_bucket_name = Column(String)
+    s3_region = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Optionally, add relationship to User model
+    # user = relationship("User", back_populates="settings")
+    
     # target_workflow = relationship("Workflow", foreign_keys=[target_workflow_id])
     # workflows = relationship("Workflow", back_populates="machine", foreign_keys=[Workflow.selected_machine_id])
