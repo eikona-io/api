@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from api.routes.internal import send_realtime_update, send_workflow_update
-from .utils import select
+from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, select
 
 # from sqlalchemy import select
 from api.models import (
@@ -26,6 +26,7 @@ from api.models import (
     Deployment,
     Machine,
     WorkflowRunOutput,
+    WorkflowRunWithExtra,
     WorkflowVersion,
     Workflow,
 )
@@ -49,7 +50,7 @@ router = APIRouter(tags=["Run"])
 @router.get("/run", response_model=WorkflowRunModel, include_in_schema=False)
 async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_db)):
     query = (
-        select(WorkflowRun)
+        select(WorkflowRunWithExtra)
         .options(joinedload(WorkflowRun.outputs))
         .where(WorkflowRun.id == run_id)
         .apply_org_check(request)
@@ -62,6 +63,10 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=404, detail="Run not found")
 
     run = cast(WorkflowRun, run)
+
+    user_settings = await get_user_settings(request, db)
+    ensure_run_timeout(run)
+    post_process_outputs(run.outputs, user_settings)
 
     # Convert the run to a dictionary and remove the run_log
     run_dict = {k: v for k, v in vars(run).items() if k != "run_log"}

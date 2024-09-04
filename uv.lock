@@ -115,7 +115,6 @@ dependencies = [
     { name = "boto3" },
     { name = "clickhouse-connect" },
     { name = "fastapi" },
-    { name = "fastapi-pagination" },
     { name = "greenlet" },
     { name = "httpx" },
     { name = "logfire", extra = ["fastapi"] },
@@ -142,7 +141,6 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.35.5" },
     { name = "clickhouse-connect", specifier = ">=0.7.19" },
     { name = "fastapi", specifier = ">=0.112.1" },
-    { name = "fastapi-pagination" },
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "logfire", extras = ["fastapi"], specifier = ">=0.51.0" },
@@ -388,19 +386,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2c/09/71a961740a1121d7cc90c99036cc3fbb507bf0c69860d08d4388f842196b/fastapi-0.112.1.tar.gz", hash = "sha256:b2537146f8c23389a7faa8b03d0bd38d4986e6983874557d95eed2acc46448ef", size = 291025 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/b0/0981f9eb5884245ed6678af234f2cbcd40f44570718caddc0360bdb4015d/fastapi-0.112.1-py3-none-any.whl", hash = "sha256:bcbd45817fc2a1cd5da09af66815b84ec0d3d634eb173d1ab468ae3103e183e4", size = 93163 },
-]
-
-[[package]]
-name = "fastapi-pagination"
-version = "0.12.26"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/64/f0/a107b5391bf58488a5ec5a3757d1daa947dc3cd0b174cce164c24b1b5c9c/fastapi_pagination-0.12.26.tar.gz", hash = "sha256:40b18c312ed5c3a631106c2f19bb4b8d71b1773c1d83f6ae7555071b13822845", size = 25564 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/b0/283e2708c72940c5debec3f630f18c7bb2c4ddd36524a54115e7da920d2d/fastapi_pagination-0.12.26-py3-none-any.whl", hash = "sha256:b59711d162e04b9b67efbdbba388c29bad0aac69da93fefaf0a85e2bb090853d", size = 41847 },
 ]
 
 [[package]]

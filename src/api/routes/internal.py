@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.parse import urlparse
 from fastapi import (
     APIRouter,
     Body,
@@ -27,7 +28,15 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
 
-from .utils import select
+from .utils import (
+    generate_presigned_url,
+    get_user_settings,
+    post_process_outputs,
+    retry_fetch,
+    select,
+    send_realtime_update,
+    send_workflow_update,
+)
 from sqlalchemy import update, case
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
@@ -83,7 +92,7 @@ class WorkflowRunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class MyRequest(BaseModel):
+class UpdateRunBody(BaseModel):
     run_id: str
     status: Optional[WorkflowRunStatus] = None
     time: Optional[datetime] = None
@@ -105,7 +114,8 @@ async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
 
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
-    request: MyRequest,
+    request: Request,
+    body: UpdateRunBody,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
@@ -117,9 +127,9 @@ async def update_run(
     # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
     fixed_time = updated_at
 
-    if request.logs is not None:
+    if body.logs is not None:
         existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == request.run_id)
+            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
         )
         workflow_run = existing_run.scalar_one_or_none()
         workflow_run = cast(WorkflowRun, workflow_run)
@@ -131,30 +141,30 @@ async def update_run(
         log_data = [
             (
                 uuid4(),
-                request.run_id,
+                body.run_id,
                 workflow_run.workflow_id,
                 workflow_run.machine_id,
                 updated_at,
                 "info",
-                json.dumps(request.logs),
+                json.dumps(body.logs),
             )
         ]
 
         # Add ClickHouse insert to background tasks
         background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
 
-        await send_workflow_update(str(request.run_id), {"logs": request.logs})
+        await send_workflow_update(str(body.run_id), {"logs": body.logs})
         return {"status": "success"}
 
     # Updating the progress
-    if request.live_status is not None and request.progress is not None:
+    if body.live_status is not None and body.progress is not None:
         # Updating the workflow run table with live_status, progress, and updated_at
         update_stmt = (
             update(WorkflowRun)
-            .where(WorkflowRun.id == request.run_id)
+            .where(WorkflowRun.id == body.run_id)
             .values(
-                live_status=request.live_status,
-                progress=request.progress,
+                live_status=body.live_status,
+                progress=body.progress,
                 updated_at=updated_at,
             )
             .returning(WorkflowRun)
@@ -176,13 +186,13 @@ async def update_run(
         progress_data = [
             (
                 uuid4(),
-                request.run_id,
+                body.run_id,
                 workflow_run.workflow_id,
                 workflow_run.machine_id,
                 updated_at,
-                request.progress,
-                request.live_status,
-                request.status,
+                body.progress,
+                body.live_status,
+                body.status,
             )
         ]
 
@@ -197,7 +207,7 @@ async def update_run(
 
         return {"status": "success"}
 
-    if request.log_data is not None:
+    if body.log_data is not None:
         # Cause all the logs will be sent to clickhouse now.
         return {"status": "success"}
         # update_stmt = (
@@ -209,21 +219,21 @@ async def update_run(
         # await db.commit()
         # return {"status": "success"}
 
-    if request.status == "started" and fixed_time is not None:
+    if body.status == "started" and fixed_time is not None:
         update_stmt = (
             update(WorkflowRun)
-            .where(WorkflowRun.id == request.run_id)
+            .where(WorkflowRun.id == body.run_id)
             .values(started_at=fixed_time, updated_at=updated_at)
         )
         await db.execute(update_stmt)
         await db.commit()
         # await db.refresh(workflow_run)
 
-    if request.status == "queued" and fixed_time is not None:
+    if body.status == "queued" and fixed_time is not None:
         # Ensure request.time is UTC-aware
         update_stmt = (
             update(WorkflowRun)
-            .where(WorkflowRun.id == request.run_id)
+            .where(WorkflowRun.id == body.run_id)
             .values(queued_at=fixed_time, updated_at=updated_at)
         )
         await db.execute(update_stmt)
@@ -231,24 +241,24 @@ async def update_run(
         # await db.refresh(workflow_run)
         # return {"status": "success"}
 
-    ended = request.status in ["success", "failed", "timeout", "cancelled"]
-    if request.output_data is not None:
+    ended = body.status in ["success", "failed", "timeout", "cancelled"]
+    if body.output_data is not None:
         # Sending to postgres
         newOutput = WorkflowRunOutput(
             id=uuid4(),  # Add this line to generate a new UUID for the primary key
             created_at=updated_at,
             updated_at=updated_at,
-            run_id=request.run_id,
-            data=request.output_data,
-            node_meta=request.node_meta,
+            run_id=body.run_id,
+            data=body.output_data,
+            node_meta=body.node_meta,
         )
         db.add(newOutput)
         await db.commit()
         await db.refresh(newOutput)
-    elif request.status is not None:
+    elif body.status is not None:
         # Get existing run
         existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == request.run_id)
+            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
         )
         workflow_run = existing_run.scalar_one_or_none()
         workflow_run = cast(WorkflowRun, workflow_run)
@@ -257,11 +267,11 @@ async def update_run(
             raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
         # If the run is already cancelled, don't update it
-        if request.status == "cancelled":
+        if body.status == "cancelled":
             return {"status": "success"}
 
         # Update the run status
-        update_data = {"status": request.status, "updated_at": updated_at}
+        update_data = {"status": body.status, "updated_at": updated_at}
         if ended and fixed_time is not None:
             update_data["ended_at"] = fixed_time
 
@@ -269,13 +279,13 @@ async def update_run(
         progress_data = [
             (
                 uuid4(),
-                request.run_id,
+                body.run_id,
                 workflow_run.workflow_id,
                 workflow_run.machine_id,
                 updated_at,
-                request.progress,
-                request.live_status,
-                request.status,
+                body.progress,
+                body.live_status,
+                body.status,
             )
         ]
 
@@ -284,20 +294,20 @@ async def update_run(
         )
 
         update_values = {
-            "status": request.status,
+            "status": body.status,
             "ended_at": updated_at if ended else None,
             "updated_at": updated_at,
         }
 
         # Add modal_function_call_id if it's provided and the existing value is empty
-        if request.modal_function_call_id:
-            update_values["modal_function_call_id"] = request.modal_function_call_id
+        if body.modal_function_call_id:
+            update_values["modal_function_call_id"] = body.modal_function_call_id
 
         # print("modal_function_call_id", request.modal_function_call_id)
 
         update_stmt = (
             update(WorkflowRun)
-            .where(WorkflowRun.id == request.run_id)
+            .where(WorkflowRun.id == body.run_id)
             .values(**update_values)
             .returning(WorkflowRun)
         )
@@ -309,11 +319,14 @@ async def update_run(
 
         # Get all outputs for the workflow run
         outputs_query = select(WorkflowRunOutput).where(
-            WorkflowRunOutput.run_id == request.run_id
+            WorkflowRunOutput.run_id == body.run_id
         )
         outputs_result = await db.execute(outputs_query)
         outputs = outputs_result.scalars().all()
 
+        user_settings = await get_user_settings(request, db)
+        if outputs:
+            post_process_outputs(outputs, user_settings)
         # Instead of setting outputs directly, create a new dictionary with all the data
         workflow_run_data = workflow_run.to_dict()
         workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
@@ -407,31 +420,26 @@ async def get_file_upload_url(
     public: bool = Query(
         True, description="Whether to make the file publicly accessible"
     ),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        user_query = (
-            select(UserSettings).apply_org_check(request)
-        )
-        user_settings = await db.execute(user_query)
-        user_settings = user_settings.scalar_one_or_none()
-        user_settings = cast(Optional[UserSettings], user_settings)
-        
-        bucket=os.getenv("SPACES_BUCKET_V2")
-        region=os.getenv("SPACES_REGION_V2")
-        access_key=os.getenv("SPACES_KEY_V2")
-        secret_key=os.getenv("SPACES_SECRET_V2")
-        
+        user_settings = await get_user_settings(request, db)
+
+        bucket = os.getenv("SPACES_BUCKET_V2")
+        region = os.getenv("SPACES_REGION_V2")
+        access_key = os.getenv("SPACES_KEY_V2")
+        secret_key = os.getenv("SPACES_SECRET_V2")
+
         if user_settings is not None:
             if user_settings.output_visibility == "private":
                 public = False
-                
+
             if user_settings.custom_output_bucket:
-                bucket=user_settings.s3_bucket_name
-                region=user_settings.s3_region
-                access_key=user_settings.s3_access_key_id
-                secret_key=user_settings.s3_secret_access_key
-        
+                bucket = user_settings.s3_bucket_name
+                region = user_settings.s3_region
+                access_key = user_settings.s3_access_key_id
+                secret_key = user_settings.s3_secret_access_key
+
         # Generate the object key
         object_key = f"outputs/runs/{run_id}/{file_name}"
 
@@ -443,7 +451,6 @@ async def get_file_upload_url(
             size=size,
             content_type=type,
             public=public,
-            
             bucket=bucket,
             region=region,
             access_key=access_key,
@@ -457,119 +464,11 @@ async def get_file_upload_url(
         #     # Set the object ACL to public-read after upload
         #     set_object_acl_public(os.getenv("SPACES_BUCKET_V2"), object_key)
 
-        return {"url": upload_url, "download_url": download_url, "include_acl": public, "is_public": public}
+        return {
+            "url": upload_url,
+            "download_url": download_url,
+            "include_acl": public,
+            "is_public": public,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-def generate_presigned_url(
-    bucket,
-    object_key,
-    region: str,
-    access_key: str,
-    secret_key: str,
-    expiration=3600,
-    http_method="PUT",
-    size=None,
-    content_type=None,
-    public=False,
-):
-    s3_client = boto3.client(
-        "s3",
-        region_name=region,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        config=Config(signature_version="s3v4"),
-    )
-    params = {
-        "Bucket": bucket,
-        "Key": object_key,
-    }
-
-    if public:
-        params["ACL"] = "public-read"
-
-    # if size is not None:
-    #     params["ContentLength"] = size
-    if content_type is not None:
-        params["ContentType"] = content_type
-
-    try:
-        response = s3_client.generate_presigned_url(
-            ClientMethod=f"{http_method.lower()}_object",
-            Params=params,
-            ExpiresIn=expiration,
-            HttpMethod=http_method,
-        )
-    except ClientError as e:
-        print(e)
-        return None
-
-    return response
-
-
-async def send_workflow_update(workflow_id: str, data: dict):
-    logging.info(f"Sending updateWorkflow event via POST: {workflow_id}")
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/updateWorkflow"
-            json_data = json.dumps({"workflowId": workflow_id, "data": data})
-            async with session.post(
-                url, data=json_data, headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status >= 400:
-                    raise aiohttp.ClientResponseError(
-                        response.request_info,
-                        response.history,
-                        status=response.status,
-                        message=f"Failed to send update: {response.reason}",
-                        headers=response.headers,
-                    )
-    except Exception as error:
-        print(data)
-        logging.error(f"Error sending updateWorkflow event: {error}")
-
-
-async def send_realtime_update(id: str, data: dict):
-    logging.info(f"Sending updateWorkflow event via POST: {id}")
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/update"
-            json_data = json.dumps({"id": id, "data": data})
-            async with session.post(
-                url, data=json_data, headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status >= 400:
-                    raise aiohttp.ClientResponseError(
-                        response.request_info,
-                        response.history,
-                        status=response.status,
-                        message=f"Failed to send update: {response.reason}",
-                        headers=response.headers,
-                    )
-    except Exception as error:
-        print(data)
-        logging.error(f"Error sending updateWorkflow event: {error}")
-
-
-async def fetch_with_timeout(url, options, timeout=20):
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.request(
-                options.get("method", "GET"), url, **options, timeout=timeout
-            ) as response:
-                return response
-    except asyncio.TimeoutError:
-        raise TimeoutError("Request timed out")
-
-
-async def retry_fetch(url, options, num_retries=3):
-    for i in range(num_retries):
-        try:
-            response = await fetch_with_timeout(url, options)
-            if not response.ok and i < num_retries - 1:
-                continue  # Retry if the response is not ok and retries are left
-            return response
-        except Exception as error:
-            if i == num_retries - 1:
-                raise error  # Throw error if it's the last retry

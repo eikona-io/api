@@ -20,7 +20,7 @@ from datetime import datetime
 import json
 from datetime import timezone
 from sqlalchemy.orm import column_property
-
+from decimal import Decimal
 Base = declarative_base()
 
 metadata = MetaData(schema="comfyui_deploy")
@@ -29,10 +29,15 @@ metadata = MetaData(schema="comfyui_deploy")
 class SerializableMixin:
     def to_dict(self):
         try:
+            # return {
+            #     c.key: self._serialize_value(getattr(self, c.key))
+            #     for c in sqlalchemy_inspect(self.__class__).mapper.column_attrs
+            #     if hasattr(self, c.key)
+            # }
             return {
-                c.key: self._serialize_value(getattr(self, c.key))
-                for c in sqlalchemy_inspect(self.__class__).mapper.column_attrs
-                if hasattr(self, c.key)
+                attr: self._serialize_value(getattr(self, attr))
+                for attr in self.__dict__
+                if not attr.startswith('_')
             }
         except Exception as e:
             print(f"Error in to_dict: {str(e)}")
@@ -48,7 +53,10 @@ class SerializableMixin:
             return [self._serialize_value(item) for item in value]
         if isinstance(value, dict):
             return {k: self._serialize_value(v) for k, v in value.items()}
-        if hasattr(value, 'to_dict'):
+        if isinstance(value, Decimal):
+            return str(value)
+        # Check if the object has a to_dict method and is potentially a SerializableMixin
+        if hasattr(value, 'to_dict') and callable(value.to_dict):
             return value.to_dict()
         return value
 
@@ -184,23 +192,23 @@ class WorkflowRun(SerializableMixin, Base):
     outputs = relationship("WorkflowRunOutput", back_populates="run")
 
 
+class WorkflowRunWithExtra(WorkflowRun):
+    pass
+
 # Add these properties to your WorkflowRun model
-WorkflowRun.number = column_property(
+WorkflowRunWithExtra.number = column_property(
     func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
 )
-# WorkflowRun.total = column_property(
-#     func.count().over().label("total")
-# )
-WorkflowRun.duration = column_property(
+WorkflowRunWithExtra.duration = column_property(
     (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.created_at)).label("duration")
 )
-WorkflowRun.cold_start_duration = column_property(
+WorkflowRunWithExtra.cold_start_duration = column_property(
     (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.queued_at)).label("cold_start_duration")
 )
-WorkflowRun.cold_start_duration_total = column_property(
+WorkflowRunWithExtra.cold_start_duration_total = column_property(
     (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.created_at)).label("cold_start_duration_total")
 )
-WorkflowRun.run_duration = column_property(
+WorkflowRunWithExtra.run_duration = column_property(
     (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.started_at)).label("run_duration")
 )
 

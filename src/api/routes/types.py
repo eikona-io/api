@@ -48,6 +48,13 @@ class WorkflowRunOutputModel(BaseModel):
     updated_at: datetime
 
 
+def format_datetime(dt: Optional[datetime]) -> Optional[str]:
+    print(dt)
+    if dt is None:
+        return None
+    return dt.isoformat()[:-3] + "Z"
+
+
 class WorkflowRunModel(BaseModel):
     id: UUID
     workflow_version_id: Optional[UUID]
@@ -57,11 +64,15 @@ class WorkflowRunModel(BaseModel):
     machine_id: Optional[UUID]
     origin: str
     status: str
-    ended_at: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
-    queued_at: Optional[datetime]
-    started_at: Optional[datetime]
+    ended_at: Optional[datetime] = Field(default=None, serialization_fn=format_datetime)
+    created_at: datetime = Field(serialization_fn=format_datetime)
+    updated_at: datetime = Field(serialization_fn=format_datetime)
+    queued_at: Optional[datetime] = Field(
+        default=None, serialization_fn=format_datetime
+    )
+    started_at: Optional[datetime] = Field(
+        default=None, serialization_fn=format_datetime
+    )
     gpu_event_id: Optional[str]
     gpu: Optional[str]
     machine_version: Optional[str]
@@ -76,7 +87,7 @@ class WorkflowRunModel(BaseModel):
     webhook_status: Optional[str]
     webhook_intermediate_status: bool = Field(default=False)
     outputs: List[WorkflowRunOutputModel] = []
-    
+
     number: int
     # total: int
     duration: Optional[float]
@@ -85,7 +96,7 @@ class WorkflowRunModel(BaseModel):
     run_duration: Optional[float]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class WorkflowRunOrigin(str, Enum):

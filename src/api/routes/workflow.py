@@ -1,3 +1,5 @@
+import os
+from .utils import ensure_run_timeout, get_user_settings
 from .types import (
     WorkflowRunModel,
 )
@@ -5,13 +7,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from .utils import select
+from .utils import post_process_outputs, select
 from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
+from fastapi.responses import JSONResponse
+from pprint import pprint
 
 # from sqlalchemy import select
 from api.models import (
     WorkflowRun,
+    WorkflowRunWithExtra,
 )
 from api.database import get_db
 import logging
@@ -31,8 +36,10 @@ async def get_all_runs(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
+    user_settings = await get_user_settings(request, db)
+    
     query = (
-        select(WorkflowRun)
+        select(WorkflowRunWithExtra)
         .options(joinedload(WorkflowRun.outputs))
         .where(WorkflowRun.workflow_id == workflow_id)
         .apply_org_check(request)
@@ -46,28 +53,17 @@ async def get_all_runs(
     if not runs:
         raise HTTPException(status_code=404, detail="Runs not found")
 
-    # Apply timeout logic
-    timeout_minutes = 15
-    timeout_delta = timedelta(minutes=timeout_minutes)
-    now = datetime.now(timezone.utc)
-
     for run in runs:
-        # Not started for 15 mins
-        if run.status == "not-started" and now - run.created_at.replace(tzinfo=timezone.utc) > timeout_delta:
-            run.status = "timeout"
+        ensure_run_timeout(run)
         
-        # Queued for 15 mins
-        elif run.status == "queued" and run.queued_at and now - run.queued_at.replace(tzinfo=timezone.utc) > timeout_delta:
-            run.status = "timeout"
-        
-        # Started for 15 mins
-        elif run.status == "started" and run.started_at and now - run.started_at.replace(tzinfo=timezone.utc) > timeout_delta:
-            run.status = "timeout"
-        
-        # Running and not updated in the last 15 mins
-        elif run.status not in ["success", "failed", "timeout", "cancelled"]:
-            updated_at = run.updated_at.replace(tzinfo=timezone.utc) if run.updated_at.tzinfo is None else run.updated_at
-            if now - updated_at > timeout_delta:
-                run.status = "timeout"
 
-    return runs
+    # Loop through each run and check its outputs
+    for run in runs:
+        if run.outputs:
+            post_process_outputs(run.outputs, user_settings)
+
+    # return runs
+
+    runs_data = [run.to_dict() for run in runs]
+
+    return JSONResponse(content=runs_data)
