@@ -21,7 +21,7 @@ import logging
 from scalar_fastapi import get_scalar_api_reference
 from fastapi.openapi.utils import get_openapi
 # import all you need from fastapi-pagination
-from fastapi_pagination import Page, add_pagination, paginate
+# from fastapi_pagination import Page, add_pagination, paginate
 
 load_dotenv()
 logfire.configure()
