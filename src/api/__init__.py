@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, hello, internal, workflow, log
+from api.routes import run, hello, internal, workflow, log, workflows
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
@@ -116,6 +116,7 @@ app.openapi = custom_openapi
 # Include routers
 app.include_router(run.router, prefix="/api")
 app.include_router(internal.router, prefix="/api")
+app.include_router(workflows.router, prefix="/api")
 app.include_router(workflow.router, prefix="/api")
 app.include_router(log.router, prefix="/api")
 app.include_router(hello.router)

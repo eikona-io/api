@@ -54,6 +54,22 @@ def format_datetime(dt: Optional[datetime]) -> Optional[str]:
         return None
     return dt.isoformat()[:-3] + "Z"
 
+class WorkflowModel(BaseModel):
+    id: UUID
+    user_id: str
+    org_id: Optional[str]
+    name: str
+    selected_machine_id: Optional[UUID]
+    created_at: datetime = Field(serialization_fn=format_datetime)
+    updated_at: datetime = Field(serialization_fn=format_datetime)
+    pinned: bool = False
+
+    class Config:
+        from_attributes = True
+
+class WorkflowListResponse(BaseModel):
+    workflows: List[WorkflowModel]
+    query_length: int
 
 class WorkflowRunModel(BaseModel):
     id: UUID
