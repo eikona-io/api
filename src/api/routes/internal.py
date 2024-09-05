@@ -245,6 +245,22 @@ async def update_run(
         db.add(newOutput)
         await db.commit()
         await db.refresh(newOutput)
+
+        # TODO: Send to upload to clickhouse
+        # output_data = [
+        #     (
+        #         uuid4(),
+        #         request.run_id,
+        #         workflow_run.workflow_id,
+        #         workflow_run.machine_id,
+        #         updated_at,
+        #         json.dumps(request.output_data),
+        #         json.dumps(request.node_meta),
+        #     )
+        # ]
+        # background_tasks.add_task(insert_to_clickhouse, client, "outputs", output_data)
+        
+
     elif request.status is not None:
         # Get existing run
         existing_run = await db.execute(
