@@ -5,7 +5,7 @@ from typing import List, Optional
 from .types import WorkflowListResponse, WorkflowModel
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import select, post_process_outputs
+from .utils import post_process_output_data, select, post_process_outputs
 from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion
 from .utils import get_user_settings
 from sqlalchemy import func, select as sa_select, distinct, and_, or_
@@ -133,6 +133,11 @@ async def get_workflows(
         dict(row._mapping)
         for row in result.fetchall()
     ]
+    
+    user_settings = await get_user_settings(request, db)
+    for workflow in workflows:
+        if workflow["latest_output"]:
+            post_process_output_data(workflow["latest_output"], user_settings)
 
     # Use the custom encoder to serialize the data
     return JSONResponse(

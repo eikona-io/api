@@ -94,6 +94,12 @@ def ensure_run_timeout(run):
 
 
 def post_process_outputs(outputs, user_settings):
+    for output in outputs:
+        if output.data and isinstance(output.data, dict):
+            post_process_output_data(output.data, user_settings)
+
+
+def post_process_output_data(data, user_settings):
     bucket = os.getenv("SPACES_BUCKET_V2")
     region = os.getenv("SPACES_REGION_V2")
     access_key = os.getenv("SPACES_KEY_V2")
@@ -109,24 +115,19 @@ def post_process_outputs(outputs, user_settings):
             access_key = user_settings.s3_access_key_id
             secret_key = user_settings.s3_secret_access_key
 
-    for output in outputs:
-        if output.data and isinstance(output.data, dict):
-            # Check if 'is_public' is False in the output data
-            # pprint(output.data)
-            for upload_type in ["images", "files", "gifs", "mesh"]:
-                if upload_type in output.data:
-                    for output_item in output.data[upload_type]:
-                        if output_item.get("is_public") is False:
-                            # pprint(output_item)
-                            # Replace the output URL with a session key
-                            if "url" in output_item:
-                                output_item["url"] = get_temporary_download_url(
-                                    output_item["url"],
-                                    region,
-                                    access_key,
-                                    secret_key,
-                                )
-                                # print(output_item["url"])
+    for upload_type in ["images", "files", "gifs", "mesh"]:
+        if upload_type in data:
+            for output_item in data[upload_type]:
+                if output_item.get("is_public") is False:
+                    # pprint(output_item)
+                    # Replace the output URL with a session key
+                    if "url" in output_item:
+                        output_item["url"] = get_temporary_download_url(
+                            output_item["url"],
+                            region,
+                            access_key,
+                            secret_key,
+                        )
 
 
 async def get_user_settings(request: Request, db: AsyncSession):
