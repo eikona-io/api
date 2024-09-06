@@ -51,8 +51,8 @@ async def get_all_runs(
     runs = result.unique().scalars().all()
 
     if not runs:
-        raise HTTPException(status_code=404, detail="Runs not found")
-
+        # raise HTTPException(status_code=404, detail="Runs not found")
+        return []
     for run in runs:
         ensure_run_timeout(run)
         

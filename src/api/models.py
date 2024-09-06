@@ -79,12 +79,12 @@ class Workflow(SerializableMixin, Base):
     updated_at = Column(DateTime(timezone=True), nullable=False)
     pinned = Column(Boolean, nullable=False, default=False)
 
-    # user = relationship("User", back_populates="workflows")
-    # versions = relationship("WorkflowVersion", back_populates="workflow_rel")
-    # deployments = relationship("Deployment", back_populates="workflow")
+    user = relationship("User", back_populates="workflows")
+    versions = relationship("WorkflowVersion", back_populates="workflow_rel")
+    deployments = relationship("Deployment", back_populates="workflow")
     # selected_machine = relationship("Machine", foreign_keys=[selected_machine_id])
     # machine = relationship("Machine", back_populates="workflows", foreign_keys=[selected_machine_id])
-    # runs = relationship("WorkflowRun", back_populates="workflow")
+    runs = relationship("WorkflowRun", back_populates="workflow")
 
 
 class WorkflowVersion(SerializableMixin, Base):
@@ -107,7 +107,7 @@ class WorkflowVersion(SerializableMixin, Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
-    # workflow_rel = relationship("Workflow", back_populates="versions")
+    workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")
     
     
@@ -122,7 +122,7 @@ class WorkflowRun(SerializableMixin, Base):
     id = Column(UUID(as_uuid=True), primary_key=True)
     workflow_version_id = Column(UUID(as_uuid=True), nullable=True)
     workflow_inputs = Column(JSON)
-    workflow_id = Column(UUID(as_uuid=True))
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="NO ACTION"), nullable=False)
     workflow_api = Column(JSON)
     machine_id = Column(UUID(as_uuid=True), nullable=True)
     origin = Column(
@@ -188,7 +188,7 @@ class WorkflowRun(SerializableMixin, Base):
     
     batch_id = Column(UUID(as_uuid=True))
 
-    # workflow = relationship("Workflow", back_populates="runs")
+    workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")
 
 
@@ -255,10 +255,11 @@ class User(SerializableMixin, Base):
     metadata = metadata
 
     id = Column(String, primary_key=True)
+    name = Column(String)
     # Add other user fields as needed
 
     # api_keys = relationship("APIKey", back_populates="user")
-    # workflows = relationship("Workflow", back_populates="user")
+    workflows = relationship("Workflow", back_populates="user")
     # workflow_versions = relationship("WorkflowVersion", back_populates="user")
 
 
@@ -297,7 +298,7 @@ class Deployment(SerializableMixin, Base):
 
     # machine = relationship("Machine")
     # version = relationship("WorkflowVersion")
-    # workflow = relationship("Workflow")
+    workflow = relationship("Workflow")
     # user = relationship("User")
 
 

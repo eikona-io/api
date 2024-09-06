@@ -63,7 +63,7 @@ class WorkflowModel(BaseModel):
     created_at: datetime = Field(serialization_fn=format_datetime)
     updated_at: datetime = Field(serialization_fn=format_datetime)
     pinned: bool = False
-
+    
     class Config:
         from_attributes = True
 
