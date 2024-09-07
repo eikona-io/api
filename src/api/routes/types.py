@@ -113,7 +113,23 @@ class WorkflowRunModel(BaseModel):
 
     class Config:
         from_attributes = True
+        
 
+class WorkflowVersionModel(BaseModel):
+    id: UUID
+    workflow_id: UUID
+    workflow: Dict[str, Any]
+    workflow_api: Dict[str, Any]
+    user_id: Optional[str]
+    comment: Optional[str]
+    version: int
+    snapshot: Optional[Dict[str, Any]]
+    dependencies: Optional[Dict[str, Any]]
+    created_at: datetime = Field(serialization_fn=format_datetime)
+    updated_at: datetime = Field(serialization_fn=format_datetime)
+
+    class Config:
+        from_attributes = True
 
 class WorkflowRunOrigin(str, Enum):
     MANUAL = "manual"
