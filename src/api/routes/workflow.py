@@ -1,3 +1,4 @@
+import asyncio
 import os
 from .utils import ensure_run_timeout, get_user_settings
 from .types import (
@@ -14,7 +15,26 @@ from datetime import datetime, timedelta, timezone
 from fastapi.responses import JSONResponse
 from pprint import pprint
 
-# from sqlalchemy import select
+import httpx
+from functools import lru_cache, wraps
+
+def async_lru_cache(maxsize=128, typed=False):
+    def decorator(async_func):
+        sync_func = lru_cache(maxsize=maxsize, typed=typed)(lambda *args, **kwargs: None)
+        
+        @wraps(async_func)
+        async def wrapper(*args, **kwargs):
+            cache_key = args + tuple(sorted(kwargs.items()))
+            cached_result = sync_func(*cache_key)
+            if cached_result is not None:
+                return cached_result
+            result = await async_func(*args, **kwargs)
+            sync_func(*cache_key, result)
+            return result
+        
+        return wrapper
+    return decorator
+
 from api.models import (
     Workflow,
     WorkflowRun,
@@ -29,6 +49,35 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Workflow"])
+
+# Add this cache at the module level
+user_icon_cache = {}
+
+@async_lru_cache(maxsize=1000)
+async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
+    current_time = datetime.now()
+
+    # Check if the user_id is in the cache and not expired (1 day)
+    if user_id in user_icon_cache:
+        cached_data, timestamp = user_icon_cache[user_id]
+        if current_time - timestamp < timedelta(days=1):
+            return user_id, cached_data
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {clerk_token}"},
+        )
+        if response.status_code == 200:
+            user_data = response.json()
+            image_url = user_data.get("image_url")
+            # Update the cache
+            user_icon_cache[user_id] = (image_url, current_time)
+            return user_id, image_url
+
+    # If fetching fails, cache None for 1 hour to avoid frequent retries
+    user_icon_cache[user_id] = (None, current_time)
+    return user_id, None
 
 
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
@@ -71,6 +120,9 @@ async def get_all_runs(
     return JSONResponse(content=runs_data)
 
 
+clerk_token = os.getenv("CLERK_SECRET_KEY")
+
+
 @router.get(
     "/workflow/{workflow_id}/versions", response_model=List[WorkflowVersionModel]
 )
@@ -101,15 +153,28 @@ async def get_versions(
     )
 
     if search:
-        query = query.where(func.lower(WorkflowVersion.comment).contains(search.lower()))
+        query = query.where(
+            func.lower(WorkflowVersion.comment).contains(search.lower())
+        )
 
     result = await db.execute(query)
     runs = result.unique().scalars().all()
 
+    unique_user_ids = list(set(run.user_id for run in runs if run.user_id))
+
+    # Fetch user icons using the cached function
+    results = await asyncio.gather(
+        *[fetch_user_icon(user_id) for user_id in unique_user_ids]
+    )
+
+    # Process results
+    user_icons = dict(results)
+
     if not runs:
-        # raise HTTPException(status_code=404, detail="Runs not found")
         return []
 
-    runs_data = [run.to_dict() for run in runs]
+    runs_data = [
+        {**run.to_dict(), "user_icon": user_icons.get(run.user_id)} for run in runs
+    ]
 
     return JSONResponse(content=runs_data)
