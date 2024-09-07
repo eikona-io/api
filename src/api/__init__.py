@@ -118,6 +118,7 @@ app.include_router(run.router, prefix="/api")
 app.include_router(internal.router, prefix="/api")
 app.include_router(workflows.router, prefix="/api")
 app.include_router(workflow.router, prefix="/api")
+app.include_router(machines.router, prefix="/api")
 app.include_router(log.router, prefix="/api")
 app.include_router(hello.router)
 
