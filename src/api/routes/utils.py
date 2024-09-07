@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
+from functools import wraps
+from http.client import HTTPException
 import logging
-from typing import Any, Self, TypeVar, Tuple
+from typing import Any, Literal, Self, TypeVar, Tuple, Union
 from fastapi import Request
 from sqlalchemy import GenerativeSelect, Select
 from sqlalchemy.orm import declarative_base
@@ -19,7 +21,7 @@ from botocore.exceptions import ClientError
 from urllib.parse import urlparse
 import asyncio
 from fastapi import Depends
-
+from fastapi.responses import JSONResponse
 Base = declarative_base()
 
 T = TypeVar("T")
@@ -301,3 +303,45 @@ async def retry_fetch(url, options, num_retries=3):
         except Exception as error:
             if i == num_retries - 1:
                 raise error  # Throw error if it's the last retry
+
+
+PermissionType = Literal[
+    "org:machines:read",
+    "org:machines:read_all",
+    "org:machines:write",
+    "org:machines:write_all",
+    "org:workflows:read",
+    "org:workflows:read_all",
+    "org:workflows:write",
+    "org:workflows:write_all",
+]
+
+
+def require_permission(permission: Union[PermissionType, list[PermissionType]]):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(request: Request, *args, **kwargs):
+            if not has(request, permission):
+                # raise HTTPException(status_code=403, detail="Permission denied")
+                return JSONResponse(status_code=403, content={"detail": "Permission denied"})
+            return await func(request, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def has(
+    request: Request, permission: Union[PermissionType, list[PermissionType]]
+) -> bool:
+    current_user = request.state.current_user
+
+    if current_user is None:
+        return False
+
+    user_permissions = current_user.get("org_permissions", [])
+
+    if isinstance(permission, str):
+        return permission in user_permissions
+    elif isinstance(permission, list):
+        return all(perm in user_permissions for perm in permission)

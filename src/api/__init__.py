@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, hello, internal, workflow, log, workflows
+from api.routes import run, hello, internal, workflow, log, workflows, machines
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
@@ -22,7 +22,7 @@ from scalar_fastapi import get_scalar_api_reference
 from fastapi.openapi.utils import get_openapi
 # import all you need from fastapi-pagination
 # from fastapi_pagination import Page, add_pagination, paginate
-
+from pprint import pprint
 load_dotenv()
 logfire.configure()
 logger = logfire
@@ -132,6 +132,7 @@ async def scalar_html():
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
+CLERK_PUBLIC_JWT_KEY = os.getenv("CLERK_PUBLIC_JWT_KEY")
 ALGORITHM = "HS256"
 
 
@@ -142,7 +143,14 @@ async def parse_jwt(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
-
+    
+    
+async def parse_clerk_jwt(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, CLERK_PUBLIC_JWT_KEY, algorithms=['RS256'])
+        return payload
+    except JWTError:
+        return None
 
 # Function to check if key is revoked
 async def is_key_revoked(key: str, db: AsyncSession) -> bool:
@@ -161,7 +169,13 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 
     token = auth_header.split(" ")[1]
     user_data = await parse_jwt(token)
-
+    
+    if not user_data:
+        user_data = await parse_clerk_jwt(token)
+        # backward compatibility for old clerk tokens
+        if user_data is not None:
+            user_data['user_id'] = user_data['sid']
+    
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
