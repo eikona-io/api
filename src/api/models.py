@@ -19,7 +19,8 @@ import uuid
 from datetime import datetime
 import json
 from datetime import timezone
-
+from sqlalchemy.orm import column_property
+from decimal import Decimal
 Base = declarative_base()
 
 metadata = MetaData(schema="comfyui_deploy")
@@ -28,10 +29,15 @@ metadata = MetaData(schema="comfyui_deploy")
 class SerializableMixin:
     def to_dict(self):
         try:
+            # return {
+            #     c.key: self._serialize_value(getattr(self, c.key))
+            #     for c in sqlalchemy_inspect(self.__class__).mapper.column_attrs
+            #     if hasattr(self, c.key)
+            # }
             return {
-                c.key: self._serialize_value(getattr(self, c.key))
-                for c in sqlalchemy_inspect(self.__class__).mapper.column_attrs
-                if hasattr(self, c.key)
+                attr: self._serialize_value(getattr(self, attr))
+                for attr in self.__dict__
+                if not attr.startswith('_')
             }
         except Exception as e:
             print(f"Error in to_dict: {str(e)}")
@@ -47,7 +53,10 @@ class SerializableMixin:
             return [self._serialize_value(item) for item in value]
         if isinstance(value, dict):
             return {k: self._serialize_value(v) for k, v in value.items()}
-        if hasattr(value, 'to_dict'):
+        if isinstance(value, Decimal):
+            return str(value)
+        # Check if the object has a to_dict method and is potentially a SerializableMixin
+        if hasattr(value, 'to_dict') and callable(value.to_dict):
             return value.to_dict()
         return value
 
@@ -70,12 +79,12 @@ class Workflow(SerializableMixin, Base):
     updated_at = Column(DateTime(timezone=True), nullable=False)
     pinned = Column(Boolean, nullable=False, default=False)
 
-    # user = relationship("User", back_populates="workflows")
-    # versions = relationship("WorkflowVersion", back_populates="workflow_rel")
-    # deployments = relationship("Deployment", back_populates="workflow")
+    user = relationship("User", back_populates="workflows")
+    versions = relationship("WorkflowVersion", back_populates="workflow_rel")
+    deployments = relationship("Deployment", back_populates="workflow")
     # selected_machine = relationship("Machine", foreign_keys=[selected_machine_id])
     # machine = relationship("Machine", back_populates="workflows", foreign_keys=[selected_machine_id])
-    # runs = relationship("WorkflowRun", back_populates="workflow")
+    runs = relationship("WorkflowRun", back_populates="workflow")
 
 
 class WorkflowVersion(SerializableMixin, Base):
@@ -98,7 +107,7 @@ class WorkflowVersion(SerializableMixin, Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
-    # workflow_rel = relationship("Workflow", back_populates="versions")
+    workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")
     
     
@@ -113,7 +122,7 @@ class WorkflowRun(SerializableMixin, Base):
     id = Column(UUID(as_uuid=True), primary_key=True)
     workflow_version_id = Column(UUID(as_uuid=True), nullable=True)
     workflow_inputs = Column(JSON)
-    workflow_id = Column(UUID(as_uuid=True))
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="NO ACTION"), nullable=False)
     workflow_api = Column(JSON)
     machine_id = Column(UUID(as_uuid=True), nullable=True)
     origin = Column(
@@ -179,8 +188,29 @@ class WorkflowRun(SerializableMixin, Base):
     
     batch_id = Column(UUID(as_uuid=True))
 
-    # workflow = relationship("Workflow", back_populates="runs")
+    workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")
+
+
+class WorkflowRunWithExtra(WorkflowRun):
+    pass
+
+# Add these properties to your WorkflowRun model
+WorkflowRunWithExtra.number = column_property(
+    func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
+)
+WorkflowRunWithExtra.duration = column_property(
+    (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.created_at)).label("duration")
+)
+WorkflowRunWithExtra.cold_start_duration = column_property(
+    (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.queued_at)).label("cold_start_duration")
+)
+WorkflowRunWithExtra.cold_start_duration_total = column_property(
+    (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.created_at)).label("cold_start_duration_total")
+)
+WorkflowRunWithExtra.run_duration = column_property(
+    (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.started_at)).label("run_duration")
+)
 
 
 class WorkflowRunOutput(SerializableMixin, Base):
@@ -225,10 +255,11 @@ class User(SerializableMixin, Base):
     metadata = metadata
 
     id = Column(String, primary_key=True)
+    name = Column(String)
     # Add other user fields as needed
 
     # api_keys = relationship("APIKey", back_populates="user")
-    # workflows = relationship("Workflow", back_populates="user")
+    workflows = relationship("Workflow", back_populates="user")
     # workflow_versions = relationship("WorkflowVersion", back_populates="user")
 
 
@@ -267,7 +298,7 @@ class Deployment(SerializableMixin, Base):
 
     # machine = relationship("Machine")
     # version = relationship("WorkflowVersion")
-    # workflow = relationship("Workflow")
+    workflow = relationship("Workflow")
     # user = relationship("User")
 
 
@@ -365,5 +396,25 @@ class Machine(SerializableMixin, Base):
     filename_list_cache = Column(JSON)
     extensions = Column(JSON)
 
+
+class UserSettings(SerializableMixin, Base):
+    __tablename__ = "user_settings"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
+    org_id = Column(String)
+    output_visibility = Column(Enum("public", "private", name="output_visibility"), default="public")
+    custom_output_bucket = Column(Boolean, default=False)
+    s3_access_key_id = Column(String)
+    s3_secret_access_key = Column(String)
+    s3_bucket_name = Column(String)
+    s3_region = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Optionally, add relationship to User model
+    # user = relationship("User", back_populates="settings")
+    
     # target_workflow = relationship("Workflow", foreign_keys=[target_workflow_id])
     # workflows = relationship("Workflow", back_populates="machine", foreign_keys=[Workflow.selected_machine_id])

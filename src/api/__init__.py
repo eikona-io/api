@@ -13,40 +13,125 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, hello, internal
+from api.routes import run, hello, internal, workflow, log, workflows
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
 import logging
+from scalar_fastapi import get_scalar_api_reference
+from fastapi.openapi.utils import get_openapi
+# import all you need from fastapi-pagination
+# from fastapi_pagination import Page, add_pagination, paginate
 
 load_dotenv()
 logfire.configure()
 logger = logfire
 logging.basicConfig(level=logging.INFO)
+
 # logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 
-app = FastAPI()
+# Replace the existing oauth2_scheme declaration with this:
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="token",
+    scopes={
+        # "read:runs": "Read access to runs",
+        # "write:runs": "Write access to runs",
+        # Add more scopes as needed
+    },
+)
+
+
+app = FastAPI(
+    servers=[
+        {"url": "https://api.comfydeploy.com/api", "description": "Production server"},
+        {
+            "url": "https://staging.api.comfydeploy.com/api",
+            "description": "Staging server",
+        },
+        {"url": "http://localhost:3011/api", "description": "Local development server"},
+    ]
+)
+# add_pagination(app)
 logfire.instrument_fastapi(app)
 logfire.instrument_sqlalchemy(
     engine=engine.sync_engine,
 )
+
+app.openapi_schema = None  # Clear any existing schema
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title="ComfyDeploy API",
+        version="1.0.0",
+        description="API for ComfyDeploy",
+        routes=app.routes,
+    )
+
+    # Add Bearer Auth security scheme
+    # openapi_schema["components"]["securitySchemes"] = {
+    #     "Bearer": {
+    #         # "type": "oauth2",
+    #         # "flows": {
+    #         #     "authorizationCode": {
+    #         #         "authorizationUrl": "https://api.comfydeploy.com/api/oauth/authorize",
+    #         #         "tokenUrl": "https://api.comfydeploy.com/api/oauth/token",
+    #         #         # "scopes": {
+    #         #         #     "read:runs": "Read access to runs",
+    #         #         #     "write:runs": "Write access to runs",
+    #         #         #     # Add more scopes as needed
+    #         #         # },
+    #         #     }
+    #         # },
+    #     }
+    # }
+
+    # # Apply Bearer Auth security globally
+    # openapi_schema["security"] = [{"Bearer": []}]
+    
+        # Modify Bearer Auth security scheme
+    openapi_schema["components"]["securitySchemes"] = {
+        "Bearer": {
+            "type": "http",
+            "scheme": "bearer",
+        }
+    }
+
+    # Apply Bearer Auth security globally
+    openapi_schema["security"] = [{"Bearer": []}]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
 # logfire.install_auto_tracing()
 
 # Include routers
 app.include_router(run.router, prefix="/api")
 app.include_router(internal.router, prefix="/api")
+app.include_router(workflows.router, prefix="/api")
+app.include_router(workflow.router, prefix="/api")
+app.include_router(log.router, prefix="/api")
 app.include_router(hello.router)
 
-# Initialize database
-init_db()
+@app.get("/scalar", include_in_schema=False)
+async def scalar_html():
+    return get_scalar_api_reference(
+        openapi_url=app.openapi_url,
+        title=app.title,
+    )
+
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
 # Function to parse JWT
@@ -100,7 +185,13 @@ async def check_auth(request: Request, call_next):
     logger.info(f"Received request: {request.method} {request.url.path}")
 
     # List of routes to ignore for authentication
-    ignored_routes = ["/api/update-run", "/api/file-upload", "/api/gpu_event", "/api/machine-built", "/api/fal-webhook"]
+    ignored_routes = [
+        # "/api/update-run",
+        # "/api/file-upload",
+        "/api/gpu_event",
+        "/api/machine-built",
+        "/api/fal-webhook",
+    ]
 
     if request.url.path.startswith("/api") and request.url.path not in ignored_routes:
         try:
