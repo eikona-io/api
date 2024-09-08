@@ -120,7 +120,7 @@ class WorkflowRun(SerializableMixin, Base):
     metadata = metadata
 
     id = Column(UUID(as_uuid=True), primary_key=True)
-    workflow_version_id = Column(UUID(as_uuid=True), nullable=True)
+    workflow_version_id = Column(UUID(as_uuid=True), ForeignKey("workflow_versions.id"), nullable=True)
     workflow_inputs = Column(JSON)
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="NO ACTION"), nullable=False)
     workflow_api = Column(JSON)
@@ -190,6 +190,7 @@ class WorkflowRun(SerializableMixin, Base):
 
     workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")
+    version = relationship("WorkflowVersion", foreign_keys=[workflow_version_id])
 
 
 class WorkflowRunWithExtra(WorkflowRun):

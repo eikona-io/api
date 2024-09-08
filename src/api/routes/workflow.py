@@ -97,7 +97,12 @@ async def get_all_runs(
 
     query = (
         select(WorkflowRunWithExtra)
-        .options(joinedload(WorkflowRun.outputs))
+        .options(
+            joinedload(WorkflowRun.outputs),
+            joinedload(WorkflowRun.workflow),
+            joinedload(WorkflowRun.version)
+        )
+        .outerjoin(WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id)
         .where(WorkflowRun.workflow_id == workflow_id)
         .apply_org_check(request)
         .order_by(WorkflowRun.created_at.desc())
@@ -108,7 +113,6 @@ async def get_all_runs(
     runs = result.unique().scalars().all()
 
     if not runs:
-        # raise HTTPException(status_code=404, detail="Runs not found")
         return []
     for run in runs:
         ensure_run_timeout(run)
@@ -118,9 +122,14 @@ async def get_all_runs(
         if run.outputs:
             post_process_outputs(run.outputs, user_settings)
 
-    # return runs
-
-    runs_data = [run.to_dict() for run in runs]
+    runs_data = []
+    for run in runs:
+        run_dict = run.to_dict()
+        if run.version:
+            run_dict['version'] = run.version.to_dict()
+        else:
+            run_dict['version'] = None  # Explicitly set to None if no version
+        runs_data.append(run_dict)
 
     return JSONResponse(content=runs_data)
 
