@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 import asyncio
 from fastapi import Depends
 from fastapi.responses import JSONResponse
+
 Base = declarative_base()
 
 T = TypeVar("T")
@@ -30,7 +31,7 @@ T = TypeVar("T")
 def get_org_or_user_condition(target: Base, request: Request):
     current_user = request.state.current_user
     user_id = current_user["user_id"]
-    org_id = current_user["org_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
 
     return (
         (target.org_id == org_id)
@@ -304,20 +305,21 @@ async def retry_fetch(url, options, num_retries=3):
             if i == num_retries - 1:
                 raise error  # Throw error if it's the last retry
 
-# contributors
-    "org:workflows:read",
-    "org:workflows:write",
+    # contributors
+    ("org:workflows:read",)
+    ("org:workflows:write",)
+
 
 PermissionType = Literal[
     # API Permissions
     "api:runs:get",
     "api:runs:create",
-    # 
+    #
     "api:runs:update",
     "api:file_upload:get",
-    # 
+    #
     "api:machines:update",
-    # 
+    #
     "api:gpu_event:create",
     "api:gpu_event:update",
 ]
@@ -329,7 +331,9 @@ def require_permission(permission: Union[PermissionType, list[PermissionType]]):
         async def wrapper(request: Request, *args, **kwargs):
             if not has(request, permission):
                 # raise HTTPException(status_code=403, detail="Permission denied")
-                return JSONResponse(status_code=403, content={"detail": "Permission denied"})
+                return JSONResponse(
+                    status_code=403, content={"detail": "Permission denied"}
+                )
             return await func(request, *args, **kwargs)
 
         return wrapper

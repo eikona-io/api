@@ -228,7 +228,7 @@ async def get_workflows_gallery(
 
     current_user = request.state.current_user
     user_id = current_user["user_id"]
-    org_id = current_user["org_id"]
+    org_id = current_user["org_id"] if 'org_id' in current_user else None
 
     # Execute the query
     result = await db.execute(

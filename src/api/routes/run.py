@@ -96,6 +96,8 @@ async def create_run(
 
     workflow_id = None
     workflow_api_raw = None
+    
+    org_id = request.state.current_user["org_id"] if 'org_id' in request.state.current_user else None
 
     if isinstance(data, WorkflowRunVersionRequest):
         workflow_version_id = data.workflow_version_id
@@ -171,7 +173,7 @@ async def create_run(
             workflow_api=workflow_api_raw,
             # User
             user_id=request.state.current_user["user_id"],
-            org_id=request.state.current_user["org_id"],
+            org_id=org_id,
             origin=data.origin,
             # Machine
             machine_id=machine_id,

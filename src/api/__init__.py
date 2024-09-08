@@ -174,7 +174,7 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
         user_data = await parse_clerk_jwt(token)
         # backward compatibility for old clerk tokens
         if user_data is not None:
-            user_data['user_id'] = user_data['sid']
+            user_data['user_id'] = user_data['sub']
     
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
