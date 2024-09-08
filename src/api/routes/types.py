@@ -60,8 +60,8 @@ class WorkflowModel(BaseModel):
     org_id: Optional[str]
     name: str
     selected_machine_id: Optional[UUID]
-    created_at: datetime = Field(serialization_fn=format_datetime)
-    updated_at: datetime = Field(serialization_fn=format_datetime)
+    created_at: datetime = Field()
+    updated_at: datetime = Field()
     pinned: bool = False
     
     class Config:
@@ -80,14 +80,14 @@ class WorkflowRunModel(BaseModel):
     machine_id: Optional[UUID]
     origin: str
     status: str
-    ended_at: Optional[datetime] = Field(default=None, serialization_fn=format_datetime)
-    created_at: datetime = Field(serialization_fn=format_datetime)
-    updated_at: datetime = Field(serialization_fn=format_datetime)
+    ended_at: Optional[datetime] = Field(default=None, )
+    created_at: datetime = Field()
+    updated_at: datetime = Field()
     queued_at: Optional[datetime] = Field(
-        default=None, serialization_fn=format_datetime
+        default=None, 
     )
     started_at: Optional[datetime] = Field(
-        default=None, serialization_fn=format_datetime
+        default=None, 
     )
     gpu_event_id: Optional[str]
     gpu: Optional[str]
@@ -125,8 +125,8 @@ class WorkflowVersionModel(BaseModel):
     version: int
     snapshot: Optional[Dict[str, Any]]
     dependencies: Optional[Dict[str, Any]]
-    created_at: datetime = Field(serialization_fn=format_datetime)
-    updated_at: datetime = Field(serialization_fn=format_datetime)
+    created_at: datetime = Field()
+    updated_at: datetime = Field()
 
     class Config:
         from_attributes = True
