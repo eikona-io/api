@@ -222,6 +222,7 @@ async def get_workflows_gallery(
             (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
             OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:user_id AS TEXT))
         )
+    ORDER BY output.created_at desc
     LIMIT :limit
     OFFSET :offset
     """)
