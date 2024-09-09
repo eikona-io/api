@@ -20,9 +20,12 @@ import logfire
 import logging
 from scalar_fastapi import get_scalar_api_reference
 from fastapi.openapi.utils import get_openapi
+from fastapi import APIRouter
+
 # import all you need from fastapi-pagination
 # from fastapi_pagination import Page, add_pagination, paginate
 from pprint import pprint
+
 load_dotenv()
 logfire.configure()
 logger = logfire
@@ -70,31 +73,10 @@ def custom_openapi():
         title="ComfyDeploy API",
         version="1.0.0",
         description="API for ComfyDeploy",
-        routes=app.routes,
+        routes=api_router.routes,
+        servers=app.servers,
     )
 
-    # Add Bearer Auth security scheme
-    # openapi_schema["components"]["securitySchemes"] = {
-    #     "Bearer": {
-    #         # "type": "oauth2",
-    #         # "flows": {
-    #         #     "authorizationCode": {
-    #         #         "authorizationUrl": "https://api.comfydeploy.com/api/oauth/authorize",
-    #         #         "tokenUrl": "https://api.comfydeploy.com/api/oauth/token",
-    #         #         # "scopes": {
-    #         #         #     "read:runs": "Read access to runs",
-    #         #         #     "write:runs": "Write access to runs",
-    #         #         #     # Add more scopes as needed
-    #         #         # },
-    #         #     }
-    #         # },
-    #     }
-    # }
-
-    # # Apply Bearer Auth security globally
-    # openapi_schema["security"] = [{"Bearer": []}]
-    
-        # Modify Bearer Auth security scheme
     openapi_schema["components"]["securitySchemes"] = {
         "Bearer": {
             "type": "http",
@@ -113,20 +95,30 @@ app.openapi = custom_openapi
 
 # logfire.install_auto_tracing()
 
-# Include routers
-app.include_router(run.router, prefix="/api")
-app.include_router(internal.router, prefix="/api")
-app.include_router(workflows.router, prefix="/api")
-app.include_router(workflow.router, prefix="/api")
-app.include_router(machines.router, prefix="/api")
-app.include_router(log.router, prefix="/api")
-app.include_router(hello.router)
 
-@app.get("/scalar", include_in_schema=False)
+api_router = APIRouter()  # Remove the prefix here
+
+# Include routers
+api_router.include_router(run.router)
+api_router.include_router(internal.router)
+api_router.include_router(workflows.router)
+api_router.include_router(workflow.router)
+api_router.include_router(machines.router)
+api_router.include_router(log.router)
+# api_router.include_router(hello.router)
+
+app.include_router(api_router, prefix="/api")  # Add the prefix here instead
+
+
+@app.get("/", include_in_schema=False)
 async def scalar_html():
     return get_scalar_api_reference(
         openapi_url=app.openapi_url,
         title=app.title,
+        scalar_proxy_url="https://proxy.scalar.com",
+        servers=[
+            {"url": server["url"]} for server in app.servers
+        ],  # Remove "/api" here
     )
 
 
@@ -143,14 +135,15 @@ async def parse_jwt(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
-    
-    
+
+
 async def parse_clerk_jwt(token: str) -> Optional[dict]:
     try:
-        payload = jwt.decode(token, CLERK_PUBLIC_JWT_KEY, algorithms=['RS256'])
+        payload = jwt.decode(token, CLERK_PUBLIC_JWT_KEY, algorithms=["RS256"])
         return payload
     except JWTError:
         return None
+
 
 # Function to check if key is revoked
 async def is_key_revoked(key: str, db: AsyncSession) -> bool:
@@ -169,13 +162,13 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 
     token = auth_header.split(" ")[1]
     user_data = await parse_jwt(token)
-    
+
     if not user_data:
         user_data = await parse_clerk_jwt(token)
         # backward compatibility for old clerk tokens
         if user_data is not None:
-            user_data['user_id'] = user_data['sub']
-    
+            user_data["user_id"] = user_data["sub"]
+
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 

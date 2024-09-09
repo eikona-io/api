@@ -33,7 +33,7 @@ def json_serial(obj):
         return str(obj)
     raise TypeError(f"Type {type(obj)} not serializable")
 
-router = APIRouter(tags=["workflows"])
+router = APIRouter(tags=["Workflow"])
 
 
 @router.get("/workflows", response_model=List[WorkflowModel])

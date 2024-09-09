@@ -48,6 +48,9 @@ class OrgAwareSelect(Select[Tuple[T]]):
             get_org_or_user_condition(self.column_descriptions[0]["entity"], request)
         )
 
+    def apply_org_check_by_type(self, type, request: Request) -> Self:
+        return self.where(get_org_or_user_condition(type, request))
+
     def paginate(self, limit: int, offset: int) -> Self:
         return self.limit(limit).offset(offset)
 
@@ -304,6 +307,7 @@ async def retry_fetch(url, options, num_retries=3):
         except Exception as error:
             if i == num_retries - 1:
                 raise error  # Throw error if it's the last retry
+
 
 PermissionType = Literal[
     # API Permissions

@@ -5,6 +5,7 @@ import os
 from .workflows import CustomJSONEncoder
 from .utils import ensure_run_timeout, get_user_settings, post_process_output_data
 from .types import (
+    WorkflowModel,
     WorkflowRunModel,
     WorkflowVersionModel,
 )
@@ -23,10 +24,13 @@ from sqlalchemy import text
 import httpx
 from functools import lru_cache, wraps
 
+
 def async_lru_cache(maxsize=128, typed=False):
     def decorator(async_func):
-        sync_func = lru_cache(maxsize=maxsize, typed=typed)(lambda *args, **kwargs: None)
-        
+        sync_func = lru_cache(maxsize=maxsize, typed=typed)(
+            lambda *args, **kwargs: None
+        )
+
         @wraps(async_func)
         async def wrapper(*args, **kwargs):
             cache_key = args + tuple(sorted(kwargs.items()))
@@ -36,9 +40,11 @@ def async_lru_cache(maxsize=128, typed=False):
             result = await async_func(*args, **kwargs)
             sync_func(*cache_key, result)
             return result
-        
+
         return wrapper
+
     return decorator
+
 
 from api.models import (
     Workflow,
@@ -57,6 +63,7 @@ router = APIRouter(tags=["Workflow"])
 
 # Add this cache at the module level
 user_icon_cache = {}
+
 
 @async_lru_cache(maxsize=1000)
 async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
@@ -100,9 +107,11 @@ async def get_all_runs(
         .options(
             joinedload(WorkflowRun.outputs),
             joinedload(WorkflowRun.workflow),
-            joinedload(WorkflowRun.version)
+            joinedload(WorkflowRun.version),
         )
-        .outerjoin(WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id)
+        .outerjoin(
+            WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
+        )
         .where(WorkflowRun.workflow_id == workflow_id)
         .apply_org_check(request)
         .order_by(WorkflowRun.created_at.desc())
@@ -126,9 +135,9 @@ async def get_all_runs(
     for run in runs:
         run_dict = run.to_dict()
         if run.version:
-            run_dict['version'] = run.version.to_dict()
+            run_dict["version"] = run.version.to_dict()
         else:
-            run_dict['version'] = None  # Explicitly set to None if no version
+            run_dict["version"] = None  # Explicitly set to None if no version
         runs_data.append(run_dict)
 
     return JSONResponse(content=runs_data)
@@ -194,6 +203,52 @@ async def get_versions(
     return JSONResponse(content=runs_data)
 
 
+@router.get("/workflow/{workflow_id}", response_model=WorkflowModel)
+async def get_workflow(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    workflow = await db.execute(
+        select(Workflow)
+        .options(joinedload(Workflow.versions))
+        .where(Workflow.id == workflow_id)
+        .apply_org_check(request)
+    )
+    workflow = workflow.unique().scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(
+            status_code=404, detail="Workflow not found or you don't have access to it"
+        )
+
+    return JSONResponse(content=workflow.to_dict())
+
+
+@router.get("/workflow/{workflow_id}/version/{version}", response_model=WorkflowModel)
+async def get_workflow_version(
+    request: Request,
+    workflow_id: str,
+    version: int,
+    db: AsyncSession = Depends(get_db),
+):
+    workflow_version = await db.execute(
+        select(WorkflowVersion)
+        .join(Workflow, Workflow.id == WorkflowVersion.workflow_id)
+        .where(WorkflowVersion.workflow_id == workflow_id)
+        .where(WorkflowVersion.version == version)
+        .apply_org_check_by_type(Workflow, request)
+    )
+    workflow_version = workflow_version.scalar_one_or_none()
+
+    if not workflow_version:
+        raise HTTPException(
+            status_code=404, detail="Workflow version not found or you don't have access to it"
+        )
+
+    return JSONResponse(content=workflow_version.to_dict())
+
+
 @router.get("/workflow/{workflow_id}/gallery")
 async def get_workflows_gallery(
     request: Request,
@@ -229,7 +284,7 @@ async def get_workflows_gallery(
 
     current_user = request.state.current_user
     user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if 'org_id' in current_user else None
+    org_id = current_user["org_id"] if "org_id" in current_user else None
 
     # Execute the query
     result = await db.execute(
@@ -243,11 +298,8 @@ async def get_workflows_gallery(
         },
     )
 
-    outputs = [
-        dict(row._mapping)
-        for row in result.fetchall()
-    ]
-    
+    outputs = [dict(row._mapping) for row in result.fetchall()]
+
     user_settings = await get_user_settings(request, db)
     for output in outputs:
         if output["data"]:
@@ -255,6 +307,5 @@ async def get_workflows_gallery(
 
     # Use the custom encoder to serialize the data
     return JSONResponse(
-        status_code=200, 
-        content=json.loads(json.dumps(outputs, cls=CustomJSONEncoder))
+        status_code=200, content=json.loads(json.dumps(outputs, cls=CustomJSONEncoder))
     )
