@@ -22,10 +22,66 @@ from urllib.parse import urlparse
 import asyncio
 from fastapi import Depends
 from fastapi.responses import JSONResponse
+import httpx
+from functools import lru_cache, wraps
 
 Base = declarative_base()
 
 T = TypeVar("T")
+
+clerk_token = os.getenv("CLERK_SECRET_KEY")
+
+
+def async_lru_cache(maxsize=128, typed=False):
+    def decorator(async_func):
+        sync_func = lru_cache(maxsize=maxsize, typed=typed)(
+            lambda *args, **kwargs: None
+        )
+
+        @wraps(async_func)
+        async def wrapper(*args, **kwargs):
+            cache_key = args + tuple(sorted(kwargs.items()))
+            cached_result = sync_func(*cache_key)
+            if cached_result is not None:
+                return cached_result
+            result = await async_func(*args, **kwargs)
+            sync_func(*cache_key, result)
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+# Add this cache at the module level
+user_icon_cache = {}
+
+
+@async_lru_cache(maxsize=1000)
+async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
+    current_time = datetime.now()
+
+    # Check if the user_id is in the cache and not expired (1 day)
+    if user_id in user_icon_cache:
+        cached_data, timestamp = user_icon_cache[user_id]
+        if current_time - timestamp < timedelta(days=1):
+            return user_id, cached_data
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {clerk_token}"},
+        )
+        if response.status_code == 200:
+            user_data = response.json()
+            image_url = user_data.get("image_url")
+            # Update the cache
+            user_icon_cache[user_id] = (image_url, current_time)
+            return user_id, image_url
+
+    # If fetching fails, cache None for 1 hour to avoid frequent retries
+    user_icon_cache[user_id] = (None, current_time)
+    return user_id, None
 
 
 def get_org_or_user_condition(target: Base, request: Request):

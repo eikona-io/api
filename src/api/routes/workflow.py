@@ -3,7 +3,7 @@ import json
 import os
 
 from .workflows import CustomJSONEncoder
-from .utils import ensure_run_timeout, get_user_settings, post_process_output_data
+from .utils import ensure_run_timeout, fetch_user_icon, get_user_settings, post_process_output_data
 from .types import (
     WorkflowModel,
     WorkflowRunModel,
@@ -21,30 +21,6 @@ from pprint import pprint
 
 from sqlalchemy import text
 
-import httpx
-from functools import lru_cache, wraps
-
-
-def async_lru_cache(maxsize=128, typed=False):
-    def decorator(async_func):
-        sync_func = lru_cache(maxsize=maxsize, typed=typed)(
-            lambda *args, **kwargs: None
-        )
-
-        @wraps(async_func)
-        async def wrapper(*args, **kwargs):
-            cache_key = args + tuple(sorted(kwargs.items()))
-            cached_result = sync_func(*cache_key)
-            if cached_result is not None:
-                return cached_result
-            result = await async_func(*args, **kwargs)
-            sync_func(*cache_key, result)
-            return result
-
-        return wrapper
-
-    return decorator
-
 
 from api.models import (
     Workflow,
@@ -60,36 +36,6 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Workflow"])
-
-# Add this cache at the module level
-user_icon_cache = {}
-
-
-@async_lru_cache(maxsize=1000)
-async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
-    current_time = datetime.now()
-
-    # Check if the user_id is in the cache and not expired (1 day)
-    if user_id in user_icon_cache:
-        cached_data, timestamp = user_icon_cache[user_id]
-        if current_time - timestamp < timedelta(days=1):
-            return user_id, cached_data
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"https://api.clerk.com/v1/users/{user_id}",
-            headers={"Authorization": f"Bearer {clerk_token}"},
-        )
-        if response.status_code == 200:
-            user_data = response.json()
-            image_url = user_data.get("image_url")
-            # Update the cache
-            user_icon_cache[user_id] = (image_url, current_time)
-            return user_id, image_url
-
-    # If fetching fails, cache None for 1 hour to avoid frequent retries
-    user_icon_cache[user_id] = (None, current_time)
-    return user_id, None
 
 
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
@@ -141,9 +87,6 @@ async def get_all_runs(
         runs_data.append(run_dict)
 
     return JSONResponse(content=runs_data)
-
-
-clerk_token = os.getenv("CLERK_SECRET_KEY")
 
 
 @router.get(
@@ -205,6 +148,7 @@ async def get_versions(
 
 from sqlalchemy import text
 
+
 @router.get("/workflow/{workflow_id}", response_model=WorkflowModel)
 async def get_workflow(
     request: Request,
@@ -236,12 +180,15 @@ async def get_workflow(
     GROUP BY w.id
     """)
 
-    result = await db.execute(query, {
-        "workflow_id": workflow_id,
-        "limit": limit,
-        "org_id": org_id,
-        "user_id": user_id
-    })
+    result = await db.execute(
+        query,
+        {
+            "workflow_id": workflow_id,
+            "limit": limit,
+            "org_id": org_id,
+            "user_id": user_id,
+        },
+    )
 
     workflow = result.fetchone()
 
@@ -256,7 +203,8 @@ async def get_workflow(
     # workflow_dict['versions'] = json.loads(workflow_dict['versions'])
 
     return JSONResponse(
-        status_code=200, content=json.loads(json.dumps(workflow_dict, cls=CustomJSONEncoder))
+        status_code=200,
+        content=json.loads(json.dumps(workflow_dict, cls=CustomJSONEncoder)),
     )
 
 
@@ -278,7 +226,8 @@ async def get_workflow_version(
 
     if not workflow_version:
         raise HTTPException(
-            status_code=404, detail="Workflow version not found or you don't have access to it"
+            status_code=404,
+            detail="Workflow version not found or you don't have access to it",
         )
 
     return JSONResponse(content=workflow_version.to_dict())
