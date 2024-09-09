@@ -305,11 +305,6 @@ async def retry_fetch(url, options, num_retries=3):
             if i == num_retries - 1:
                 raise error  # Throw error if it's the last retry
 
-    # contributors
-    ("org:workflows:read",)
-    ("org:workflows:write",)
-
-
 PermissionType = Literal[
     # API Permissions
     "api:runs:get",
