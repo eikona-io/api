@@ -203,26 +203,61 @@ async def get_versions(
     return JSONResponse(content=runs_data)
 
 
+from sqlalchemy import text
+
 @router.get("/workflow/{workflow_id}", response_model=WorkflowModel)
 async def get_workflow(
     request: Request,
     workflow_id: str,
     db: AsyncSession = Depends(get_db),
+    limit: int = 1,  # Default to 5 most recent versions
 ):
-    workflow = await db.execute(
-        select(Workflow)
-        .options(joinedload(Workflow.versions))
-        .where(Workflow.id == workflow_id)
-        .apply_org_check(request)
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user.get("org_id")
+
+    query = text("""
+    WITH recent_versions AS (
+        SELECT *
+        FROM comfyui_deploy.workflow_versions
+        WHERE workflow_id = :workflow_id
+        ORDER BY created_at DESC
+        LIMIT :limit
     )
-    workflow = workflow.unique().scalar_one_or_none()
+    SELECT w.*, 
+           json_agg(rv.* ORDER BY rv.created_at DESC) AS versions
+    FROM comfyui_deploy.workflows w
+    LEFT JOIN recent_versions rv ON w.id = rv.workflow_id
+    WHERE w.id = :workflow_id
+    AND (
+        (CAST(:org_id AS TEXT) IS NOT NULL AND w.org_id = CAST(:org_id AS TEXT))
+        OR (CAST(:org_id AS TEXT) IS NULL AND w.org_id IS NULL AND w.user_id = CAST(:user_id AS TEXT))
+    )
+    GROUP BY w.id
+    """)
+
+    result = await db.execute(query, {
+        "workflow_id": workflow_id,
+        "limit": limit,
+        "org_id": org_id,
+        "user_id": user_id
+    })
+
+    workflow = result.fetchone()
 
     if not workflow:
         raise HTTPException(
             status_code=404, detail="Workflow not found or you don't have access to it"
         )
 
-    return JSONResponse(content=workflow.to_dict())
+    # Convert the result to a dict
+    workflow_dict = dict(workflow._mapping)
+    # Parse the JSON string of versions back into a list of dicts
+    # workflow_dict['versions'] = json.loads(workflow_dict['versions'])
+
+    return JSONResponse(
+        status_code=200, content=json.loads(json.dumps(workflow_dict, cls=CustomJSONEncoder))
+    )
 
 
 @router.get("/workflow/{workflow_id}/version/{version}", response_model=WorkflowModel)
