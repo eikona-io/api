@@ -16,15 +16,13 @@ from sqlalchemy import desc
 from sqlalchemy import text
 from datetime import datetime
 from uuid import UUID
-from decimal import Decimal
+
 logger = logging.getLogger(__name__)
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, UUID)):
             return str(obj)
-        if isinstance(obj, Decimal):
-            return float(obj)
         return super().default(obj)
 
 def json_serial(obj):

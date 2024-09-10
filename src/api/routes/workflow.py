@@ -1,9 +1,6 @@
 import asyncio
-import json
 import os
-
-from .workflows import CustomJSONEncoder
-from .utils import ensure_run_timeout, get_user_settings, post_process_output_data
+from .utils import ensure_run_timeout, get_user_settings
 from .types import (
     WorkflowRunModel,
     WorkflowVersionModel,
@@ -17,8 +14,6 @@ from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
 from fastapi.responses import JSONResponse
 from pprint import pprint
-
-from sqlalchemy import text
 
 import httpx
 from functools import lru_cache, wraps
@@ -192,69 +187,3 @@ async def get_versions(
     ]
 
     return JSONResponse(content=runs_data)
-
-
-@router.get("/workflow/{workflow_id}/gallery")
-async def get_workflows_gallery(
-    request: Request,
-    workflow_id: str,
-    limit: int = 100,
-    offset: int = 0,
-    db: AsyncSession = Depends(get_db),
-):
-    raw_query = text("""
-    SELECT
-        output.id as output_id,
-        run.id as run_id,
-        output.data,
-        output.node_meta,
-        (EXTRACT(EPOCH FROM run.ended_at) - EXTRACT(EPOCH FROM run.started_at)) AS run_duration,
-        (EXTRACT(EPOCH FROM run.started_at) - EXTRACT(EPOCH FROM run.queued_at)) AS cold_start,
-        (EXTRACT(EPOCH FROM run.queued_at) - EXTRACT(EPOCH FROM run.created_at)) AS queue_time
-    FROM
-        comfyui_deploy.workflow_runs AS run
-        INNER JOIN comfyui_deploy.workflow_run_outputs AS output ON run.id = output.run_id
-    WHERE
-        run.workflow_id = :workflow_id
-        AND run.status = 'success'
-        AND (output.data ?| ARRAY['images', 'gifs', 'mesh'])
-        AND (
-            (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
-            OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:user_id AS TEXT))
-        )
-    ORDER BY output.created_at desc
-    LIMIT :limit
-    OFFSET :offset
-    """)
-
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if 'org_id' in current_user else None
-
-    # Execute the query
-    result = await db.execute(
-        raw_query,
-        {
-            "workflow_id": workflow_id,
-            "limit": limit,
-            "offset": offset,
-            "org_id": org_id,
-            "user_id": user_id,
-        },
-    )
-
-    outputs = [
-        dict(row._mapping)
-        for row in result.fetchall()
-    ]
-    
-    user_settings = await get_user_settings(request, db)
-    for output in outputs:
-        if output["data"]:
-            post_process_output_data(output["data"], user_settings)
-
-    # Use the custom encoder to serialize the data
-    return JSONResponse(
-        status_code=200, 
-        content=json.loads(json.dumps(outputs, cls=CustomJSONEncoder))
-    )
