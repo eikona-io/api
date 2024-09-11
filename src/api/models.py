@@ -21,6 +21,7 @@ import json
 from datetime import timezone
 from sqlalchemy.orm import column_property
 from decimal import Decimal
+
 Base = declarative_base()
 
 metadata = MetaData(schema="comfyui_deploy")
@@ -37,7 +38,7 @@ class SerializableMixin:
             return {
                 attr: self._serialize_value(getattr(self, attr))
                 for attr in self.__dict__
-                if not attr.startswith('_')
+                if not attr.startswith("_")
             }
         except Exception as e:
             print(f"Error in to_dict: {str(e)}")
@@ -48,7 +49,7 @@ class SerializableMixin:
             return str(value)
         if isinstance(value, datetime):
             # .replace(tzinfo=timezone.utc)
-            return value.isoformat()[:-3]+'Z'
+            return value.isoformat()[:-3] + "Z"
         if isinstance(value, list):
             return [self._serialize_value(item) for item in value]
         if isinstance(value, dict):
@@ -56,7 +57,7 @@ class SerializableMixin:
         if isinstance(value, Decimal):
             return str(value)
         # Check if the object has a to_dict method and is potentially a SerializableMixin
-        if hasattr(value, 'to_dict') and callable(value.to_dict):
+        if hasattr(value, "to_dict") and callable(value.to_dict):
             return value.to_dict()
         return value
 
@@ -109,8 +110,8 @@ class WorkflowVersion(SerializableMixin, Base):
 
     workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")
-    
-    
+
+
 def lazy_utc_now():
     return datetime.now(tz=timezone.utc)
 
@@ -120,9 +121,15 @@ class WorkflowRun(SerializableMixin, Base):
     metadata = metadata
 
     id = Column(UUID(as_uuid=True), primary_key=True)
-    workflow_version_id = Column(UUID(as_uuid=True), ForeignKey("workflow_versions.id"), nullable=True)
+    workflow_version_id = Column(
+        UUID(as_uuid=True), ForeignKey("workflow_versions.id"), nullable=True
+    )
     workflow_inputs = Column(JSON)
-    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="NO ACTION"), nullable=False)
+    workflow_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workflows.id", ondelete="NO ACTION"),
+        nullable=False,
+    )
     workflow_api = Column(JSON)
     machine_id = Column(UUID(as_uuid=True), nullable=True)
     origin = Column(
@@ -160,7 +167,9 @@ class WorkflowRun(SerializableMixin, Base):
     queued_at = Column(DateTime(timezone=True))
     started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
-    gpu = Column(Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu"))
+    gpu = Column(
+        Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+    )
     machine_version = Column(String)
     machine_type = Column(
         Enum(
@@ -185,7 +194,7 @@ class WorkflowRun(SerializableMixin, Base):
         Enum("success", "failed", "not-started", "running", name="webhook_status")
     )
     webhook_intermediate_status = Column(Boolean, nullable=False, default=False)
-    
+
     batch_id = Column(UUID(as_uuid=True))
 
     workflow = relationship("Workflow", back_populates="runs")
@@ -196,21 +205,34 @@ class WorkflowRun(SerializableMixin, Base):
 class WorkflowRunWithExtra(WorkflowRun):
     pass
 
+
 # Add these properties to your WorkflowRun model
 WorkflowRunWithExtra.number = column_property(
     func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
 )
 WorkflowRunWithExtra.duration = column_property(
-    (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.created_at)).label("duration")
+    (
+        func.extract("epoch", WorkflowRun.ended_at)
+        - func.extract("epoch", WorkflowRun.created_at)
+    ).label("duration")
 )
 WorkflowRunWithExtra.cold_start_duration = column_property(
-    (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.queued_at)).label("cold_start_duration")
+    (
+        func.extract("epoch", WorkflowRun.started_at)
+        - func.extract("epoch", WorkflowRun.queued_at)
+    ).label("cold_start_duration")
 )
 WorkflowRunWithExtra.cold_start_duration_total = column_property(
-    (func.extract('epoch', WorkflowRun.started_at) - func.extract('epoch', WorkflowRun.created_at)).label("cold_start_duration_total")
+    (
+        func.extract("epoch", WorkflowRun.started_at)
+        - func.extract("epoch", WorkflowRun.created_at)
+    ).label("cold_start_duration_total")
 )
 WorkflowRunWithExtra.run_duration = column_property(
-    (func.extract('epoch', WorkflowRun.ended_at) - func.extract('epoch', WorkflowRun.started_at)).label("run_duration")
+    (
+        func.extract("epoch", WorkflowRun.ended_at)
+        - func.extract("epoch", WorkflowRun.started_at)
+    ).label("run_duration")
 )
 
 
@@ -363,7 +385,9 @@ class Machine(SerializableMixin, Base):
     )
     snapshot = Column(JSON)
     models = Column(JSON)
-    gpu = Column(Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu"))
+    gpu = Column(
+        Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+    )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     pod_id = Column(String)
     base_docker_image = Column(String)
@@ -402,20 +426,31 @@ class UserSettings(SerializableMixin, Base):
     __tablename__ = "user_settings"
     metadata = metadata
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
     org_id = Column(String)
-    output_visibility = Column(Enum("public", "private", name="output_visibility"), default="public")
+    output_visibility = Column(
+        Enum("public", "private", name="output_visibility"), default="public"
+    )
     custom_output_bucket = Column(Boolean, default=False)
     s3_access_key_id = Column(String)
     s3_secret_access_key = Column(String)
     s3_bucket_name = Column(String)
     s3_region = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
     # Optionally, add relationship to User model
     # user = relationship("User", back_populates="settings")
-    
+
     # target_workflow = relationship("Workflow", foreign_keys=[target_workflow_id])
     # workflows = relationship("Workflow", back_populates="machine", foreign_keys=[Workflow.selected_machine_id])
