@@ -185,14 +185,17 @@ async def update_run(
         # Sending to clickhouse
         progress_data = [
             (
-                uuid4(),
-                body.run_id,
-                workflow_run.workflow_id,
+                workflow_run.user_id,
+                workflow_run.org_id,
                 workflow_run.machine_id,
+                # container_id as gpu_event_id
+                workflow_run.workflow_id,
+                workflow_run.workflow_version_id,
+                body.run_id,
                 updated_at,
                 body.progress,
                 body.live_status,
-                body.status,
+                body.status or "executing",
             )
         ]
 
@@ -257,18 +260,21 @@ async def update_run(
         await db.refresh(newOutput)
 
         # TODO: Send to upload to clickhouse
-        # output_data = [
-        #     (
-        #         uuid4(),
-        #         request.run_id,
-        #         workflow_run.workflow_id,
-        #         workflow_run.machine_id,
-        #         updated_at,
-        #         json.dumps(request.output_data),
-        #         json.dumps(request.node_meta),
-        #     )
-        # ]
-        # background_tasks.add_task(insert_to_clickhouse, client, "outputs", output_data)
+        output_data = [
+            (
+                uuid4(),
+                body.run_id,
+                workflow_run.workflow_id,
+                workflow_run.machine_id,
+                updated_at,
+                body.progress,
+                body.live_status,
+                body.status,
+                # json.dumps(request.output_data),
+                # json.dumps(request.node_meta),
+            )
+        ]
+        background_tasks.add_task(insert_to_clickhouse, client, "progress_updates", output_data)
 
     elif body.status is not None:
         # Get existing run
