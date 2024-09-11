@@ -25,8 +25,6 @@ class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, UUID)):
             return str(obj)
-        if isinstance(obj, Decimal):
-            return float(obj)
         return super().default(obj)
 
 def json_serial(obj):
