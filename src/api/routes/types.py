@@ -54,6 +54,7 @@ def format_datetime(dt: Optional[datetime]) -> Optional[str]:
         return None
     return dt.isoformat()[:-3] + "Z"
 
+
 class WorkflowModel(BaseModel):
     id: UUID
     user_id: str
@@ -63,13 +64,15 @@ class WorkflowModel(BaseModel):
     created_at: datetime = Field()
     updated_at: datetime = Field()
     pinned: bool = False
-    
+
     class Config:
         from_attributes = True
+
 
 class WorkflowListResponse(BaseModel):
     workflows: List[WorkflowModel]
     query_length: int
+
 
 class WorkflowRunModel(BaseModel):
     id: UUID
@@ -80,14 +83,16 @@ class WorkflowRunModel(BaseModel):
     machine_id: Optional[UUID]
     origin: str
     status: str
-    ended_at: Optional[datetime] = Field(default=None, )
+    ended_at: Optional[datetime] = Field(
+        default=None,
+    )
     created_at: datetime = Field()
     updated_at: datetime = Field()
     queued_at: Optional[datetime] = Field(
-        default=None, 
+        default=None,
     )
     started_at: Optional[datetime] = Field(
-        default=None, 
+        default=None,
     )
     gpu_event_id: Optional[str]
     gpu: Optional[str]
@@ -113,7 +118,7 @@ class WorkflowRunModel(BaseModel):
 
     class Config:
         from_attributes = True
-        
+
 
 class WorkflowVersionModel(BaseModel):
     id: UUID
@@ -131,10 +136,96 @@ class WorkflowVersionModel(BaseModel):
     class Config:
         from_attributes = True
 
+
 class WorkflowRunOrigin(str, Enum):
     MANUAL = "manual"
     API = "api"
     PUBLIC_SHARE = "public-share"
+
+
+class MachineType(str, Enum):
+    CLASSIC = "classic"
+    RUNPOD_SERVERLESS = "runpod-serverless"
+    MODAL_SERVERLESS = "modal-serverless"
+    COMFY_DEPLOY_SERVERLESS = "comfy-deploy-serverless"
+    WORKSPACE = "workspace"
+    WORKSPACE_V2 = "workspace-v2"
+
+
+class MachineStatus(str, Enum):
+    NOT_STARTED = "not-started"
+    READY = "ready"
+    BUILDING = "building"
+    ERROR = "error"
+    RUNNING = "running"
+    PAUSED = "paused"
+    STARTING = "starting"
+
+
+class MachineGPU(str, Enum):
+    T4 = "T4"
+    L4 = "L4"
+    A10G = "A10G"
+    A100 = "A100"
+    A100_80GB = "A100-80GB"
+    H100 = "H100"
+
+
+class WorkspaceGPU(str, Enum):
+    RTX_4090 = "4090"
+
+
+class MachineModel(BaseModel):
+    id: UUID
+    user_id: str
+    name: str
+    org_id: Optional[str]
+    endpoint: str
+    created_at: datetime
+    updated_at: datetime
+    disabled: bool = False
+    auth_token: Optional[str]
+    type: MachineType = MachineType.CLASSIC
+    status: MachineStatus = MachineStatus.READY
+    static_assets_status: MachineStatus = MachineStatus.NOT_STARTED
+    machine_version: Optional[str]
+    machine_builder_version: Optional[str] = "2"
+    snapshot: Optional[Dict[str, Any]]
+    models: Optional[Dict[str, Any]]
+    gpu: Optional[MachineGPU]
+    ws_gpu: Optional[WorkspaceGPU]
+    pod_id: Optional[str]
+    base_docker_image: Optional[str]
+    allow_concurrent_inputs: int = 1
+    concurrency_limit: int = 2
+    legacy_mode: bool = False
+    ws_timeout: int = 2
+    run_timeout: int = 300
+    idle_timeout: int = 60
+    build_machine_instance_id: Optional[str]
+    build_log: Optional[str]
+    modal_app_id: Optional[str]
+    target_workflow_id: Optional[UUID]
+    dependencies: Optional[Dict[str, Any]]
+    extra_docker_commands: Optional[Dict[str, Any]]
+    install_custom_node_with_gpu: bool = False
+    deleted: bool = False
+    keep_warm: int = 0
+    allow_background_volume_commits: bool = False
+    gpu_workspace: bool = False
+    docker_command_steps: Optional[Dict[str, Any]]
+    comfyui_version: Optional[str]
+    python_version: Optional[str]
+    extra_args: Optional[str]
+    prestart_command: Optional[str]
+    retrieve_static_assets: bool = False
+    object_info: Optional[Dict[str, Any]]
+    object_info_str: Optional[str]
+    filename_list_cache: Optional[Dict[str, Any]]
+    extensions: Optional[Dict[str, Any]]
+
+    class Config:
+        from_attributes = True
 
 
 class WorkflowRequestShare(BaseModel):

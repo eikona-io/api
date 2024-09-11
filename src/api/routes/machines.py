@@ -1,4 +1,7 @@
+from http.client import HTTPException
+from uuid import UUID
 from .types import (
+    MachineModel,
     WorkflowVersionModel,
 )
 from fastapi import APIRouter, Depends, Request
@@ -21,8 +24,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Machine"])
 
 
-@router.get("/machines", response_model=List[WorkflowVersionModel])
-async def get_versions(
+@router.get("/machines", response_model=List[MachineModel])
+async def get_machines(
     request: Request,
     search: Optional[str] = None,
     limit: int = 100,
@@ -53,3 +56,17 @@ async def get_versions(
     machines_data = [machine.to_dict() for machine in machines]
 
     return JSONResponse(content=machines_data)
+
+
+@router.get("/machine/{machine_id}", response_model=MachineModel)
+async def get_machine(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    machine = await db.execute(select(Machine).where(Machine.id == machine_id))
+    machine = machine.scalars().first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    return JSONResponse(content=machine.to_dict())
