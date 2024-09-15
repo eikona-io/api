@@ -123,9 +123,7 @@ async def downloading_models(request: Request, db: AsyncSession = Depends(get_db
         for model in data:
             model_dict = model.to_dict()
             if model.download_progress == 100:
-                model.done = True
-                await db.commit()
-            model_dict['is_done'] = model.done
+                model_dict['is_done'] = True
             model_data.append(model_dict)
         return JSONResponse(content=model_data)
     except Exception as e:
