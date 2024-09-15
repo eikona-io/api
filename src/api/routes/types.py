@@ -292,3 +292,52 @@ class WorkflowRunOutputModel(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class VolFSStructure(BaseModel):
+    contents: List[Union['VolFolder', 'VolFile']]
+
+class VolFolder(BaseModel):
+    path: str
+    type: Literal['folder']
+    contents: List[Union['VolFolder', 'VolFile']]
+
+class VolFile(BaseModel):
+    path: str
+    type: Literal['file']
+
+VolFSStructure.update_forward_refs()
+
+class Model(BaseModel):
+    id: UUID
+    user_id: str
+    org_id: Optional[str]
+    description: Optional[str]
+    user_volume_id: UUID
+    model_name: str
+    folder_path: str
+    target_symlink_path: str
+    civitai_id: Optional[str]
+    civitai_version_id: Optional[str]
+    civitai_url: Optional[str]
+    civitai_download_url: Optional[str]
+    civitai_model_response: Optional[Dict[str, Any]]
+    hf_url: Optional[str]
+    s3_url: Optional[str]
+    download_progress: int = 0
+    user_url: Optional[str]
+    filehash_sha256: Optional[str]
+    is_public: bool = True
+    status: str = "started"
+    upload_machine_id: Optional[str]
+    upload_type: str
+    model_type: str = "checkpoint"
+    error_log: Optional[str]
+    deleted: bool = False
+    is_done: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
+

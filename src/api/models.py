@@ -454,3 +454,44 @@ class UserSettings(SerializableMixin, Base):
 
     # target_workflow = relationship("Workflow", foreign_keys=[target_workflow_id])
     # workflows = relationship("Workflow", back_populates="machine", foreign_keys=[Workflow.selected_machine_id])
+
+
+class Model(SerializableMixin, Base):
+    __tablename__ = "models"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id"))
+    org_id = Column(String)
+    description = Column(String)
+
+    user_volume_id = Column(UUID(as_uuid=True), ForeignKey("user_volumes.id", ondelete="cascade"), nullable=False)
+
+    model_name = Column(String)
+    folder_path = Column(String)
+    target_symlink_path = Column(String)
+
+    civitai_id = Column(String)
+    civitai_version_id = Column(String)
+    civitai_url = Column(String)
+    civitai_download_url = Column(String)
+    civitai_model_response = Column(JSON)
+
+    hf_url = Column(String)
+    s3_url = Column(String)
+    download_progress = Column(Integer, default=0)
+
+    user_url = Column(String, name="client_url")
+    filehash_sha256 = Column(String, name="file_hash_sha256")
+
+    is_public = Column(Boolean, nullable=False, default=True)
+    status = Column(Enum("started", "success", "failed", "cancelled", name="resource_upload"), nullable=False, default="started")
+    upload_machine_id = Column(String)
+    upload_type = Column(Enum("civitai", "download-url", "huggingface", "other", name="model_upload_type"), nullable=False)
+    model_type = Column(Enum("checkpoint", "lora", "embedding", "vae", "clip", "clip_vision", "configs", "controlnet", "upscale_models", "ipadapter", "gligen", "unet", "custom", "custom_node", name="model_type"), default="checkpoint")
+    error_log = Column(String)
+
+    deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
