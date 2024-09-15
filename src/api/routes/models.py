@@ -122,6 +122,7 @@ async def downloading_models(request: Request, db: AsyncSession = Depends(get_db
         model_data = []
         for model in data:
             model_dict = model.to_dict()
+            logger.info(f"download_progress: {model.download_progress}")
             if model.download_progress == 100:
                 model_dict['is_done'] = True
             model_data.append(model_dict)
