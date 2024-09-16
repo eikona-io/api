@@ -125,8 +125,9 @@ async def scalar_html():
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
-CLERK_PUBLIC_JWT_KEY = os.getenv("CLERK_PUBLIC_JWT_KEY")
 ALGORITHM = "HS256"
+
+CLERK_PUBLIC_JWT_KEY = os.getenv("CLERK_PUBLIC_JWT_KEY")
 
 
 # Function to parse JWT

@@ -24,6 +24,59 @@ from fastapi import Depends
 from fastapi.responses import JSONResponse
 import httpx
 from functools import lru_cache, wraps
+import os
+from google.cloud import pubsub_v1
+from google.api_core import exceptions
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from datetime import datetime, timedelta
+
+# Get JWT secret from environment variable
+JWT_SECRET = os.getenv("JWT_SECRET")
+ALGORITHM = "HS256"
+
+
+def generate_temporary_token(
+    user_id: str, org_id: Optional[str] = None, expires_in: str = "1h"
+) -> str:
+    """
+    Generate a temporary JWT token for the given user_id and org_id.
+
+    Args:
+        user_id (str): The user ID to include in the token.
+        org_id (Optional[str]): The organization ID to include in the token, if any.
+        expires_in (str): The expiration time for the token. Default is "1h".
+
+    Returns:
+        str: The generated JWT token.
+    """
+    payload = {
+        "user_id": user_id,
+        "exp": datetime.utcnow() + timedelta(hours=1),  # Default expiration of 1 hour
+    }
+
+    if org_id:
+        payload["org_id"] = org_id
+
+    if expires_in != "1h":
+        # Parse the expiration time
+        value = int(expires_in[:-1])
+        unit = expires_in[-1].lower()
+        if unit == "m":
+            delta = timedelta(minutes=value)
+        elif unit == "h":
+            delta = timedelta(hours=value)
+        elif unit == "d":
+            delta = timedelta(days=value)
+        elif unit == "w":
+            delta = timedelta(weeks=value)
+        else:
+            raise ValueError("Invalid expiration format. Use m, h, d, or w.")
+
+        payload["exp"] = datetime.utcnow() + delta
+
+    return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
+
 
 Base = declarative_base()
 
@@ -31,21 +84,27 @@ T = TypeVar("T")
 
 clerk_token = os.getenv("CLERK_SECRET_KEY")
 
-
-def async_lru_cache(maxsize=128, typed=False):
+def async_lru_cache(maxsize=128, typed=False, expire_after=None):
     def decorator(async_func):
-        sync_func = lru_cache(maxsize=maxsize, typed=typed)(
-            lambda *args, **kwargs: None
-        )
+        cache = {}
 
         @wraps(async_func)
         async def wrapper(*args, **kwargs):
             cache_key = args + tuple(sorted(kwargs.items()))
-            cached_result = sync_func(*cache_key)
-            if cached_result is not None:
-                return cached_result
+            now = datetime.now()
+
+            if cache_key in cache:
+                result, timestamp = cache[cache_key]
+                if expire_after is None or now - timestamp < expire_after:
+                    return result
+
             result = await async_func(*args, **kwargs)
-            sync_func(*cache_key, result)
+            cache[cache_key] = (result, now)
+
+            if len(cache) > maxsize:
+                oldest_key = min(cache, key=lambda k: cache[k][1])
+                del cache[oldest_key]
+
             return result
 
         return wrapper
@@ -298,8 +357,41 @@ def generate_presigned_url(
     return response
 
 
+project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+
+
 async def send_workflow_update(workflow_id: str, data: dict):
+    return
     logging.info(f"Sending updateWorkflow event via POST: {workflow_id}")
+    # try:
+    #     topic_id = "workflow-updates"
+
+    #     # Create the topic if it doesn't exist
+    #     # await create_topic_if_not_exists(project_id, topic_id)
+
+    #     publisher = pubsub_v1.PublisherClient()
+    #     # Create a publisher client
+    #     topic_path = publisher.topic_path(project_id, topic_id)
+
+    #     # Prepare the message
+    #     message_data = json.dumps({"workflowId": workflow_id, "data": data}).encode(
+    #         "utf-8"
+    #     )
+
+    #     # Publish the message
+    #     publish_future = publisher.publish(
+    #         topic_path,
+    #         data=message_data,
+    #         id=str(workflow_id),  # Add the ID as a message attribute
+    #     )
+    #     # Use asyncio to wait for the future without blocking
+    #     message_id = await asyncio.wrap_future(publish_future)
+
+    #     logging.info(f"Published message with ID: {message_id}")
+    # except Exception as error:
+    #     print(data)
+    #     logging.error(f"Error sending updateWorkflow event: {error}")
+
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/updateWorkflow"
@@ -320,8 +412,53 @@ async def send_workflow_update(workflow_id: str, data: dict):
         logging.error(f"Error sending updateWorkflow event: {error}")
 
 
+async def create_topic_if_not_exists(project_id: str, topic_id: str):
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(project_id, topic_id)
+
+    try:
+        publisher.create_topic(request={"name": topic_path})
+        print(f"Topic {topic_path} created.")
+    except exceptions.AlreadyExists:
+        print(f"Topic {topic_path} already exists.")
+    except Exception as e:
+        print(f"Error creating topic: {e}")
+        raise
+
+
 async def send_realtime_update(id: str, data: dict):
+    return
     logging.info(f"Sending updateWorkflow event via POST: {id}")
+
+    # try:
+    #     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+    #     topic_id = "realtime-updates"  # Single topic for all realtime updates
+
+    #     # Create the topic if it doesn't exist
+    #     # await create_topic_if_not_exists(project_id, topic_id)
+    #     publisher = pubsub_v1.PublisherClient()
+
+    #     # Create a publisher client
+    #     topic_path = publisher.topic_path(project_id, topic_id)
+
+    #     # Prepare the message
+    #     message_data = json.dumps({"id": id, "data": data}).encode("utf-8")
+
+    #     # Publish the message
+    #     # Publish the message asynchronously with the ID as an attribute
+    #     publish_future = publisher.publish(
+    #         topic_path,
+    #         data=message_data,
+    #         id=str(id),  # Add the ID as a message attribute
+    #     )
+    #     # Use asyncio to wait for the future without blocking
+    #     message_id = await asyncio.wrap_future(publish_future)
+
+    #     logging.info(f"Published realtime update message with ID: {message_id}")
+    # except Exception as error:
+    #     print(data)
+    #     logging.error(f"Error sending realtime update event: {error}")
+
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/update"

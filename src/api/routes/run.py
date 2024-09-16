@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import uuid
 from .types import (
@@ -16,9 +17,18 @@ import modal
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from fastapi import BackgroundTasks
+from .internal import insert_to_clickhouse, send_realtime_update, send_workflow_update
+from .utils import (
+    ensure_run_timeout,
+    generate_temporary_token,
+    get_user_settings,
+    post_process_outputs,
+    select,
+)
+from clickhouse_connect.driver.asyncclient import AsyncClient
 
-from api.routes.internal import send_realtime_update, send_workflow_update
-from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, select
+import datetime as dt
 
 # from sqlalchemy import select
 from api.models import (
@@ -33,7 +43,7 @@ from api.models import (
 from api.database import get_db, get_clickhouse_client, get_db_context
 from typing import Optional, Union, cast
 from typing import Dict, Any
-from uuid import UUID
+from uuid import UUID, uuid4
 import logging
 import logfire
 import json
@@ -76,7 +86,11 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
 
 @router.post("/run", response_model=Union[CreateRunResponse, WorkflowRunOutputModel])
 async def create_run(
-    request: Request, data: CreateRunRequest, db: AsyncSession = Depends(get_db)
+    request: Request,
+    data: CreateRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     if (
         data.batch_number is not None
@@ -96,8 +110,12 @@ async def create_run(
 
     workflow_id = None
     workflow_api_raw = None
-    
-    org_id = request.state.current_user["org_id"] if 'org_id' in request.state.current_user else None
+
+    org_id = (
+        request.state.current_user["org_id"]
+        if "org_id" in request.state.current_user
+        else None
+    )
 
     if isinstance(data, WorkflowRunVersionRequest):
         workflow_version_id = data.workflow_version_id
@@ -188,9 +206,6 @@ async def create_run(
         await db.commit()
         await db.refresh(new_run)
 
-        # print("shit", str(machine_id))
-        ComfyDeployRunner = modal.Cls.lookup(str(machine_id), "ComfyDeployRunner")
-
         params = {
             "prompt_id": str(new_run.id),
             "workflow_api_raw": workflow_api_raw,
@@ -215,20 +230,111 @@ async def create_run(
             "name": machine.name,
         }
         new_run_data["number"] = run_count
-        await send_workflow_update(str(new_run.workflow_id), new_run_data)
-        await send_realtime_update(str(new_run.id), new_run.to_dict())
+        background_tasks.add_task(
+            send_workflow_update, str(new_run.workflow_id), new_run_data
+        )
+        background_tasks.add_task(
+            send_realtime_update, str(new_run.id), new_run.to_dict()
+        )
+
+        # Sending to clickhouse
+        progress_data = [
+            (
+                uuid4(),
+                new_run.id,
+                new_run.workflow_id,
+                new_run.machine_id,
+                dt.datetime.now(dt.UTC),
+                None,
+                None,
+                "queued",
+            )
+        ]
+
+        background_tasks.add_task(
+            insert_to_clickhouse, client, "progress_updates", progress_data
+        )
+
+        token = generate_temporary_token(request.state.current_user["user_id"], org_id)
+        # logger.info(token)
+        # logger.info("machine type " + machine.type)
 
         if data.execution_mode == "async":
-            with logfire.span("spawn-run"):
-                result = ComfyDeployRunner().run.spawn(params)
+            match machine.type:
+                case "comfy-deploy-serverless":
+                    # print("shit", str(machine_id))
+                    ComfyDeployRunner = modal.Cls.lookup(
+                        str(machine_id), "ComfyDeployRunner"
+                    )
+                    with logfire.span("spawn-run"):
+                        result = ComfyDeployRunner().run.spawn(params)
+                        new_run.modal_function_call_id = result.object_id
+                # For runpod there will be a problem with the auth token cause v2 endpoint requires a token
+                case "runpod-serverless":
+                    if not machine.auth_token:
+                        raise HTTPException(
+                            status_code=400, detail="Machine auth token not found"
+                        )
 
-            new_run.modal_function_call_id = result.object_id
+                    async with httpx.AsyncClient() as _client:
+                        try:
+                            payload = {"input": params}
+                            response = await _client.post(
+                                f"{machine.endpoint}/run",
+                                json=payload,
+                                headers={
+                                    "Content-Type": "application/json",
+                                    "Authorization": f"Bearer {machine.auth_token}",
+                                },
+                            )
+                            response.raise_for_status()
+                        except httpx.HTTPStatusError as e:
+                            raise HTTPException(
+                                status_code=e.response.status_code,
+                                detail=f"Error creating run: {e.response.text}",
+                            )
+
+                    # Update the run with the RunPod job ID if available
+                    runpod_response = response.json()
+                case "classic":
+                    comfyui_endpoint = f"{machine.endpoint}/comfyui-deploy/run"
+
+                    headers = {"Content-Type": "application/json"}
+                    # if machine.auth_token:
+                    # headers["Authorization"] = f"Bearer {machine.auth_token}"
+                    headers["Authorization"] = f"Bearer {token}"
+
+                    async with httpx.AsyncClient() as _client:
+                        try:
+                            response = await _client.post(
+                                comfyui_endpoint,
+                                json=params,
+                                headers=headers,
+                            )
+                            response.raise_for_status()
+                        except httpx.HTTPStatusError as e:
+                            error_message = f"Error creating run: {e.response.status_code} {e.response.reason_phrase}"
+                            try:
+                                result = await response.json()
+                                if "node_errors" in result:
+                                    error_message += f" {result['node_errors']}"
+                            except json.JSONDecodeError:
+                                pass
+                            raise HTTPException(
+                                status_code=e.response.status_code, detail=error_message
+                            )
+                case _:
+                    raise HTTPException(status_code=400, detail="Invalid machine type")
+
             await db.commit()
             await db.refresh(new_run)
 
             return {"run_id": new_run.id}
         elif data.execution_mode in ["sync", "sync_first_result"]:
             with logfire.span("run-sync"):
+                ComfyDeployRunner = modal.Cls.lookup(
+                    str(machine_id), "ComfyDeployRunner"
+                )
                 result = await ComfyDeployRunner().run.remote.aio(params)
 
             first_output_query = (
@@ -248,8 +354,8 @@ async def create_run(
                         if isinstance(image, dict):
                             if "url" in image:
                                 # Fetch the image/video data
-                                async with httpx.AsyncClient() as client:
-                                    response = await client.get(image["url"])
+                                async with httpx.AsyncClient() as _client:
+                                    response = await _client.get(image["url"])
                                     if response.status_code == 200:
                                         content_type = response.headers.get(
                                             "content-type"

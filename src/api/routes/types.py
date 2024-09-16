@@ -9,7 +9,6 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from api.routes.internal import send_realtime_update, send_workflow_update
 from .utils import select
 
 # from sqlalchemy import select
@@ -21,7 +20,6 @@ from api.models import (
     WorkflowVersion,
     Workflow,
 )
-from api.database import get_db, get_clickhouse_client, get_db_context
 from typing import Literal, Optional, Union, cast
 from pydantic import BaseModel, Field
 from typing import Dict, Any
@@ -37,6 +35,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
+
+from pydantic import BaseModel, Field
+from enum import Enum
 
 
 class WorkflowRunOutputModel(BaseModel):
@@ -295,18 +296,22 @@ class WorkflowRunOutputModel(BaseModel):
 
 
 class VolFSStructure(BaseModel):
-    contents: List[Union['VolFolder', 'VolFile']]
+    contents: List[Union["VolFolder", "VolFile"]]
+
 
 class VolFolder(BaseModel):
     path: str
-    type: Literal['folder']
-    contents: List[Union['VolFolder', 'VolFile']]
+    type: Literal["folder"]
+    contents: List[Union["VolFolder", "VolFile"]]
+
 
 class VolFile(BaseModel):
     path: str
-    type: Literal['file']
+    type: Literal["file"]
+
 
 VolFSStructure.update_forward_refs()
+
 
 class Model(BaseModel):
     id: UUID
@@ -341,3 +346,64 @@ class Model(BaseModel):
     class Config:
         orm_mode = True
 
+
+class DeploymentEnvironment(str, Enum):
+    STAGING = "staging"
+    PRODUCTION = "production"
+    PUBLIC_SHARE = "public-share"
+    PRIVATE_SHARE = "private-share"
+
+
+class DeploymentModel(BaseModel):
+    id: UUID
+    user_id: str
+    org_id: Optional[str]
+    workflow_version_id: UUID
+    workflow_id: UUID
+    machine_id: UUID
+    share_slug: str
+    description: Optional[str]
+    share_options: Optional[Dict[str, Any]]
+    showcase_media: Optional[Dict[str, Any]]
+    environment: DeploymentEnvironment
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class MachineGPU(str, Enum):
+    T4 = "T4"
+    L4 = "L4"
+    A10G = "A10G"
+    A100 = "A100"
+    A100_80GB = "A100-80GB"
+    H100 = "H100"
+
+
+class WorkspaceGPU(str, Enum):
+    RTX_4090 = "4090"
+
+
+class GPUProviderType(str, Enum):
+    RUNPOD = "runpod"
+    MODAL = "modal"
+    COMFY_DEPLOY = "comfy-deploy"
+
+
+class GPUEventModel(BaseModel):
+    id: UUID
+    user_id: str
+    org_id: Optional[str]
+    machine_id: Optional[UUID]
+    start_time: Optional[datetime]
+    end_time: Optional[datetime]
+    gpu: Optional[MachineGPU]
+    ws_gpu: Optional[WorkspaceGPU]
+    provider_type: GPUProviderType
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Config:
+        from_attributes = True

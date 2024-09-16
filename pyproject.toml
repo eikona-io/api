@@ -28,6 +28,7 @@ dependencies = [
     "boto3>=1.35.5",
     "scalar-fastapi>=1.0.3",
     "cryptography>=43.0.1",
+    "google-cloud-pubsub>=2.23.1",
 ]
 
 [build-system]

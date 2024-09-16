@@ -153,7 +153,9 @@ async def update_run(
         # Add ClickHouse insert to background tasks
         background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
 
-        await send_workflow_update(str(body.run_id), {"logs": body.logs})
+        background_tasks.add_task(
+            send_workflow_update, str(body.run_id), {"logs": body.logs}
+        )
         return {"status": "success"}
 
     # Updating the progress
@@ -171,16 +173,18 @@ async def update_run(
         )
         result = await db.execute(update_stmt)
         await db.commit()
-        # await db.refresh(WorkflowRun)
 
         workflow_run = result.scalar_one()
         workflow_run = cast(WorkflowRun, workflow_run)
+        await db.refresh(workflow_run)
 
         # Sending a real-time update to connected clients
-        await send_workflow_update(
-            str(workflow_run.workflow_id), workflow_run.to_dict()
+        background_tasks.add_task(
+            send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
         )
-        await send_realtime_update(str(workflow_run.id), workflow_run.to_dict())
+        background_tasks.add_task(
+            send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
+        )
 
         # Sending to clickhouse
         progress_data = [
@@ -227,7 +231,6 @@ async def update_run(
         )
         await db.execute(update_stmt)
         await db.commit()
-        # await db.refresh(workflow_run)
 
     if body.status == "queued" and fixed_time is not None:
         # Ensure request.time is UTC-aware
@@ -238,7 +241,6 @@ async def update_run(
         )
         await db.execute(update_stmt)
         await db.commit()
-        # await db.refresh(workflow_run)
         # return {"status": "success"}
 
     ended = body.status in ["success", "failed", "timeout", "cancelled"]
@@ -313,9 +315,9 @@ async def update_run(
         )
         result = await db.execute(update_stmt)
         await db.commit()
-        await db.refresh(workflow_run)
         workflow_run = result.scalar_one_or_none()
         workflow_run = cast(WorkflowRun, workflow_run)
+        await db.refresh(workflow_run)
 
         # Get all outputs for the workflow run
         outputs_query = select(WorkflowRunOutput).where(
@@ -332,9 +334,13 @@ async def update_run(
         workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
         # workflow_run_data["status"] = request.status.value
 
-        # Use the dictionary instead of the ORM object
-        await send_workflow_update(str(workflow_run.workflow_id), workflow_run_data)
-        await send_realtime_update(str(workflow_run.id), workflow_run_data)
+        # Move send_workflow_update to background task
+        background_tasks.add_task(
+            send_workflow_update, str(workflow_run.workflow_id), workflow_run_data
+        )
+        background_tasks.add_task(
+            send_realtime_update, str(workflow_run.id), workflow_run_data
+        )
 
         if workflow_run.webhook:
             background_tasks.add_task(

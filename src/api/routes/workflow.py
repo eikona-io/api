@@ -3,7 +3,12 @@ import json
 import os
 
 from .workflows import CustomJSONEncoder
-from .utils import ensure_run_timeout, fetch_user_icon, get_user_settings, post_process_output_data
+from .utils import (
+    ensure_run_timeout,
+    fetch_user_icon,
+    get_user_settings,
+    post_process_output_data,
+)
 from .types import (
     WorkflowModel,
     WorkflowRunModel,
@@ -23,6 +28,8 @@ from sqlalchemy import text
 
 
 from api.models import (
+    Deployment,
+    Machine,
     Workflow,
     WorkflowRun,
     WorkflowRunWithExtra,
@@ -293,3 +300,32 @@ async def get_workflows_gallery(
     return JSONResponse(
         status_code=200, content=json.loads(json.dumps(outputs, cls=CustomJSONEncoder))
     )
+
+
+@router.get("/workflow/{workflow_id}/deployments", response_model=WorkflowModel)
+async def get_deployments(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    deployments = await db.execute(
+        select(Deployment)
+        .options(
+            joinedload(Deployment.machine).load_only(Machine.name, Machine.id),
+            joinedload(Deployment.version),
+        )
+        .where(Deployment.workflow_id == workflow_id)
+        .apply_org_check(request)
+        .order_by(Deployment.environment.desc())
+    )
+    deployments = deployments.scalars().all()
+
+    if not deployments:
+        raise HTTPException(
+            status_code=404,
+            detail="Deployments not found or you don't have access to it",
+        )
+
+    deployments_data = [deployment.to_dict() for deployment in deployments]
+
+    return JSONResponse(content=deployments_data)

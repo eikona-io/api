@@ -4,7 +4,7 @@ from typing import Dict, List
 import logging
 import os
 import httpx
-from .utils import select
+from .utils import async_lru_cache, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 from api.database import get_db
@@ -69,7 +69,7 @@ async def getPrivateVolumeList(request: Request, db: AsyncSession) -> VolFSStruc
 
     return VolFSStructure(contents=[])
 
-
+@async_lru_cache(expire_after=timedelta(hours=1))
 async def getPublicVolumeList() -> VolFSStructure:
     if not os.environ.get("SHARED_MODEL_VOLUME_NAME"):
         raise ValueError(
