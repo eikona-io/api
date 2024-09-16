@@ -216,6 +216,12 @@ WorkflowRunWithExtra.duration = column_property(
         - func.extract("epoch", WorkflowRun.created_at)
     ).label("duration")
 )
+WorkflowRunWithExtra.comfy_deploy_cold_start = column_property(
+    (
+        func.extract("epoch", WorkflowRun.queued_at)
+        - func.extract("epoch", WorkflowRun.created_at)
+    ).label("comfy_deploy_cold_start")
+)
 WorkflowRunWithExtra.cold_start_duration = column_property(
     (
         func.extract("epoch", WorkflowRun.started_at)
