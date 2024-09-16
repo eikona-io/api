@@ -18,7 +18,7 @@ import aiohttp
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 import asyncio
 from fastapi import Depends
 from fastapi.responses import JSONResponse
@@ -267,7 +267,7 @@ def get_temporary_download_url(
 
     # Extract bucket name and object key
     bucket = parsed_url.netloc.split(".")[0]
-    object_key = parsed_url.path.lstrip("/")
+    object_key = unquote(parsed_url.path.lstrip("/"))
 
     # Generate and return the presigned URL
     return generate_presigned_download_url(

@@ -1,6 +1,6 @@
 import json
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from fastapi import (
     APIRouter,
     Body,
@@ -449,6 +449,10 @@ async def get_file_upload_url(
         # Generate the object key
         object_key = f"outputs/runs/{run_id}/{file_name}"
 
+        # Encode the object key for use in the URL
+        encoded_object_key = quote(object_key)
+        download_url = f"{os.getenv('SPACES_ENDPOINT_V2')}/{encoded_object_key}"
+
         # Generate pre-signed S3 upload URL
         upload_url = generate_presigned_url(
             object_key=object_key,
@@ -462,9 +466,6 @@ async def get_file_upload_url(
             access_key=access_key,
             secret_key=secret_key,
         )
-
-        # Generate static download URL
-        download_url = f"{os.getenv('SPACES_ENDPOINT_V2')}/{object_key}"
 
         # if public:
         #     # Set the object ACL to public-read after upload
