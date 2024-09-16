@@ -63,20 +63,19 @@ async def getVolumeList(volume_name: str) -> VolFSStructure:
 
 
 async def add_model_volume(request: Request, db: AsyncSession) -> Dict[str, Any]:
-    async with get_db() as db:
-        user_id = request.state.current_user["user_id"]
-        org_id = request.state.current_user["org_id"] if "org_id" in request.state.current_user else None
+    user_id = request.state.current_user["user_id"]
+    org_id = request.state.current_user["org_id"] if "org_id" in request.state.current_user else None
 
-        # Insert new volume
-        new_volume = UserVolume(
-            user_id=user_id,
-            org_id=org_id,
-            volume_name=f"models_{org_id if org_id else user_id}",
-            disabled=False,
-        )
-        db.add(new_volume)
-        await db.commit()
-        await db.refresh(new_volume)
+    # Insert new volume
+    new_volume = UserVolume(
+        user_id=user_id,
+        org_id=org_id,
+        volume_name=f"models_{org_id if org_id else user_id}",
+        disabled=False,
+    )
+    db.add(new_volume)
+    await db.commit()
+    await db.refresh(new_volume)
 
     return new_volume.to_dict()
 
@@ -126,7 +125,7 @@ async def getDownloadingModels(request: Request, db: AsyncSession):
     return volumes
 
 
-@router.get("/private-models", response_model=VolFSStructure)
+@router.get("/models/private-models", response_model=VolFSStructure)
 async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         data = await getPrivateVolumeList(request, db)
@@ -136,7 +135,7 @@ async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/public-models", response_model=VolFSStructure)
+@router.get("/models/public-models", response_model=VolFSStructure)
 async def public_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         data = await getPublicVolumeList()
@@ -146,7 +145,7 @@ async def public_models(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/downloading-models", response_model=List[Model])
+@router.get("/models/downloading-models", response_model=List[Model])
 async def downloading_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         data = await getDownloadingModels(request, db)
