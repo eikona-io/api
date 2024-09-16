@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
 
 from .utils import (
+    async_lru_cache,
     generate_presigned_url,
     get_user_settings,
     post_process_outputs,
@@ -100,6 +101,7 @@ class UpdateRunBody(BaseModel):
     node_meta: Optional[Any] = None
     log_data: Optional[Any] = None
     logs: Optional[Any] = None
+    ws_event: Optional[Any] = None
     live_status: Optional[str] = None
     progress: Optional[float] = None
     modal_function_call_id: Optional[str] = None
@@ -111,6 +113,15 @@ router = APIRouter()
 async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
     await client.insert(table=table, data=data)
 
+
+@async_lru_cache(maxsize=1000)
+async def get_cached_workflow_run(run_id: str, db: AsyncSession):
+    existing_run = await db.execute(
+        select(WorkflowRun).where(WorkflowRun.id == run_id)
+    )
+    workflow_run = existing_run.scalar_one_or_none()
+    workflow_run = cast(WorkflowRun, workflow_run)
+    return workflow_run
 
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
@@ -127,12 +138,31 @@ async def update_run(
     # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
     fixed_time = updated_at
 
+    if body.ws_event is not None:
+        # print("body.ws_event", body.ws_event)
+        # Get the workflow run
+        # print("body.run_id", body.run_id)
+        workflow_run = await get_cached_workflow_run(body.run_id, db)
+        # print("workflow_run", workflow_run)
+        
+        log_data = [
+            (
+                uuid4(),
+                body.run_id,
+                workflow_run.workflow_id,
+                workflow_run.machine_id,
+                updated_at,
+                "ws_event",
+                json.dumps(body.ws_event),
+            )
+        ]
+        # Add ClickHouse insert to background tasks
+        background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+        return {"status": "success"}
+
     if body.logs is not None:
-        existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
-        )
-        workflow_run = existing_run.scalar_one_or_none()
-        workflow_run = cast(WorkflowRun, workflow_run)
+        # Get the workflow run
+        workflow_run = await get_cached_workflow_run(body.run_id, db)
 
         if not workflow_run:
             raise HTTPException(status_code=404, detail="WorkflowRun not found")

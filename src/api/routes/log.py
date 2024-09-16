@@ -54,6 +54,7 @@ async def stream_logs_endpoint(
     run_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
     machine_id: Optional[str] = None,
+    log_level: Optional[str] = None,
     # db: AsyncSession = Depends(get_db),
     client=Depends(get_clickhouse_client),
 ):
@@ -66,12 +67,14 @@ async def stream_logs_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_logs(id_type, id_value, request, client),
+        stream_logs(id_type, id_value, request, client, log_level),
         media_type="text/event-stream",
     )
 
 
-async def stream_logs(id_type: str, id_value: str, request: Request, client):
+async def stream_logs(
+    id_type: str, id_value: str, request: Request, client, log_level: Optional[str]
+):
     async with get_db_context() as db:
         try:
             # Get the current user from the request state
@@ -117,6 +120,7 @@ async def stream_logs(id_type: str, id_value: str, request: Request, client):
                 FROM log_entries
                 WHERE {id_type}_id = '{id_value}'
                 {f"AND timestamp > '{last_timestamp}'" if last_timestamp else ""}
+                {f"AND log_level = '{log_level}'" if log_level else ""}
                 ORDER BY timestamp ASC
                 LIMIT 100
                 """
@@ -124,8 +128,7 @@ async def stream_logs(id_type: str, id_value: str, request: Request, client):
                 for row in result.result_rows:
                     timestamp, level, message = row
                     last_timestamp = timestamp
-                    # print(message)
-                    yield f"data: {json.dumps({'message': message})}\n\n"
+                    yield f"data: {json.dumps({'message': message, 'level': level})}\n\n"
 
                 if not result.result_rows:
                     yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
@@ -288,7 +291,7 @@ async def stream_progress(
                         "timestamp": timestamp.isoformat()[:-3] + "Z",
                     }
                     yield f"data: {json.dumps(progress_data)}\n\n"
-                    
+
                     if status in ["success", "failed", "timeout", "cancelled"]:
                         return  # Exit the function if the final status is reached
             else:
