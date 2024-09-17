@@ -253,7 +253,7 @@ async def update_run(
         # await db.commit()
         # return {"status": "success"}
 
-    if body.status == "started" and fixed_time is not None:
+    if body.status == "running" and fixed_time is not None:
         update_stmt = (
             update(WorkflowRun)
             .where(WorkflowRun.id == body.run_id)
