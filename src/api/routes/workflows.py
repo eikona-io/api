@@ -2,10 +2,10 @@ import json
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
-from .types import WorkflowListResponse, WorkflowModel
+from .types import WorkflowModel
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import post_process_output_data, select, post_process_outputs
+from .utils import fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
 from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion
 from .utils import get_user_settings
 from sqlalchemy import func, select as sa_select, distinct, and_, or_
@@ -16,6 +16,8 @@ from sqlalchemy import desc
 from sqlalchemy import text
 from datetime import datetime
 from uuid import UUID
+from decimal import Decimal
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,8 @@ class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, UUID)):
             return str(obj)
+        if isinstance(obj, Decimal):
+            return float(obj)
         return super().default(obj)
 
 def json_serial(obj):
@@ -31,7 +35,7 @@ def json_serial(obj):
         return str(obj)
     raise TypeError(f"Type {type(obj)} not serializable")
 
-router = APIRouter(tags=["workflows"])
+router = APIRouter(tags=["Workflow"])
 
 
 @router.get("/workflows", response_model=List[WorkflowModel])
@@ -115,8 +119,8 @@ async def get_workflows(
 
     current_user = request.state.current_user
     user_id = current_user["user_id"]
-    org_id = current_user["org_id"]
-
+    org_id = current_user["org_id"] if 'org_id' in current_user else None
+    
     # Execute the query
     result = await db.execute(
         raw_query,
@@ -135,9 +139,18 @@ async def get_workflows(
     ]
     
     user_settings = await get_user_settings(request, db)
+    
+    # Fetch user icons
+    unique_user_ids = list(set(workflow["user_id"] for workflow in workflows if workflow["user_id"]))
+    user_icon_results = await asyncio.gather(
+        *[fetch_user_icon(user_id) for user_id in unique_user_ids]
+    )
+    user_icons = dict(user_icon_results)
+
     for workflow in workflows:
         if workflow["latest_output"]:
             post_process_output_data(workflow["latest_output"], user_settings)
+        workflow["user_icon"] = user_icons.get(workflow["user_id"])
 
     # Use the custom encoder to serialize the data
     return JSONResponse(

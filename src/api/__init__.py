@@ -13,15 +13,18 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, hello, internal, workflow, log, workflows
+from api.routes import run, hello, internal, workflow, log, workflows, machines, models
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
 import logging
 from scalar_fastapi import get_scalar_api_reference
 from fastapi.openapi.utils import get_openapi
+from fastapi import APIRouter
+
 # import all you need from fastapi-pagination
 # from fastapi_pagination import Page, add_pagination, paginate
+from pprint import pprint
 
 load_dotenv()
 logfire.configure()
@@ -70,31 +73,10 @@ def custom_openapi():
         title="ComfyDeploy API",
         version="1.0.0",
         description="API for ComfyDeploy",
-        routes=app.routes,
+        routes=api_router.routes,
+        servers=app.servers,
     )
 
-    # Add Bearer Auth security scheme
-    # openapi_schema["components"]["securitySchemes"] = {
-    #     "Bearer": {
-    #         # "type": "oauth2",
-    #         # "flows": {
-    #         #     "authorizationCode": {
-    #         #         "authorizationUrl": "https://api.comfydeploy.com/api/oauth/authorize",
-    #         #         "tokenUrl": "https://api.comfydeploy.com/api/oauth/token",
-    #         #         # "scopes": {
-    #         #         #     "read:runs": "Read access to runs",
-    #         #         #     "write:runs": "Write access to runs",
-    #         #         #     # Add more scopes as needed
-    #         #         # },
-    #         #     }
-    #         # },
-    #     }
-    # }
-
-    # # Apply Bearer Auth security globally
-    # openapi_schema["security"] = [{"Bearer": []}]
-    
-        # Modify Bearer Auth security scheme
     openapi_schema["components"]["securitySchemes"] = {
         "Bearer": {
             "type": "http",
@@ -113,19 +95,31 @@ app.openapi = custom_openapi
 
 # logfire.install_auto_tracing()
 
-# Include routers
-app.include_router(run.router, prefix="/api")
-app.include_router(internal.router, prefix="/api")
-app.include_router(workflows.router, prefix="/api")
-app.include_router(workflow.router, prefix="/api")
-app.include_router(log.router, prefix="/api")
-app.include_router(hello.router)
 
-@app.get("/scalar", include_in_schema=False)
+api_router = APIRouter()  # Remove the prefix here
+
+# Include routers
+api_router.include_router(run.router)
+api_router.include_router(internal.router)
+api_router.include_router(workflows.router)
+api_router.include_router(workflow.router)
+api_router.include_router(machines.router)
+api_router.include_router(log.router)
+api_router.include_router(models.router)
+# api_router.include_router(hello.router)
+
+app.include_router(api_router, prefix="/api")  # Add the prefix here instead
+
+
+@app.get("/", include_in_schema=False)
 async def scalar_html():
     return get_scalar_api_reference(
         openapi_url=app.openapi_url,
         title=app.title,
+        scalar_proxy_url="https://proxy.scalar.com",
+        servers=[
+            {"url": server["url"]} for server in app.servers
+        ],  # Remove "/api" here
     )
 
 
@@ -133,11 +127,21 @@ async def scalar_html():
 JWT_SECRET = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
 
+CLERK_PUBLIC_JWT_KEY = os.getenv("CLERK_PUBLIC_JWT_KEY")
+
 
 # Function to parse JWT
 async def parse_jwt(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+
+async def parse_clerk_jwt(token: str) -> Optional[dict]:
+    try:
+        payload = jwt.decode(token, CLERK_PUBLIC_JWT_KEY, algorithms=["RS256"])
         return payload
     except JWTError:
         return None
@@ -162,6 +166,12 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     user_data = await parse_jwt(token)
 
     if not user_data:
+        user_data = await parse_clerk_jwt(token)
+        # backward compatibility for old clerk tokens
+        if user_data is not None:
+            user_data["user_id"] = user_data["sub"]
+
+    if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     # If the key has no expiration, it's not a temporary key, so we check if it's revoked
@@ -182,7 +192,8 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 # Modified middleware for auth check with logging
 @app.middleware("http")
 async def check_auth(request: Request, call_next):
-    logger.info(f"Received request: {request.method} {request.url.path}")
+    # with logfire.span("api_request"):
+        # logger.info(f"Received request: {request.method} {request.url.path}")
 
     # List of routes to ignore for authentication
     ignored_routes = [
@@ -193,19 +204,24 @@ async def check_auth(request: Request, call_next):
         "/api/fal-webhook",
     ]
 
-    if request.url.path.startswith("/api") and request.url.path not in ignored_routes:
+    if (
+        request.url.path.startswith("/api")
+        and request.url.path not in ignored_routes
+    ):
         try:
             async with AsyncSessionLocal() as db:
                 request.state.current_user = await get_current_user(request, db)
             # logger.info("Added current_user to request state")
         except HTTPException as e:
-            logger.error(f"Authentication error: {e.detail}")
-            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
-    else:
-        logger.info("Skipping auth check for non-API route or ignored route")
+            # logger.error(f"Authentication error: {e.detail}")
+            return JSONResponse(
+                status_code=e.status_code, content={"detail": e.detail}
+            )
+    # else:
+    #     logger.info("Skipping auth check for non-API route or ignored route")
 
     response = await call_next(request)
-    logger.info(f"Request completed: {response.status_code}")
+    # logger.info(f"Request completed: {response.status_code}")
     return response
 
 

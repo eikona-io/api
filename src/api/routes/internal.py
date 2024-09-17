@@ -1,6 +1,6 @@
 import json
 import os
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from fastapi import (
     APIRouter,
     Body,
@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
 
 from .utils import (
+    async_lru_cache,
     generate_presigned_url,
     get_user_settings,
     post_process_outputs,
@@ -100,6 +101,7 @@ class UpdateRunBody(BaseModel):
     node_meta: Optional[Any] = None
     log_data: Optional[Any] = None
     logs: Optional[Any] = None
+    ws_event: Optional[Any] = None
     live_status: Optional[str] = None
     progress: Optional[float] = None
     modal_function_call_id: Optional[str] = None
@@ -111,6 +113,15 @@ router = APIRouter()
 async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
     await client.insert(table=table, data=data)
 
+
+@async_lru_cache(maxsize=1000)
+async def get_cached_workflow_run(run_id: str, db: AsyncSession):
+    existing_run = await db.execute(
+        select(WorkflowRun).where(WorkflowRun.id == run_id)
+    )
+    workflow_run = existing_run.scalar_one_or_none()
+    workflow_run = cast(WorkflowRun, workflow_run)
+    return workflow_run
 
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
@@ -127,12 +138,31 @@ async def update_run(
     # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
     fixed_time = updated_at
 
+    if body.ws_event is not None:
+        # print("body.ws_event", body.ws_event)
+        # Get the workflow run
+        # print("body.run_id", body.run_id)
+        workflow_run = await get_cached_workflow_run(body.run_id, db)
+        # print("workflow_run", workflow_run)
+        
+        log_data = [
+            (
+                uuid4(),
+                body.run_id,
+                workflow_run.workflow_id,
+                workflow_run.machine_id,
+                updated_at,
+                "ws_event",
+                json.dumps(body.ws_event),
+            )
+        ]
+        # Add ClickHouse insert to background tasks
+        background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+        return {"status": "success"}
+
     if body.logs is not None:
-        existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
-        )
-        workflow_run = existing_run.scalar_one_or_none()
-        workflow_run = cast(WorkflowRun, workflow_run)
+        # Get the workflow run
+        workflow_run = await get_cached_workflow_run(body.run_id, db)
 
         if not workflow_run:
             raise HTTPException(status_code=404, detail="WorkflowRun not found")
@@ -153,7 +183,9 @@ async def update_run(
         # Add ClickHouse insert to background tasks
         background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
 
-        await send_workflow_update(str(body.run_id), {"logs": body.logs})
+        background_tasks.add_task(
+            send_workflow_update, str(body.run_id), {"logs": body.logs}
+        )
         return {"status": "success"}
 
     # Updating the progress
@@ -171,16 +203,18 @@ async def update_run(
         )
         result = await db.execute(update_stmt)
         await db.commit()
-        # await db.refresh(WorkflowRun)
 
         workflow_run = result.scalar_one()
         workflow_run = cast(WorkflowRun, workflow_run)
+        await db.refresh(workflow_run)
 
         # Sending a real-time update to connected clients
-        await send_workflow_update(
-            str(workflow_run.workflow_id), workflow_run.to_dict()
+        background_tasks.add_task(
+            send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
         )
-        await send_realtime_update(str(workflow_run.id), workflow_run.to_dict())
+        background_tasks.add_task(
+            send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
+        )
 
         # Sending to clickhouse
         progress_data = [
@@ -230,7 +264,6 @@ async def update_run(
         )
         await db.execute(update_stmt)
         await db.commit()
-        # await db.refresh(workflow_run)
 
     if body.status == "queued" and fixed_time is not None:
         # Ensure request.time is UTC-aware
@@ -241,7 +274,6 @@ async def update_run(
         )
         await db.execute(update_stmt)
         await db.commit()
-        # await db.refresh(workflow_run)
         # return {"status": "success"}
 
     ended = body.status in ["success", "failed", "timeout", "cancelled"]
@@ -334,9 +366,9 @@ async def update_run(
         )
         result = await db.execute(update_stmt)
         await db.commit()
-        await db.refresh(workflow_run)
         workflow_run = result.scalar_one_or_none()
         workflow_run = cast(WorkflowRun, workflow_run)
+        await db.refresh(workflow_run)
 
         # Get all outputs for the workflow run
         outputs_query = select(WorkflowRunOutput).where(
@@ -353,9 +385,13 @@ async def update_run(
         workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
         # workflow_run_data["status"] = request.status.value
 
-        # Use the dictionary instead of the ORM object
-        await send_workflow_update(str(workflow_run.workflow_id), workflow_run_data)
-        await send_realtime_update(str(workflow_run.id), workflow_run_data)
+        # Move send_workflow_update to background task
+        background_tasks.add_task(
+            send_workflow_update, str(workflow_run.workflow_id), workflow_run_data
+        )
+        background_tasks.add_task(
+            send_realtime_update, str(workflow_run.id), workflow_run_data
+        )
 
         if workflow_run.webhook:
             background_tasks.add_task(
@@ -464,6 +500,10 @@ async def get_file_upload_url(
         # Generate the object key
         object_key = f"outputs/runs/{run_id}/{file_name}"
 
+        # Encode the object key for use in the URL
+        encoded_object_key = quote(object_key)
+        download_url = f"{os.getenv('SPACES_ENDPOINT_V2')}/{encoded_object_key}"
+
         # Generate pre-signed S3 upload URL
         upload_url = generate_presigned_url(
             object_key=object_key,
@@ -477,9 +517,6 @@ async def get_file_upload_url(
             access_key=access_key,
             secret_key=secret_key,
         )
-
-        # Generate static download URL
-        download_url = f"{os.getenv('SPACES_ENDPOINT_V2')}/{object_key}"
 
         # if public:
         #     # Set the object ACL to public-read after upload

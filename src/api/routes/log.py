@@ -1,7 +1,16 @@
 import asyncio
+import datetime
 import os
 import uuid
-from .types import CreateRunRequest, CreateRunResponse, DeploymentRunRequest, WorkflowRunModel, WorkflowRunOutputModel, WorkflowRunRequest, WorkflowRunVersionRequest
+from .types import (
+    CreateRunRequest,
+    CreateRunResponse,
+    DeploymentRunRequest,
+    WorkflowRunModel,
+    WorkflowRunOutputModel,
+    WorkflowRunRequest,
+    WorkflowRunVersionRequest,
+)
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import modal
@@ -10,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from api.routes.internal import send_realtime_update, send_workflow_update
-from .utils import select
+from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, select
 
 # from sqlalchemy import select
 from api.models import (
@@ -18,6 +27,7 @@ from api.models import (
     Deployment,
     Machine,
     WorkflowRunOutput,
+    WorkflowRunWithExtra,
     WorkflowVersion,
     Workflow,
 )
@@ -31,10 +41,12 @@ import json
 import httpx
 from typing import Optional, List
 from uuid import UUID
+import datetime as dt
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Log"])
+
 
 @router.get("/stream-logs")
 async def stream_logs_endpoint(
@@ -42,6 +54,7 @@ async def stream_logs_endpoint(
     run_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
     machine_id: Optional[str] = None,
+    log_level: Optional[str] = None,
     # db: AsyncSession = Depends(get_db),
     client=Depends(get_clickhouse_client),
 ):
@@ -54,12 +67,14 @@ async def stream_logs_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_logs(id_type, id_value, request, client),
+        stream_logs(id_type, id_value, request, client, log_level),
         media_type="text/event-stream",
     )
 
 
-async def stream_logs(id_type: str, id_value: str, request: Request, client):
+async def stream_logs(
+    id_type: str, id_value: str, request: Request, client, log_level: Optional[str]
+):
     async with get_db_context() as db:
         try:
             # Get the current user from the request state
@@ -105,6 +120,7 @@ async def stream_logs(id_type: str, id_value: str, request: Request, client):
                 FROM log_entries
                 WHERE {id_type}_id = '{id_value}'
                 {f"AND timestamp > '{last_timestamp}'" if last_timestamp else ""}
+                {f"AND log_level = '{log_level}'" if log_level else ""}
                 ORDER BY timestamp ASC
                 LIMIT 100
                 """
@@ -112,8 +128,7 @@ async def stream_logs(id_type: str, id_value: str, request: Request, client):
                 for row in result.result_rows:
                     timestamp, level, message = row
                     last_timestamp = timestamp
-                    # print(message)
-                    yield f"data: {json.dumps({'message': message})}\n\n"
+                    yield f"data: {json.dumps({'message': message, 'level': level})}\n\n"
 
                 if not result.result_rows:
                     yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
@@ -133,6 +148,8 @@ async def stream_progress_endpoint(
     run_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
     machine_id: Optional[str] = None,
+    return_run: Optional[bool] = False,
+    from_start: Optional[bool] = False,
     # db: AsyncSession = Depends(get_db),
     client=Depends(get_clickhouse_client),
 ):
@@ -145,27 +162,37 @@ async def stream_progress_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_progress(id_type, id_value, request, client),
+        stream_progress(id_type, id_value, request, client, return_run, from_start),
         media_type="text/event-stream",
     )
 
 
-async def stream_progress(id_type: str, id_value: str, request: Request, client):
+async def stream_progress(
+    id_type: str,
+    id_value: str,
+    request: Request,
+    client,
+    return_run: Optional[bool] = False,
+    from_start: Optional[bool] = False,
+    # db: AsyncSession = Depends(get_db),
+):
     async with get_db_context() as db:
-        try:
-            # Get the current user from the request state
-            current_user = request.state.current_user
+        user_settings = await get_user_settings(request, db)
 
-            # Verify the entity exists and check permissions
-            model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
-                id_type
-            )
-            if not model:
-                raise HTTPException(status_code=400, detail="Invalid ID type")
+    try:
+        # Get the current user from the request state
+        current_user = request.state.current_user
 
+        # Verify the entity exists and check permissions
+        model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
+            id_type
+        )
+        if not model:
+            raise HTTPException(status_code=400, detail="Invalid ID type")
+
+        async with get_db_context() as db:
             entity_query = select(model).where(model.id == id_value)
             result = await db.execute(entity_query)
-            await db.close()
             entity = result.scalar_one_or_none()
 
             if not entity:
@@ -173,55 +200,105 @@ async def stream_progress(id_type: str, id_value: str, request: Request, client)
                     status_code=404, detail=f"{id_type.capitalize()} not found"
                 )
 
-            # Check permissions based on org_id or user_id
-            has_permission = False
-            if hasattr(entity, "org_id") and entity.org_id is not None:
-                has_permission = entity.org_id == current_user.get("org_id")
-            elif hasattr(entity, "user_id") and entity.user_id is not None:
-                has_permission = (
-                    entity.user_id == current_user.get("user_id")
-                    and current_user.get("org_id") is None
-                )
+        # Check permissions based on org_id or user_id
+        has_permission = False
+        if hasattr(entity, "org_id") and entity.org_id is not None:
+            has_permission = entity.org_id == current_user.get("org_id")
+        elif hasattr(entity, "user_id") and entity.user_id is not None:
+            has_permission = (
+                entity.user_id == current_user.get("user_id")
+                and current_user.get("org_id") is None
+            )
 
-            if not has_permission:
-                raise HTTPException(
-                    status_code=403, detail="Not authorized to access this progress"
-                )
+        if not has_permission:
+            raise HTTPException(
+                status_code=403, detail="Not authorized to access this progress"
+            )
 
-            # Stream progress updates from ClickHouse
-            last_update_time = None
-            while True:
-                query = f"""
-                SELECT timestamp, progress, node_class, status
-                FROM progress_updates
-                WHERE {id_type}_id = '{id_value}'
-                {f"AND timestamp > '{last_update_time}'" if last_update_time else ""}
-                ORDER BY timestamp ASC
-                LIMIT 100
-                """
-                result = await client.query(query)
+        # Stream progress updates from ClickHouse
+        last_update_time = None if from_start else dt.datetime.now(dt.timezone.utc)
+        while True:
+            # Convert last_update_time to the format expected by ClickHouse
+            formatted_time = (
+                last_update_time.strftime("%Y-%m-%d %H:%M:%S.%f")
+                if last_update_time is not None
+                else None
+            )
 
-                # print(result.result_rows)
+            query = f"""
+            SELECT run_id, workflow_id, machine_id, timestamp, progress, node_class, status
+            FROM progress_updates
+            WHERE {id_type}_id = '{id_value}'
+            {f"AND timestamp > toDateTime64('{formatted_time}', 6)" if formatted_time is not None else ""}
+            ORDER BY timestamp ASC
+            LIMIT 100
+            """
+            result = await client.query(query)
 
-                if result.result_rows:
+            if result.result_rows and return_run:
+                async with get_db_context() as db:
+                    # get a set of unique run ids
+                    run_ids = set()
                     for row in result.result_rows:
-                        timestamp, progress, node_class, status = row
-                        last_update_time = timestamp
-                        progress_data = {
-                            "progress": progress,
-                            "status": status,
-                            "node_class": node_class,
-                            "updated_at": timestamp.isoformat(),
-                        }
-                        yield f"data: {json.dumps(progress_data)}\n\n"
+                        run_ids.add(row[0])
 
-                        if status in ["success", "failed", "timeout", "cancelled"]:
-                            return  # Exit the function if the final status is reached
-                else:
-                    yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+                    # update the last_update_time to the timestamp of the last row
+                    if result.result_rows:
+                        last_update_time = result.result_rows[-1][3]
 
-                await asyncio.sleep(1)  # Wait for 1 second before next query
+                    for run_id in run_ids:
+                        query = (
+                            select(WorkflowRunWithExtra)
+                            .options(joinedload(WorkflowRun.outputs))
+                            .where(WorkflowRun.id == run_id)
+                            .apply_org_check(request)
+                        )
 
-        except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            raise
+                        result = await db.execute(query)
+                        run = result.unique().scalar_one_or_none()
+
+                        if not run:
+                            # raise HTTPException(status_code=404, detail="Run not found")
+                            continue
+
+                        run = cast(WorkflowRun, run)
+                        ensure_run_timeout(run)
+                        post_process_outputs(run.outputs, user_settings)
+                        # Convert the run to a dictionary and remove the run_log
+                        # run_dict = {k: v for k, v in vars(run).items() if k != "run_log"}
+                        run_dict = run.to_dict()
+                        run_dict.pop("run_log", None)
+                        yield f"data: {json.dumps(run_dict)}\n\n"
+            elif result.result_rows:
+                for row in result.result_rows:
+                    (
+                        run_id,
+                        workflow_id,
+                        machine_id,
+                        timestamp,
+                        progress,
+                        node_class,
+                        status,
+                    ) = row
+                    last_update_time = timestamp
+                    progress_data = {
+                        "run_id": str(run_id),
+                        "workflow_id": str(workflow_id),
+                        "machine_id": str(machine_id),
+                        "progress": progress,
+                        "status": status,
+                        "node_class": node_class,
+                        "timestamp": timestamp.isoformat()[:-3] + "Z",
+                    }
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+
+                    if status in ["success", "failed", "timeout", "cancelled"]:
+                        return  # Exit the function if the final status is reached
+            else:
+                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
+
+            await asyncio.sleep(1)  # Wait for 1 second before next query
+
+    except Exception as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        raise

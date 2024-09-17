@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
+from functools import wraps
+from http.client import HTTPException
 import logging
-from typing import Any, Self, TypeVar, Tuple
+from typing import Any, Literal, Self, TypeVar, Tuple, Union
 from fastapi import Request
 from sqlalchemy import GenerativeSelect, Select
 from sqlalchemy.orm import declarative_base
@@ -16,19 +18,135 @@ import aiohttp
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 import asyncio
 from fastapi import Depends
+from fastapi.responses import JSONResponse
+import httpx
+from functools import lru_cache, wraps
+import os
+from google.cloud import pubsub_v1
+from google.api_core import exceptions
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+from datetime import datetime, timedelta
+
+# Get JWT secret from environment variable
+JWT_SECRET = os.getenv("JWT_SECRET")
+ALGORITHM = "HS256"
+
+
+def generate_temporary_token(
+    user_id: str, org_id: Optional[str] = None, expires_in: str = "1h"
+) -> str:
+    """
+    Generate a temporary JWT token for the given user_id and org_id.
+
+    Args:
+        user_id (str): The user ID to include in the token.
+        org_id (Optional[str]): The organization ID to include in the token, if any.
+        expires_in (str): The expiration time for the token. Default is "1h".
+
+    Returns:
+        str: The generated JWT token.
+    """
+    payload = {
+        "user_id": user_id,
+        "exp": datetime.utcnow() + timedelta(hours=1),  # Default expiration of 1 hour
+    }
+
+    if org_id:
+        payload["org_id"] = org_id
+
+    if expires_in != "1h":
+        # Parse the expiration time
+        value = int(expires_in[:-1])
+        unit = expires_in[-1].lower()
+        if unit == "m":
+            delta = timedelta(minutes=value)
+        elif unit == "h":
+            delta = timedelta(hours=value)
+        elif unit == "d":
+            delta = timedelta(days=value)
+        elif unit == "w":
+            delta = timedelta(weeks=value)
+        else:
+            raise ValueError("Invalid expiration format. Use m, h, d, or w.")
+
+        payload["exp"] = datetime.utcnow() + delta
+
+    return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
+
 
 Base = declarative_base()
 
 T = TypeVar("T")
 
+clerk_token = os.getenv("CLERK_SECRET_KEY")
+
+def async_lru_cache(maxsize=128, typed=False, expire_after=None):
+    def decorator(async_func):
+        cache = {}
+
+        @wraps(async_func)
+        async def wrapper(*args, **kwargs):
+            cache_key = args + tuple(sorted(kwargs.items()))
+            now = datetime.now()
+
+            if cache_key in cache:
+                result, timestamp = cache[cache_key]
+                if expire_after is None or now - timestamp < expire_after:
+                    return result
+
+            result = await async_func(*args, **kwargs)
+            cache[cache_key] = (result, now)
+
+            if len(cache) > maxsize:
+                oldest_key = min(cache, key=lambda k: cache[k][1])
+                del cache[oldest_key]
+
+            return result
+
+        return wrapper
+
+    return decorator
+
+
+# Add this cache at the module level
+user_icon_cache = {}
+
+
+@async_lru_cache(maxsize=1000)
+async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
+    current_time = datetime.now()
+
+    # Check if the user_id is in the cache and not expired (1 day)
+    if user_id in user_icon_cache:
+        cached_data, timestamp = user_icon_cache[user_id]
+        if current_time - timestamp < timedelta(days=1):
+            return user_id, cached_data
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {clerk_token}"},
+        )
+        if response.status_code == 200:
+            user_data = response.json()
+            image_url = user_data.get("image_url")
+            # Update the cache
+            user_icon_cache[user_id] = (image_url, current_time)
+            return user_id, image_url
+
+    # If fetching fails, cache None for 1 hour to avoid frequent retries
+    user_icon_cache[user_id] = (None, current_time)
+    return user_id, None
+
 
 def get_org_or_user_condition(target: Base, request: Request):
     current_user = request.state.current_user
     user_id = current_user["user_id"]
-    org_id = current_user["org_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
 
     return (
         (target.org_id == org_id)
@@ -44,6 +162,9 @@ class OrgAwareSelect(Select[Tuple[T]]):
         return self.where(
             get_org_or_user_condition(self.column_descriptions[0]["entity"], request)
         )
+
+    def apply_org_check_by_type(self, type, request: Request) -> Self:
+        return self.where(get_org_or_user_condition(type, request))
 
     def paginate(self, limit: int, offset: int) -> Self:
         return self.limit(limit).offset(offset)
@@ -146,7 +267,7 @@ def get_temporary_download_url(
 
     # Extract bucket name and object key
     bucket = parsed_url.netloc.split(".")[0]
-    object_key = parsed_url.path.lstrip("/")
+    object_key = unquote(parsed_url.path.lstrip("/"))
 
     # Generate and return the presigned URL
     return generate_presigned_download_url(
@@ -236,8 +357,41 @@ def generate_presigned_url(
     return response
 
 
+project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+
+
 async def send_workflow_update(workflow_id: str, data: dict):
+    return
     logging.info(f"Sending updateWorkflow event via POST: {workflow_id}")
+    # try:
+    #     topic_id = "workflow-updates"
+
+    #     # Create the topic if it doesn't exist
+    #     # await create_topic_if_not_exists(project_id, topic_id)
+
+    #     publisher = pubsub_v1.PublisherClient()
+    #     # Create a publisher client
+    #     topic_path = publisher.topic_path(project_id, topic_id)
+
+    #     # Prepare the message
+    #     message_data = json.dumps({"workflowId": workflow_id, "data": data}).encode(
+    #         "utf-8"
+    #     )
+
+    #     # Publish the message
+    #     publish_future = publisher.publish(
+    #         topic_path,
+    #         data=message_data,
+    #         id=str(workflow_id),  # Add the ID as a message attribute
+    #     )
+    #     # Use asyncio to wait for the future without blocking
+    #     message_id = await asyncio.wrap_future(publish_future)
+
+    #     logging.info(f"Published message with ID: {message_id}")
+    # except Exception as error:
+    #     print(data)
+    #     logging.error(f"Error sending updateWorkflow event: {error}")
+
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/updateWorkflow"
@@ -258,8 +412,53 @@ async def send_workflow_update(workflow_id: str, data: dict):
         logging.error(f"Error sending updateWorkflow event: {error}")
 
 
+async def create_topic_if_not_exists(project_id: str, topic_id: str):
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(project_id, topic_id)
+
+    try:
+        publisher.create_topic(request={"name": topic_path})
+        print(f"Topic {topic_path} created.")
+    except exceptions.AlreadyExists:
+        print(f"Topic {topic_path} already exists.")
+    except Exception as e:
+        print(f"Error creating topic: {e}")
+        raise
+
+
 async def send_realtime_update(id: str, data: dict):
+    return
     logging.info(f"Sending updateWorkflow event via POST: {id}")
+
+    # try:
+    #     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+    #     topic_id = "realtime-updates"  # Single topic for all realtime updates
+
+    #     # Create the topic if it doesn't exist
+    #     # await create_topic_if_not_exists(project_id, topic_id)
+    #     publisher = pubsub_v1.PublisherClient()
+
+    #     # Create a publisher client
+    #     topic_path = publisher.topic_path(project_id, topic_id)
+
+    #     # Prepare the message
+    #     message_data = json.dumps({"id": id, "data": data}).encode("utf-8")
+
+    #     # Publish the message
+    #     # Publish the message asynchronously with the ID as an attribute
+    #     publish_future = publisher.publish(
+    #         topic_path,
+    #         data=message_data,
+    #         id=str(id),  # Add the ID as a message attribute
+    #     )
+    #     # Use asyncio to wait for the future without blocking
+    #     message_id = await asyncio.wrap_future(publish_future)
+
+    #     logging.info(f"Published realtime update message with ID: {message_id}")
+    # except Exception as error:
+    #     print(data)
+    #     logging.error(f"Error sending realtime update event: {error}")
+
     try:
         async with aiohttp.ClientSession() as session:
             url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/update"
@@ -301,3 +500,50 @@ async def retry_fetch(url, options, num_retries=3):
         except Exception as error:
             if i == num_retries - 1:
                 raise error  # Throw error if it's the last retry
+
+
+PermissionType = Literal[
+    # API Permissions
+    "api:runs:get",
+    "api:runs:create",
+    #
+    "api:runs:update",
+    "api:file_upload:get",
+    #
+    "api:machines:update",
+    #
+    "api:gpu_event:create",
+    "api:gpu_event:update",
+]
+
+
+def require_permission(permission: Union[PermissionType, list[PermissionType]]):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(request: Request, *args, **kwargs):
+            if not has(request, permission):
+                # raise HTTPException(status_code=403, detail="Permission denied")
+                return JSONResponse(
+                    status_code=403, content={"detail": "Permission denied"}
+                )
+            return await func(request, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def has(
+    request: Request, permission: Union[PermissionType, list[PermissionType]]
+) -> bool:
+    current_user = request.state.current_user
+
+    if current_user is None:
+        return False
+
+    user_permissions = current_user.get("org_permissions", [])
+
+    if isinstance(permission, str):
+        return permission in user_permissions
+    elif isinstance(permission, list):
+        return all(perm in user_permissions for perm in permission)
