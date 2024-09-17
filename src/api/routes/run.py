@@ -3,6 +3,7 @@ import datetime
 import os
 import uuid
 from .types import (
+    CreateRunBatchResponse,
     CreateRunRequest,
     CreateRunResponse,
     DeploymentRunRequest,
@@ -84,7 +85,7 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
     return run_dict
 
 
-@router.post("/run", response_model=Union[CreateRunResponse, WorkflowRunOutputModel])
+@router.post("/run", response_model=Union[CreateRunResponse, CreateRunBatchResponse, WorkflowRunOutputModel])
 async def create_run(
     request: Request,
     data: CreateRunRequest,
@@ -315,7 +316,7 @@ async def create_run(
                         except httpx.HTTPStatusError as e:
                             error_message = f"Error creating run: {e.response.status_code} {e.response.reason_phrase}"
                             try:
-                                result = await response.json()
+                                result = response.json()
                                 if "node_errors" in result:
                                     error_message += f" {result['node_errors']}"
                             except json.JSONDecodeError:
@@ -410,19 +411,20 @@ async def create_run(
 
         results = await batch_run()
 
-        return {"status": "success", "run_id": str(batch_id)}
+        return {"status": "success", "batch_id": str(batch_id)}
 
     elif data.batch_number is not None and data.batch_number > 1:
+        batch_id = uuid.uuid4()
 
         async def batch_run():
             results = []
             for _ in range(data.batch_number):
-                result = await run()
+                result = await run(None, batch_id)
                 results.append(result)
             return results
 
         await batch_run()
 
-        return {"status": "success"}
+        return {"status": "success", "batch_id": str(batch_id)}
     else:
         return await run()

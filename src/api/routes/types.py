@@ -269,6 +269,10 @@ CreateRunRequest = Union[
 ]
 
 
+class CreateRunBatchResponse(BaseModel):
+    batch_id: UUID
+
+
 class CreateRunResponse(BaseModel):
     run_id: UUID
 

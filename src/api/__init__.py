@@ -192,37 +192,37 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 # Modified middleware for auth check with logging
 @app.middleware("http")
 async def check_auth(request: Request, call_next):
-    with logfire.span("api_request"):
-        logger.info(f"Received request: {request.method} {request.url.path}")
+    # with logfire.span("api_request"):
+        # logger.info(f"Received request: {request.method} {request.url.path}")
 
-        # List of routes to ignore for authentication
-        ignored_routes = [
-            # "/api/update-run",
-            # "/api/file-upload",
-            "/api/gpu_event",
-            "/api/machine-built",
-            "/api/fal-webhook",
-        ]
+    # List of routes to ignore for authentication
+    ignored_routes = [
+        # "/api/update-run",
+        # "/api/file-upload",
+        "/api/gpu_event",
+        "/api/machine-built",
+        "/api/fal-webhook",
+    ]
 
-        if (
-            request.url.path.startswith("/api")
-            and request.url.path not in ignored_routes
-        ):
-            try:
-                async with AsyncSessionLocal() as db:
-                    request.state.current_user = await get_current_user(request, db)
-                # logger.info("Added current_user to request state")
-            except HTTPException as e:
-                logger.error(f"Authentication error: {e.detail}")
-                return JSONResponse(
-                    status_code=e.status_code, content={"detail": e.detail}
-                )
-        else:
-            logger.info("Skipping auth check for non-API route or ignored route")
+    if (
+        request.url.path.startswith("/api")
+        and request.url.path not in ignored_routes
+    ):
+        try:
+            async with AsyncSessionLocal() as db:
+                request.state.current_user = await get_current_user(request, db)
+            # logger.info("Added current_user to request state")
+        except HTTPException as e:
+            # logger.error(f"Authentication error: {e.detail}")
+            return JSONResponse(
+                status_code=e.status_code, content={"detail": e.detail}
+            )
+    # else:
+    #     logger.info("Skipping auth check for non-API route or ignored route")
 
-        response = await call_next(request)
-        logger.info(f"Request completed: {response.status_code}")
-        return response
+    response = await call_next(request)
+    # logger.info(f"Request completed: {response.status_code}")
+    return response
 
 
 # Add CORS middleware
