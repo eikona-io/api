@@ -50,12 +50,7 @@ async def get_branch_info(git_url: str) -> Dict[str, Any] | None:
         branch_url = f"{repo_url}/branches/{branch}"
         branch_info = await fetch_github_data(branch_url, headers)
 
-        return {
-            "commit": {
-                "sha": branch_info["commit"]["sha"],
-                "commit": {"message": branch_info["commit"]["commit"]["message"]},
-            }
-        }
+        return branch_info
     except httpx.HTTPStatusError as e:
         logger.error(f"GitHub API error: {e.response.status_code} {e.response.text}")
         return None
