@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, hello, internal, workflow, log, workflows, machines, models
+from api.routes import run, hello, internal, workflow, log, workflows, machines, models, comfy_node
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
@@ -106,6 +106,7 @@ api_router.include_router(workflow.router)
 api_router.include_router(machines.router)
 api_router.include_router(log.router)
 api_router.include_router(models.router)
+api_router.include_router(comfy_node.router)
 # api_router.include_router(hello.router)
 
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
