@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Models"])
+router = APIRouter(tags=["Volumes"])
 
 
 async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
@@ -35,7 +35,7 @@ async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str
     ]
 
 
-async def getVolumeList(volume_name: str) -> VolFSStructure:
+async def get_volume_list(volume_name: str) -> VolFSStructure:
     if not volume_name:
         raise ValueError("Volume name is not provided")
     endpoint = f"{os.environ.get('MODAL_VOLUME_ENDPOINT')}/ls_full?volume_name={volume_name}&create_if_missing=true"
@@ -86,14 +86,14 @@ async def set_initial_user_data(user_id: str):
     pass
 
 
-async def getPrivateVolumeList(request: Request, db: AsyncSession) -> VolFSStructure:
+async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSStructure:
     private_volumes = await get_model_volumes(request, db)
 
     if not private_volumes:
         private_volumes = await add_model_volume(request, db)
 
     if private_volumes and len(private_volumes) > 0:
-        return await getVolumeList(private_volumes[0]["volume_name"])
+        return await get_volume_list(private_volumes[0]["volume_name"])
 
     return VolFSStructure(contents=[])
 
@@ -103,7 +103,7 @@ async def getPublicVolumeList() -> VolFSStructure:
         raise ValueError(
             "public volume name env var `SHARED_MODEL_VOLUME_NAME` is not set"
         )
-    return await getVolumeList(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
+    return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
 
 
 async def getDownloadingModels(request: Request, db: AsyncSession):
@@ -128,7 +128,7 @@ async def getDownloadingModels(request: Request, db: AsyncSession):
 @router.get("/models/private-models", response_model=VolFSStructure)
 async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        data = await getPrivateVolumeList(request, db)
+        data = await get_private_volume_list(request, db)
         return data
     except Exception as e:
         logger.error(f"Error fetching private models: {str(e)}")

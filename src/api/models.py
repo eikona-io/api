@@ -475,7 +475,7 @@ class Model(SerializableMixin, Base):
 
     user_volume_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("user_volumes.id", ondelete="cascade"),
+        ForeignKey("user_volume.id", ondelete="cascade"),
         nullable=False,
     )
 
@@ -543,7 +543,7 @@ class Model(SerializableMixin, Base):
     )
 
 class UserVolume(SerializableMixin, Base):
-    __tablename__ = "user_volumes"
+    __tablename__ = "user_volume"
     metadata = metadata
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
