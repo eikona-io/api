@@ -98,7 +98,7 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
     return VolFSStructure(contents=[])
 
 @async_lru_cache(expire_after=timedelta(hours=1))
-async def getPublicVolumeList() -> VolFSStructure:
+async def get_public_volume_list() -> VolFSStructure:
     if not os.environ.get("SHARED_MODEL_VOLUME_NAME"):
         raise ValueError(
             "public volume name env var `SHARED_MODEL_VOLUME_NAME` is not set"
@@ -106,7 +106,7 @@ async def getPublicVolumeList() -> VolFSStructure:
     return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
 
 
-async def getDownloadingModels(request: Request, db: AsyncSession):
+async def get_downloading_models(request: Request, db: AsyncSession):
     model_query = (
         select(ModelDB)
         .order_by(ModelDB.model_name.desc())
@@ -138,7 +138,7 @@ async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/models/public-models", response_model=VolFSStructure)
 async def public_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        data = await getPublicVolumeList()
+        data = await get_public_volume_list()
         return data
     except Exception as e:
         logger.error(f"Error fetching public models: {str(e)}")
@@ -148,7 +148,7 @@ async def public_models(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/models/downloading-models", response_model=List[Model])
 async def downloading_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
-        data = await getDownloadingModels(request, db)
+        data = await get_downloading_models(request, db)
         model_data = []
         for model in data:
             model_dict = model.to_dict()
