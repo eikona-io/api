@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+from urllib.parse import urljoin
 import uuid
 from .types import (
     CreateRunBatchResponse,
@@ -51,6 +52,7 @@ import json
 import httpx
 from typing import Optional, List
 from uuid import UUID
+import base64
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,12 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
     return run_dict
 
 
-@router.post("/run", response_model=Union[CreateRunResponse, CreateRunBatchResponse, WorkflowRunOutputModel])
+@router.post(
+    "/run",
+    response_model=Union[
+        CreateRunResponse, CreateRunBatchResponse, WorkflowRunOutputModel
+    ],
+)
 async def create_run(
     request: Request,
     data: CreateRunRequest,
@@ -298,18 +305,27 @@ async def create_run(
                     # Update the run with the RunPod job ID if available
                     runpod_response = response.json()
                 case "classic":
-                    comfyui_endpoint = f"{machine.endpoint}/comfyui-deploy/run"
+                    # comfyui_endpoint = f"{machine.endpoint}/comfyui-deploy/run"
+                    comfyui_endpoint = urljoin(machine.endpoint, "comfyui-deploy/run")
 
                     headers = {"Content-Type": "application/json"}
                     # if machine.auth_token:
                     # headers["Authorization"] = f"Bearer {machine.auth_token}"
-                    headers["Authorization"] = f"Bearer {token}"
+                    if machine.auth_token:
+                        # Use Basic Authentication
+                        credentials = base64.b64encode(machine.auth_token.encode()).decode()
+                        headers["Authorization"] = f"Basic {credentials}"
+                    
+                    print(headers)
 
                     async with httpx.AsyncClient() as _client:
                         try:
                             response = await _client.post(
                                 comfyui_endpoint,
-                                json=params,
+                                json={
+                                    **params,
+                                    "cd_token": token,
+                                },
                                 headers=headers,
                             )
                             response.raise_for_status()
