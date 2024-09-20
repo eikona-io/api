@@ -216,6 +216,8 @@ async def get_downloading_models(request: Request, db: AsyncSession):
 async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         data = await get_private_volume_list(request, db)
+        if len(data.contents) <= 0:
+            return VolFSStructure(contents=[])
         return data
     except Exception as e:
         logger.error(f"Error fetching private models: {str(e)}")
