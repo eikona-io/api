@@ -127,7 +127,24 @@ async def upsert_model_to_db(
             status="success",
             download_progress=100,
             upload_type="other",
-            model_type="custom" if category not in ModelDB.model_type else category,
+            model_type="custom"
+            if category
+            not in [
+                "checkpoint",
+                "lora",
+                "embedding",
+                "vae",
+                "clip",
+                "clip_vision",
+                "configs",
+                "controlnet",
+                "upscale_models",
+                "ipadapter",
+                "gligen",
+                "unet",
+                "custom_node",
+            ]
+            else category,
         )
         db.add(new_model)
         await db.commit()
