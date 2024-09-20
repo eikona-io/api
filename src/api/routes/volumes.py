@@ -40,7 +40,7 @@ async def get_volume_list(volume_name: str) -> VolFSStructure:
         raise ValueError("Volume name is not provided")
     endpoint = f"{os.environ.get('MODAL_VOLUME_ENDPOINT')}/ls_full?volume_name={volume_name}&create_if_missing=true"
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             response = await client.get(endpoint, headers={"Cache-Control": "no-cache"})
             print("response", response)
