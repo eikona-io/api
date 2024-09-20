@@ -315,10 +315,10 @@ async def private_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
-        if disable_cache:
-            data = await get_private_volume_list(request, db)
-        else:
-            data = await get_private_volume_from_db(request, db)
+        # if disable_cache:
+        data = await get_private_volume_list(request, db)
+        # else:
+        #     data = await get_private_volume_from_db(request, db)
         if len(data.contents) <= 0:
             return VolFSStructure(contents=[])
         return data
@@ -332,10 +332,10 @@ async def public_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
-        if disable_cache:
-            data = await get_public_volume_list()
-        else:
-            data = await get_public_volume_from_db(db)
+        # if disable_cache:
+        data = await get_public_volume_list()
+        # else:
+        #     data = await get_public_volume_from_db(db)
         if len(data.contents) <= 0:
             return VolFSStructure(contents=[])
         return data
