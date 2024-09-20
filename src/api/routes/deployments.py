@@ -30,6 +30,7 @@ async def get_deployments(
     result = await db.execute(query)
     deployments = result.scalars().all()
 
+
     deployments_data = [deployment.to_dict() for deployment in deployments]
 
     return JSONResponse(content=deployments_data)
