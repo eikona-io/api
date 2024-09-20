@@ -101,56 +101,43 @@ async def upsert_model_to_db(
     model_name = model_data.get("name")
     folder_path = model_data.get("path")
     category = model_data.get("category")
-    try:
-        existing_model = await db.execute(
-            select(ModelDB)
-            .where(ModelDB.model_name == model_name)
-            .apply_org_check(request)
-        )
-        existing_model = existing_model.scalar_one_or_none()
-    except MultipleResultsFound:
-        logger.warning(
-            f"Multiple models found with name {model_name}. Skipping upsert."
-        )
-        return
 
-    if existing_model:
-        pass
-    else:
-        new_model = ModelDB(
-            user_id=user_id,
-            org_id=org_id,
-            user_volume_id=user_volume_id,
-            model_name=model_name,
-            folder_path=folder_path,
-            is_public=True,
-            status="success",
-            download_progress=100,
-            upload_type="other",
-            model_type="custom"
-            if category
-            not in [
-                "checkpoint",
-                "lora",
-                "embedding",
-                "vae",
-                "clip",
-                "clip_vision",
-                "configs",
-                "controlnet",
-                "upscale_models",
-                "ipadapter",
-                "gligen",
-                "unet",
-                "custom_node",
-            ]
-            else category,
-        )
-        db.add(new_model)
-        await db.commit()
+    new_model = ModelDB(
+        user_id=user_id,
+        org_id=org_id,
+        user_volume_id=user_volume_id,
+        model_name=model_name,
+        folder_path=folder_path,
+        is_public=True,
+        status="success",
+        download_progress=100,
+        upload_type="other",
+        model_type="custom"
+        if category
+        not in [
+            "checkpoint",
+            "lora",
+            "embedding",
+            "vae",
+            "clip",
+            "clip_vision",
+            "configs",
+            "controlnet",
+            "upscale_models",
+            "ipadapter",
+            "gligen",
+            "unet",
+            "custom_node",
+        ]
+        else category,
+    )
+    db.add(new_model)
+    await db.commit()
 
 
 async def process_volume_contents(contents, db, user_volume_id, request):
+    if contents is None or len(contents) == 0:
+        return
     for item in contents:
         if isinstance(item, VolFolder):
             await process_volume_contents(item.contents, db, user_volume_id, request)
@@ -172,13 +159,38 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
 
     if not private_volumes:
         private_volumes = await add_model_volume(request, db)
-
+    
     if private_volumes and len(private_volumes) > 0:
         volume_structure = await get_volume_list(private_volumes[0]["volume_name"])
 
+        # Check if models already exist in the database
+        existing_models = await db.execute(
+            select(ModelDB).where(ModelDB.deleted == False).apply_org_check(request)
+        )
+        existing_models = existing_models.scalars().all()
+
+        # Create a set of existing model names for faster lookup
+        existing_model_names = {model.model_name for model in existing_models}
+
+        # Filter out existing models from volume_structure
+        def filter_existing_models(contents):
+            filtered_contents = []
+            for item in contents:
+                if isinstance(item, VolFolder):
+                    filtered_item = item.copy()  # Create a copy to avoid modifying the original
+                    filtered_item.contents = filter_existing_models(item.contents)
+                    if filtered_item.contents:
+                        filtered_contents.append(filtered_item)
+                elif isinstance(item, VolFile):
+                    if item.path.split("/")[-1] not in existing_model_names:
+                        filtered_contents.append(item)
+            return filtered_contents
+
+        filtered_contents = filter_existing_models(volume_structure.contents)
+
         # Process and upsert models to DB
         await process_volume_contents(
-            volume_structure.contents, db, private_volumes[0]["id"], request
+            filtered_contents, db, private_volumes[0]["id"], request
         )
 
         return volume_structure
