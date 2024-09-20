@@ -82,12 +82,6 @@ async def add_model_volume(request: Request, db: AsyncSession) -> Dict[str, Any]
     return new_volume.to_dict()
 
 
-async def set_initial_user_data(user_id: str):
-    # Implement the logic to set initial user data
-    # This is a placeholder and should be replaced with actual implementation
-    pass
-
-
 async def upsert_model_to_db(
     db: AsyncSession, model_data: Dict[str, Any], request: Request
 ) -> None:
@@ -159,7 +153,7 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
 
     if not private_volumes:
         private_volumes = await add_model_volume(request, db)
-    
+
     if private_volumes and len(private_volumes) > 0:
         volume_structure = await get_volume_list(private_volumes[0]["volume_name"])
 
@@ -177,7 +171,7 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
             filtered_contents = []
             for item in contents:
                 if isinstance(item, VolFolder):
-                    filtered_item = item.copy()  # Create a copy to avoid modifying the original
+                    filtered_item = item.copy()
                     filtered_item.contents = filter_existing_models(item.contents)
                     if filtered_item.contents:
                         filtered_contents.append(filtered_item)
@@ -224,10 +218,103 @@ async def get_downloading_models(request: Request, db: AsyncSession):
     return volumes
 
 
-@router.get("/models/private-models", response_model=VolFSStructure)
-async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
+async def get_private_models_from_db(
+    request: Request, db: AsyncSession
+) -> List[ModelDB]:
+    query = (
+        select(ModelDB)
+        .apply_org_check(request)
+        .where(
+            ModelDB.deleted == False,
+            ModelDB.download_progress == 100,
+            ModelDB.status == "success",
+        )
+    )
+
+    result = await db.execute(query)
+    models = result.scalars().all()
+
+    return models
+
+
+async def get_public_models_from_db(db: AsyncSession) -> List[ModelDB]:
+    query = select(ModelDB).where(
+        ModelDB.deleted == False,
+        ModelDB.org_id
+        == os.environ.get("SHARED_MODEL_VOLUME_NAME").replace("models_", ""),
+        ModelDB.download_progress == 100,
+        ModelDB.status == "success",
+    )
+
+    result = await db.execute(query)
+    models = result.scalars().all()
+
+    return models
+
+
+def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
+    structure = VolFSStructure(contents=[])
+
+    if not models:
+        return structure
+
+    categorized_models: Dict[str, VolFolder] = {}
+
+    for model in models:
+        if not model.folder_path:
+            continue
+        path_parts = [part for part in model.folder_path.split("/") if part]
+        category = path_parts[0]
+
+        if category not in categorized_models:
+            categorized_models[category] = VolFolder(
+                path=category, type="folder", contents=[]
+            )
+            structure.contents.append(categorized_models[category])
+
+        current_folder = categorized_models[category]
+        for i, part in enumerate(path_parts):
+            new_path = "/".join(path_parts[: i + 1])
+            if i == len(path_parts) - 1:
+                current_folder.contents.append(
+                    VolFile(path=f"{new_path}/{model.model_name}", type="file")
+                )
+            else:
+                next_folder = next(
+                    (
+                        item
+                        for item in current_folder.contents
+                        if isinstance(item, VolFolder) and item.path == new_path
+                    ),
+                    None,
+                )
+                if not next_folder:
+                    next_folder = VolFolder(path=new_path, type="folder", contents=[])
+                    current_folder.contents.append(next_folder)
+                current_folder = next_folder
+
+    return structure
+
+
+async def get_public_volume_from_db(db: AsyncSession) -> VolFSStructure:
+    public_volumes = await get_public_models_from_db(db)
+    return convert_to_vol_fs_structure(public_volumes)
+
+
+async def get_private_volume_from_db(request: Request, db: AsyncSession) -> VolFSStructure:
+    private_volumes = await get_private_models_from_db(request, db)
+    return convert_to_vol_fs_structure(private_volumes)
+
+
+@router.get("/volume/private-models", response_model=VolFSStructure)
+async def private_models(
+    request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
+):
     try:
-        data = await get_private_volume_list(request, db)
+        if disable_cache:
+            data = await get_private_volume_list(request, db)
+        else:
+            data = await get_private_volume_from_db(request, db)
         if len(data.contents) <= 0:
             return VolFSStructure(contents=[])
         return data
@@ -236,17 +323,24 @@ async def private_models(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/models/public-models", response_model=VolFSStructure)
-async def public_models(request: Request, db: AsyncSession = Depends(get_db)):
+@router.get("/volume/public-models", response_model=VolFSStructure)
+async def public_models(
+    request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
+):
     try:
-        data = await get_public_volume_list()
+        if disable_cache:
+            data = await get_public_volume_list()
+        else:
+            data = await get_public_volume_from_db(db)
+        if len(data.contents) <= 0:
+            return VolFSStructure(contents=[])
         return data
     except Exception as e:
         logger.error(f"Error fetching public models: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/models/downloading-models", response_model=List[Model])
+@router.get("/volume/downloading-models", response_model=List[Model])
 async def downloading_models(request: Request, db: AsyncSession = Depends(get_db)):
     try:
         data = await get_downloading_models(request, db)
