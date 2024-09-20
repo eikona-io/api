@@ -198,7 +198,11 @@ async def get_public_volume_list() -> VolFSStructure:
         raise ValueError(
             "public volume name env var `SHARED_MODEL_VOLUME_NAME` is not set"
         )
-    return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
+    try:
+        return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
+    except Exception as e:
+        logger.error(f"Error fetching public volume list: {str(e)}")
+        return VolFSStructure(contents=[])
 
 
 async def get_downloading_models(request: Request, db: AsyncSession):
