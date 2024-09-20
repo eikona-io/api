@@ -11,6 +11,9 @@ from api.database import get_db
 from api.models import Model as ModelDB, UserVolume
 from datetime import datetime, timedelta
 from fastapi.responses import JSONResponse
+from sqlalchemy import update
+from .types import VolFolder, VolFile
+from sqlalchemy.exc import MultipleResultsFound
 
 
 logger = logging.getLogger(__name__)
@@ -19,20 +22,16 @@ router = APIRouter(tags=["Volumes"])
 
 
 async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
-    model_query = (
-        select(ModelDB)
-        .order_by(ModelDB.model_name.desc())
+    user_volume_query = (
+        select(UserVolume)
         .apply_org_check(request)
         .where(
-            ModelDB.deleted == False,
+            UserVolume.disabled == False,
         )
     )
-    result = await db.execute(model_query)
+    result = await db.execute(user_volume_query)
     volumes = result.scalars().all()
-    return [
-        {"volume_name": "models_" + (volume.org_id or volume.user_id)}
-        for volume in volumes
-    ]
+    return [volume.to_dict() for volume in volumes]
 
 
 async def get_volume_list(volume_name: str) -> VolFSStructure:
@@ -43,7 +42,6 @@ async def get_volume_list(volume_name: str) -> VolFSStructure:
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             response = await client.get(endpoint, headers={"Cache-Control": "no-cache"})
-            print("response", response)
             response.raise_for_status()
             data = response.json()
             return VolFSStructure(**data)
@@ -64,7 +62,11 @@ async def get_volume_list(volume_name: str) -> VolFSStructure:
 
 async def add_model_volume(request: Request, db: AsyncSession) -> Dict[str, Any]:
     user_id = request.state.current_user["user_id"]
-    org_id = request.state.current_user["org_id"] if "org_id" in request.state.current_user else None
+    org_id = (
+        request.state.current_user["org_id"]
+        if "org_id" in request.state.current_user
+        else None
+    )
 
     # Insert new volume
     new_volume = UserVolume(
@@ -86,6 +88,68 @@ async def set_initial_user_data(user_id: str):
     pass
 
 
+async def upsert_model_to_db(
+    db: AsyncSession, model_data: Dict[str, Any], request: Request
+) -> None:
+    user_id = request.state.current_user["user_id"]
+    org_id = (
+        request.state.current_user["org_id"]
+        if "org_id" in request.state.current_user
+        else None
+    )
+    user_volume_id = model_data.get("user_volume_id")
+    model_name = model_data.get("name")
+    folder_path = model_data.get("path")
+    category = model_data.get("category")
+    try:
+        existing_model = await db.execute(
+            select(ModelDB)
+            .where(ModelDB.model_name == model_name)
+            .apply_org_check(request)
+        )
+        existing_model = existing_model.scalar_one_or_none()
+    except MultipleResultsFound:
+        logger.warning(
+            f"Multiple models found with name {model_name}. Skipping upsert."
+        )
+        return
+
+    if existing_model:
+        pass
+    else:
+        new_model = ModelDB(
+            user_id=user_id,
+            org_id=org_id,
+            user_volume_id=user_volume_id,
+            model_name=model_name,
+            folder_path=folder_path,
+            is_public=True,
+            status="success",
+            download_progress=100,
+            upload_type="other",
+            model_type="custom" if category not in ModelDB.model_type else category,
+        )
+        db.add(new_model)
+        await db.commit()
+
+
+async def process_volume_contents(contents, db, user_volume_id, request):
+    for item in contents:
+        if isinstance(item, VolFolder):
+            await process_volume_contents(item.contents, db, user_volume_id, request)
+        elif isinstance(item, VolFile):
+            await upsert_model_to_db(
+                db,
+                {
+                    "name": item.path.split("/")[-1],
+                    "path": "/".join(item.path.split("/")[:-1]),
+                    "category": item.path.split("/")[0],
+                    "user_volume_id": user_volume_id,
+                },
+                request,
+            )
+
+
 async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSStructure:
     private_volumes = await get_model_volumes(request, db)
 
@@ -93,9 +157,17 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
         private_volumes = await add_model_volume(request, db)
 
     if private_volumes and len(private_volumes) > 0:
-        return await get_volume_list(private_volumes[0]["volume_name"])
+        volume_structure = await get_volume_list(private_volumes[0]["volume_name"])
+
+        # Process and upsert models to DB
+        await process_volume_contents(
+            volume_structure.contents, db, private_volumes[0]["id"], request
+        )
+
+        return volume_structure
 
     return VolFSStructure(contents=[])
+
 
 @async_lru_cache(expire_after=timedelta(hours=1))
 async def get_public_volume_list() -> VolFSStructure:
@@ -118,9 +190,7 @@ async def get_downloading_models(request: Request, db: AsyncSession):
             ModelDB.created_at > datetime.now() - timedelta(hours=1),
         )
     )
-    print("model_query", model_query)
     result = await db.execute(model_query)
-    print("result", result)
     volumes = result.scalars().all()
     return volumes
 
