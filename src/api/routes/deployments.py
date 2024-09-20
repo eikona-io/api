@@ -4,9 +4,10 @@ from typing import List
 from .types import DeploymentModel, DeploymentEnvironment
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
-from api.models import Deployment
+from api.models import Deployment, Workflow
 from api.database import get_db
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import joinedload
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ async def get_deployments(
     query = (
         select(Deployment)
         .where(Deployment.environment == environment)
+        .options(joinedload(Deployment.workflow).load_only(Workflow.name))
         .apply_org_check(request)
     )
 
