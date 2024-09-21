@@ -67,14 +67,23 @@ async def get_workflows(
         GROUP BY 
             workflow_id
     ),
+    latest_workflow_runs AS (
+        SELECT wr.workflow_id, wr.id, wr.created_at, wr.status
+        FROM comfyui_deploy.workflow_runs wr
+        INNER JOIN (
+            SELECT workflow_id, MAX(created_at) as max_created_at
+            FROM comfyui_deploy.workflow_runs
+            WHERE workflow_id IN (SELECT id FROM filtered_workflows)
+            GROUP BY workflow_id
+        ) latest ON wr.workflow_id = latest.workflow_id AND wr.created_at = latest.max_created_at
+    ),
     recent_runs AS (
-        SELECT DISTINCT ON (wr.workflow_id)
+        SELECT 
             wr.workflow_id,
             wr.created_at AS latest_run_at,
             wr.status,
             wro.data AS latest_output
-        FROM 
-            comfyui_deploy.workflow_runs wr
+        FROM latest_workflow_runs wr
         LEFT JOIN LATERAL (
             SELECT data
             FROM comfyui_deploy.workflow_run_outputs
@@ -82,9 +91,6 @@ async def get_workflows(
             ORDER BY created_at DESC
             LIMIT 1
         ) wro ON true
-        WHERE wr.workflow_id IN (SELECT id FROM filtered_workflows)
-        ORDER BY 
-            wr.workflow_id, wr.created_at DESC
     )
     SELECT
         wf.id AS id,
