@@ -91,7 +91,7 @@ async def get_workflows(
         wf.name AS name, 
         wf.created_at AS created_at, 
         wf.updated_at AS updated_at, 
-        vr.version AS latest_version, 
+        COALESCE(vr.version, 0) AS latest_version, 
         users.name AS user_name,
         users.id AS user_id,
         rr.latest_run_at,
@@ -99,13 +99,13 @@ async def get_workflows(
         rr.latest_output
     FROM 
         comfyui_deploy.workflows AS wf
-    INNER JOIN 
+    LEFT JOIN 
         latest_versions ON wf.id = latest_versions.workflow_id
-    INNER JOIN 
+    LEFT JOIN 
         comfyui_deploy.workflow_versions AS vr 
             ON wf.id = vr.workflow_id AND vr.version = latest_versions.max_version
     INNER JOIN 
-        comfyui_deploy.users AS users ON users.id = vr.user_id
+        comfyui_deploy.users AS users ON users.id = wf.user_id
     LEFT JOIN 
         recent_runs AS rr ON wf.id = rr.workflow_id
     WHERE 
