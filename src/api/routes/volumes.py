@@ -198,11 +198,7 @@ async def get_public_volume_list() -> VolFSStructure:
         raise ValueError(
             "public volume name env var `SHARED_MODEL_VOLUME_NAME` is not set"
         )
-    try:
-        return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
-    except Exception as e:
-        logger.error(f"Error fetching public volume list: {str(e)}")
-        return VolFSStructure(contents=[])
+    return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
 
 
 async def get_downloading_models(request: Request, db: AsyncSession):
@@ -268,7 +264,11 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
         if not model.folder_path:
             continue
         path_parts = [part for part in model.folder_path.split("/") if part]
-        category = path_parts[0]
+        if not path_parts:
+            continue
+        
+        # Ensure there's at least one part in path_parts
+        category = path_parts[0] if path_parts else "uncategorized"
 
         if category not in categorized_models:
             categorized_models[category] = VolFolder(
@@ -280,10 +280,12 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
         for i, part in enumerate(path_parts):
             new_path = "/".join(path_parts[: i + 1])
             if i == len(path_parts) - 1:
+                # Add the file
                 current_folder.contents.append(
                     VolFile(path=f"{new_path}/{model.model_name}", type="file")
                 )
             else:
+                # Find or create the next folder
                 next_folder = next(
                     (
                         item
@@ -305,7 +307,9 @@ async def get_public_volume_from_db(db: AsyncSession) -> VolFSStructure:
     return convert_to_vol_fs_structure(public_volumes)
 
 
-async def get_private_volume_from_db(request: Request, db: AsyncSession) -> VolFSStructure:
+async def get_private_volume_from_db(
+    request: Request, db: AsyncSession
+) -> VolFSStructure:
     private_volumes = await get_private_models_from_db(request, db)
     return convert_to_vol_fs_structure(private_volumes)
 
@@ -315,15 +319,16 @@ async def private_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
-        # if disable_cache:
-        data = await get_private_volume_list(request, db)
-        # else:
-        #     data = await get_private_volume_from_db(request, db)
+        if disable_cache:
+            data = await get_private_volume_list(request, db)
+        else:
+            data = await get_private_volume_from_db(request, db)
         if len(data.contents) <= 0:
             return VolFSStructure(contents=[])
         return data
     except Exception as e:
         logger.error(f"Error fetching private models: {str(e)}")
+        logger.exception(e)  # This will log the full stack trace
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -332,15 +337,16 @@ async def public_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
-        # if disable_cache:
-        data = await get_public_volume_list()
-        # else:
-        #     data = await get_public_volume_from_db(db)
+        if disable_cache:
+            data = await get_public_volume_list()
+        else:
+            data = await get_public_volume_from_db(db)
         if len(data.contents) <= 0:
             return VolFSStructure(contents=[])
         return data
     except Exception as e:
         logger.error(f"Error fetching public models: {str(e)}")
+        logger.exception(e)  # This will log the full stack trace
         raise HTTPException(status_code=500, detail=str(e))
 
 
