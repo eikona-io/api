@@ -128,7 +128,7 @@ async def stream_logs(
                 for row in result.result_rows:
                     timestamp, level, message = row
                     last_timestamp = timestamp
-                    yield f"data: {json.dumps({'message': message, 'level': level})}\n\n"
+                    yield f"data: {json.dumps({'message': message, 'level': level, 'timestamp': timestamp.isoformat()[:-3] + 'Z'})}\n\n"
 
                 if not result.result_rows:
                     yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
