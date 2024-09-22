@@ -5,7 +5,7 @@ from .types import WorkflowRunModel
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
-from api.models import Workflow, WorkflowRun
+from api.models import Workflow, WorkflowRun, Machine
 from .utils import select
 from datetime import datetime, timezone
 from sqlalchemy.orm import joinedload
@@ -45,7 +45,10 @@ async def get_runs(
         .where(WorkflowRun.created_at >= start_time)  # filter time range
         .where(WorkflowRun.created_at <= end_time)
         .apply_org_check(request)
-        .options(joinedload(WorkflowRun.workflow).load_only(Workflow.name))
+        .options(
+            joinedload(WorkflowRun.workflow).load_only(Workflow.name),
+            joinedload(WorkflowRun.machine).load_only(Machine.name),
+        )
         .order_by(WorkflowRun.created_at.desc())
         .limit(limit)
         .offset(offset)
