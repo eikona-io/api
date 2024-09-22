@@ -1,6 +1,6 @@
 from .types import VolFSStructure, Model
 from fastapi import HTTPException, APIRouter, Request
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 import logging
 import os
 import httpx
@@ -266,7 +266,7 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
         path_parts = [part for part in model.folder_path.split("/") if part]
         if not path_parts:
             continue
-        
+
         # Ensure there's at least one part in path_parts
         category = path_parts[0] if path_parts else "uncategorized"
 
@@ -302,48 +302,51 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     return structure
 
 
-async def get_public_volume_from_db(db: AsyncSession) -> VolFSStructure:
+async def get_public_volume_from_db(
+    db: AsyncSession,
+) -> Tuple[VolFSStructure, List[ModelDB]]:
     public_volumes = await get_public_models_from_db(db)
-    return convert_to_vol_fs_structure(public_volumes)
+    return convert_to_vol_fs_structure(public_volumes), public_volumes
 
 
 async def get_private_volume_from_db(
     request: Request, db: AsyncSession
-) -> VolFSStructure:
+) -> Tuple[VolFSStructure, List[ModelDB]]:
     private_volumes = await get_private_models_from_db(request, db)
-    return convert_to_vol_fs_structure(private_volumes)
+    return convert_to_vol_fs_structure(private_volumes), private_volumes
 
 
-@router.get("/volume/private-models", response_model=VolFSStructure)
+@router.get("/volume/private-models", response_model=Dict[str, Any])
 async def private_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
         if disable_cache:
-            data = await get_private_volume_list(request, db)
+            await get_private_volume_list(request, db)
+            data, models = await get_private_volume_from_db(request, db)
         else:
-            data = await get_private_volume_from_db(request, db)
+            data, models = await get_private_volume_from_db(request, db)
         if len(data.contents) <= 0:
-            return VolFSStructure(contents=[])
-        return data
+            return {"structure": VolFSStructure(contents=[]), "models": []}
+        return {"structure": data, "models": [model.to_dict() for model in models]}
     except Exception as e:
         logger.error(f"Error fetching private models: {str(e)}")
         logger.exception(e)  # This will log the full stack trace
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/volume/public-models", response_model=VolFSStructure)
+@router.get("/volume/public-models", response_model=Dict[str, Any])
 async def public_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
-        if disable_cache:
-            data = await get_public_volume_list()
-        else:
-            data = await get_public_volume_from_db(db)
+        # if disable_cache:
+        #     data = await get_public_volume_list()
+        # else:
+        data, models = await get_public_volume_from_db(db)
         if len(data.contents) <= 0:
-            return VolFSStructure(contents=[])
-        return data
+            return {"structure": VolFSStructure(contents=[]), "models": []}
+        return {"structure": data, "models": [model.to_dict() for model in models]}
     except Exception as e:
         logger.error(f"Error fetching public models: {str(e)}")
         logger.exception(e)  # This will log the full stack trace
