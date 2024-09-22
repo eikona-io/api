@@ -164,7 +164,9 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
         existing_models = existing_models.scalars().all()
 
         # Create a set of existing model names for faster lookup
-        existing_model_names = {model.folder_path + "/" + model.model_name for model in existing_models}
+        existing_model_names = {
+            model.folder_path + "/" + model.model_name for model in existing_models
+        }
 
         print("existing_model_names", existing_model_names)
 
@@ -178,8 +180,10 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
                     if filtered_item.contents:
                         filtered_contents.append(filtered_item)
                 elif isinstance(item, VolFile):
-                    print("existing_model_names", existing_model_names)
-                    print("item.path", item.path, item.path not in existing_model_names)
+                    logger.info(f"existing_model_names {existing_model_names}")
+                    logger.info(
+                        f"item.path, {item.path}, {item.path not in existing_model_names}"
+                    )
                     if item.path not in existing_model_names:
                         filtered_contents.append(item)
             return filtered_contents
