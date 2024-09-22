@@ -582,3 +582,6 @@ class GPUEvent(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+    
+    session_id = Column(String)
+    modal_function_id = Column(String)

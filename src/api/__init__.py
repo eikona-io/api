@@ -22,7 +22,8 @@ from api.routes import (
     workflows,
     machines,
     comfy_node,
-	deployments
+	deployments,
+    session
 )
 from api.modal import builder
 from api.models import APIKey
@@ -120,7 +121,7 @@ api_router.include_router(log.router)
 api_router.include_router(volumes.router)
 api_router.include_router(comfy_node.router)
 api_router.include_router(deployments.router)
-# api_router.include_router(hello.router)
+api_router.include_router(session.router)
 
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 

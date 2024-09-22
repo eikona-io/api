@@ -94,7 +94,9 @@ class WorkflowRunStatus(str, Enum):
 
 
 class UpdateRunBody(BaseModel):
-    run_id: str
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    machine_id: Optional[str] = None
     status: Optional[WorkflowRunStatus] = None
     time: Optional[datetime] = None
     output_data: Optional[Any] = None
@@ -173,26 +175,26 @@ async def update_run(
         # Get the workflow run
         workflow_run = await get_cached_workflow_run(body.run_id, db)
 
-        if not workflow_run:
-            raise HTTPException(status_code=404, detail="WorkflowRun not found")
+        # if not workflow_run:
+        #     raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
         # Prepare data for ClickHouse insert
         log_data = []
         for log_entry in body.logs:
             data = (
                 uuid4(),
-                body.run_id,
-                workflow_run.workflow_id,
-                workflow_run.machine_id,
+                body.run_id if body.session_id is None else body.session_id,
+                workflow_run.workflow_id if workflow_run else None,
+                body.machine_id,
                 datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
                 "info",
                 log_entry["logs"],
             )
             print("data", log_entry["logs"])
             log_data.append(data)
-            
+
         background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-        
+
         return {"status": "success"}
 
     # Updating the progress

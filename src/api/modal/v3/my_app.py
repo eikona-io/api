@@ -557,12 +557,13 @@ class GPUEventType(str, Enum):
     GPU_END = "gpu_end"
 
 
-def sync_report_gpu_event(
+async def sync_report_gpu_event(
     event_id: str | None,
     is_workspace: bool = False,
     gpu: str | None = None,
     user_id: str | None = None,
     org_id: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     import requests
     from pprint import pprint
@@ -592,30 +593,42 @@ def sync_report_gpu_event(
         "is_workspace": is_workspace,
         "user_id": user_id,
         "org_id": org_id,
+        "session_id": session_id,
+        "modal_function_id": modal.current_function_call_id(),
     }
 
-    # Perform the synchronous POST request
-    with requests.Session() as session:
-        response = session.post(
-            gpu_event_callback_url,
-            json=body,
-            headers=headers,
-        )
-        print(f"finished sending gpu event {event_type.value}")
+    print("body", body, gpu_event_callback_url)
 
-        # Verify the response status
-        if response.status_code != 200:
-            # Handle the error case appropriately; logging, raising an exception, etc.
-            print(f"Error: {response.status_code}")
-            response_data = response.json()  # Adjust based on API response behavior
-            pprint(response_data)
+    # Perform the asynchronous POST request
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(
+                gpu_event_callback_url,
+                json=body,
+                headers=headers,
+            ) as response:
+                print(f"finished sending gpu event {event_type.value}")
+
+                # Verify the response status
+                if response.status != 200:
+                    # Handle the error case appropriately; logging, raising an exception, etc.
+                    print(f"Error: {response.status}")
+                    response_data = (
+                        await response.json()
+                    )  # Adjust based on API response behavior
+                    pprint(response_data)
+                    return None
+                else:
+                    # Optionally process the response data
+                    response_data = (
+                        await response.json()
+                    )  # Adjust based on API response behavior
+                    pprint("SUCCESS")
+                    pprint(response_data)
+                    return response_data["event_id"]
+        except aiohttp.ClientError as e:
+            print(f"An error occurred during the request: {e}")
             return None
-        else:
-            # Optionally process the response data
-            response_data = response.json()  # Adjust based on API response behavior
-            pprint("SUCCESS")
-            pprint(response_data)
-            return response_data["event_id"]
 
 
 class GPUType(str, Enum):
@@ -1107,8 +1120,10 @@ class ComfyDeployRunner:
 
     cleanup_done = False
     current_function_call_id = None
+    status_endpoint = None
+    current_input = None
 
-    async def timeout_and_exit(self, timeout_seconds: int):
+    async def timeout_and_exit(self, timeout_seconds: int, soft_exit: bool = False):
         import os
 
         await asyncio.sleep(timeout_seconds)
@@ -1116,7 +1131,7 @@ class ComfyDeployRunner:
         # await asyncio.get_event_loop().shutdown_default_executor()  # Gracefully stop the event loop
         print(f"comfy-modal - cleanup")
 
-        sync_report_gpu_event(
+        await sync_report_gpu_event(
             self.gpu_event_id, self.is_workspace, self.gpu, self.user_id, self.org_id
         )
         self.stdout_task.cancel()
@@ -1140,7 +1155,8 @@ class ComfyDeployRunner:
             pass
 
         print(f"comfy-modal - cleanup done")
-        os._exit(0)
+        if not soft_exit:
+            os._exit(0)
 
     def __init__(
         self,
@@ -1151,6 +1167,8 @@ class ComfyDeployRunner:
         org_id: Optional[str] = None,
         gpu: Optional[str] = None,
         timeout: Optional[int] = None,
+        session_id: Optional[str] = False,
+        workspace_tunnel: Optional[bool] = False,
     ) -> None:
         if volume_name is None:
             volume_name = config["private_model_volume"]
@@ -1163,44 +1181,61 @@ class ComfyDeployRunner:
         self.timeout = timeout
         self.cold_start_queue = deque()
         self.log_queues = deque()
-        # self.log_task = None
+        self.workspace_tunnel = workspace_tunnel
+        self.session_id = session_id
+
+    # self.log_task = None
 
     async def process_log_queue(self):
-        while True:
-            if len(self.cold_start_queue) > 0 and self.current_input:
-                logs = list(self.cold_start_queue)
-                await self.send_log_batch(
-                    self.current_input.prompt_id, logs, self.current_input
-                )
-                self.cold_start_queue.clear()
+        try:
+            while True:
+                if len(self.cold_start_queue) > 0 and self.status_endpoint:
+                    logs = list(self.cold_start_queue)
+                    print("sending log batch", len(logs))
+                    await self.send_log_batch(
+                        run_id=self.current_input.prompt_id
+                        if self.current_input
+                        else None,
+                        session_id=self.session_id,
+                        logs=logs,
+                        status_endpoint=self.status_endpoint,
+                    )
+                    self.cold_start_queue.clear()
 
-            if self.log_queues and len(self.log_queues) > 0:
-                # Get the first item (prompt_id and queue_data) from the log_queues
-                logs = list(self.log_queues[0]["logs"])
-                input = self.log_queues[0]["current_input"]
-                if logs:
-                    await self.send_log_batch(input.prompt_id, logs, input)
-                    self.log_queues.clear()
-                    
-            await asyncio.sleep(1)
+                if self.log_queues and len(self.log_queues) > 0:
+                    # Get the first item (prompt_id and queue_data) from the log_queues
+                    logs = list(self.log_queues[0]["logs"])
+                    input = self.log_queues[0]["current_input"]
+                    if logs:
+                        await self.send_log_batch(
+                            run_id=input.prompt_id,
+                            session_id=self.session_id,
+                            logs=logs,
+                            status_endpoint=input.status_endpoint,
+                        )
+                        self.log_queues.clear()
 
-            # for run_id, queue_data in self.log_queues:
-            #     logs = list(queue_data["logs"])
-            #     print("processing log queue", len(logs))
-            #     queue_data["logs"].clear()
-            #     if logs:  # Only send if there are logs
-            #         await self.send_log_batch(run_id, logs, queue_data["current_input"])
-            # await asyncio.sleep(1)  # Adjust the interval as needed
+                await asyncio.sleep(1)
+        except Exception as e:
+            print("Error in process_log_queue", e)
 
-    async def send_log_batch(self, run_id, logs, current_input):
+    async def send_log_batch(self, run_id, session_id, logs, status_endpoint):
         if not logs:
             return  # Don't send empty log batches
 
         async with aiohttp.ClientSession() as session:
-            data = json.dumps({"run_id": run_id, "logs": logs}).encode("utf-8")
+            data = json.dumps(
+                {
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "machine_id": config["name"],
+                    "logs": logs,
+                }
+            ).encode("utf-8")
+            print("sending log batch", run_id, session_id, status_endpoint)
             try:
                 async with session.post(
-                    current_input.status_endpoint,
+                    status_endpoint,
                     data=data,
                     headers={
                         "Content-Type": "application/json",
@@ -1516,6 +1551,47 @@ class ComfyDeployRunner:
                 # Handle the cancellation here if needed
                 break  # Break out of the loop on cancellation
 
+    current_tunnel_url = ""
+
+    @modal.method()
+    async def create_tunnel(self, q, status_endpoint):
+        self.status_endpoint = status_endpoint
+        print("status_endpoint", status_endpoint)
+
+        ok = await check_server(
+            f"http://{COMFY_HOST}",
+            COMFY_API_AVAILABLE_MAX_RETRIES,
+            COMFY_API_AVAILABLE_INTERVAL_MS,
+        )
+
+        if self.current_tunnel_url != "":
+            await q.put.aio(self.current_tunnel_url)
+            return
+
+        with modal.forward(8188) as tunnel:
+            self.current_tunnel_url = tunnel.url
+            self.current_function_call_id = modal.current_function_call_id()
+
+            await q.put.aio(tunnel.url)
+
+            print(f"tunnel.url        = {tunnel.url}")
+            print(f"tunnel.tls_socket = {tunnel.tls_socket}")
+
+            # Wait for the server process to exit
+            try:
+                while True:
+                    await asyncio.sleep(1)  # Che  ck every 1 seconds
+            except asyncio.CancelledError:
+                print("cancelled")
+                try:
+                    ok = await interrupt_comfyui()
+                except Exception as e:
+                    pass
+
+    @modal.method()
+    async def close_container(self):
+        await self.timeout_and_exit(0, True)
+
     @enter()
     async def setup(self):
         # Make sure that the ComfyUI API is available
@@ -1557,14 +1633,19 @@ class ComfyDeployRunner:
             self.read_stream(self.server_process.stderr, True)
         )
 
-        print("setting up log queue")
+        print("setting up log queue 2")
 
         self.log_task = asyncio.create_task(self.process_log_queue())
 
         print("setting up gpu event id")
 
-        self.gpu_event_id = sync_report_gpu_event(
-            None, self.is_workspace, self.gpu, self.user_id, self.org_id
+        self.gpu_event_id = await sync_report_gpu_event(
+            None,
+            self.is_workspace,
+            self.gpu,
+            self.user_id,
+            self.org_id,
+            self.session_id,
         )
 
         print("setting up timeout")
@@ -1581,7 +1662,7 @@ class ComfyDeployRunner:
 
         print(f"comfy-modal - cleanup")
 
-        sync_report_gpu_event(
+        await sync_report_gpu_event(
             self.gpu_event_id, self.is_workspace, self.gpu, self.user_id, self.org_id
         )
         self.stdout_task.cancel()
@@ -1608,6 +1689,7 @@ class ComfyDeployRunner:
 
             if len(self.log_queues) == 1:
                 self.current_input = input
+                self.status_endpoint = input.status_endpoint
 
             import signal
             import time
@@ -1689,6 +1771,7 @@ class ComfyDeployRunner:
                             and status_result["status"] == "running"
                         ):
                             self.current_input = input
+                            self.status_endpoint = input.status_endpoint
 
                         if "status" in status_result and (
                             status_result["status"] == "success"
@@ -1856,11 +1939,11 @@ class Workspace:
 
     @enter()
     async def setup(self):
-        self.gpu_event_id = sync_report_gpu_event(None)
+        self.gpu_event_id = await sync_report_gpu_event(None)
 
     @exit()
     async def cleanup(self):
-        sync_report_gpu_event(self.gpu_event_id)
+        await sync_report_gpu_event(self.gpu_event_id)
 
 
 # Do not account for billing for cpu only
