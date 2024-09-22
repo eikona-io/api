@@ -25,7 +25,7 @@ async def get_runs(
     start_time_unix: int = None,
     end_time_unix: int = None,
     # filter workflow
-    workflow_name: Optional[str] = None,
+    workflow_id: Optional[str] = None,
     # filter status
     status: Optional[str] = None,
     # filter gpu
@@ -51,8 +51,8 @@ async def get_runs(
         .offset(offset)
     )
 
-    if workflow_name:
-        query = query.where(WorkflowRun.workflow.has(Workflow.name == workflow_name))
+    if workflow_id:
+        query = query.where(WorkflowRun.workflow_id == workflow_id)
 
     if status:
         query = query.where(WorkflowRun.status == status)
