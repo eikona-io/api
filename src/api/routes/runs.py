@@ -25,8 +25,8 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def clean_input(value: Optional[str]) -> Optional[str]:
-    return value if value and value.strip() else None
+def clean_input(value: Optional[str | float]) -> Optional[str | float]:
+    return value if value and str(value).strip() else None
 
 
 @router.get("/runs", response_model=List[WorkflowRunModel])
@@ -49,6 +49,10 @@ async def get_runs(
     origin: Optional[str] = None,
     # filter workflow version
     workflow_version_id: Optional[str] = None,
+    # filter queued duration
+    min_queued_duration: Optional[float] = None,
+    # filter run duration
+    min_run_duration: Optional[float] = None,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -71,6 +75,8 @@ async def get_runs(
         machine_id = clean_input(machine_id)
         origin = clean_input(origin)
         workflow_version_id = clean_input(workflow_version_id)
+        min_queued_duration = clean_input(min_queued_duration)
+        min_run_duration = clean_input(min_run_duration)
 
         conditions = [
             ("created_at >= :start_time", start_time),
@@ -93,31 +99,30 @@ async def get_runs(
         id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id
       FROM "comfyui_deploy"."workflow_runs"
       WHERE {where_clause}
-      ORDER BY created_at DESC
     )
     SELECT 
-      filtered_workflow_runs.created_at,
-      filtered_workflow_runs.queued_at,
-      filtered_workflow_runs.started_at,
-      filtered_workflow_runs.ended_at,
-      filtered_workflow_runs.id AS run_id,
-      filtered_workflow_runs.gpu,
-      filtered_workflow_runs.origin,
-      filtered_workflow_runs.status AS run_status,
-      filtered_workflow_runs.workflow_id,
+      fwr.created_at,
+      fwr.queued_at,
+      fwr.started_at,
+      fwr.ended_at,
+      fwr.id AS run_id,
+      fwr.gpu,
+      fwr.origin,
+      fwr.status AS run_status,
+      fwr.workflow_id,
       "comfyui_deploy"."workflows".name AS workflow_name,
       "comfyui_deploy"."workflow_versions".version,
-      filtered_workflow_runs.machine_id,
+      fwr.machine_id,
       "comfyui_deploy"."machines".name AS machine_name,
       "comfyui_deploy"."workflow_run_outputs".data AS outputs,
       CASE
-        WHEN filtered_workflow_runs.started_at IS NOT NULL AND filtered_workflow_runs.created_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (filtered_workflow_runs.started_at - filtered_workflow_runs.created_at))
+        WHEN fwr.started_at IS NOT NULL AND fwr.created_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (fwr.started_at - fwr.created_at))
         ELSE NULL
       END AS queued_duration,
       CASE
-        WHEN filtered_workflow_runs.ended_at IS NOT NULL AND filtered_workflow_runs.started_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (filtered_workflow_runs.ended_at - filtered_workflow_runs.started_at))
+        WHEN fwr.ended_at IS NOT NULL AND fwr.started_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (fwr.ended_at - fwr.started_at))
         ELSE NULL
       END AS run_duration,
       CASE
@@ -138,15 +143,16 @@ async def get_runs(
         ELSE NULL
       END AS total_upload_duration
     FROM 
-      filtered_workflow_runs
+      filtered_workflow_runs fwr
     LEFT JOIN 
-      "comfyui_deploy"."workflows" ON filtered_workflow_runs.workflow_id = "comfyui_deploy"."workflows".id
+      "comfyui_deploy"."workflows" ON fwr.workflow_id = "comfyui_deploy"."workflows".id
     LEFT JOIN 
-      "comfyui_deploy"."machines" ON filtered_workflow_runs.machine_id = "comfyui_deploy"."machines".id
+      "comfyui_deploy"."machines" ON fwr.machine_id = "comfyui_deploy"."machines".id
     LEFT JOIN
-      "comfyui_deploy"."workflow_versions" ON filtered_workflow_runs.workflow_version_id = "comfyui_deploy"."workflow_versions".id
+      "comfyui_deploy"."workflow_versions" ON fwr.workflow_version_id = "comfyui_deploy"."workflow_versions".id
     LEFT JOIN
-      "comfyui_deploy"."workflow_run_outputs" ON filtered_workflow_runs.id = "comfyui_deploy"."workflow_run_outputs".run_id
+      "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
+    ORDER BY fwr.created_at DESC
     LIMIT :limit OFFSET :offset;
     """)
 
