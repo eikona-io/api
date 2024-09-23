@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Runs"])
 
+
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, UUID)):
@@ -26,6 +27,7 @@ class CustomJSONEncoder(json.JSONEncoder):
         if isinstance(obj, Decimal):
             return float(obj)
         return super().default(obj)
+
 
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
@@ -46,8 +48,10 @@ async def get_runs(
     db: AsyncSession = Depends(get_db),
 ):
     # Convert string to datetime
-    start_time = datetime.fromtimestamp(start_time_unix) if start_time_unix else None
-    end_time = datetime.fromtimestamp(end_time_unix) if end_time_unix else None
+    start_time = (
+        datetime.fromtimestamp(max(1, start_time_unix)) if start_time_unix else None
+    )
+    end_time = datetime.fromtimestamp(max(1, end_time_unix)) if end_time_unix else None
 
     print("start_time", start_time)
     print("end_time", end_time)
@@ -127,6 +131,6 @@ async def get_runs(
     ]
 
     return JSONResponse(
-        status_code=200, 
-        content=json.loads(json.dumps(runs_data, cls=CustomJSONEncoder))
+        status_code=200,
+        content=json.loads(json.dumps(runs_data, cls=CustomJSONEncoder)),
     )
