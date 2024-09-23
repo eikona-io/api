@@ -83,7 +83,6 @@ async def get_runs(
       FROM "comfyui_deploy"."workflow_runs"
       WHERE {where_clause}
       ORDER BY created_at DESC
-      LIMIT :limit OFFSET :offset
     )
     SELECT 
       filtered_workflow_runs.created_at,
@@ -99,7 +98,8 @@ async def get_runs(
     LEFT JOIN 
       "comfyui_deploy"."workflows" ON filtered_workflow_runs.workflow_id = "comfyui_deploy"."workflows".id
     LEFT JOIN 
-      "comfyui_deploy"."machines" ON filtered_workflow_runs.machine_id = "comfyui_deploy"."machines".id;
+      "comfyui_deploy"."machines" ON filtered_workflow_runs.machine_id = "comfyui_deploy"."machines".id
+    LIMIT :limit OFFSET :offset;
     """)
 
     params = {
