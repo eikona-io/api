@@ -29,23 +29,6 @@ def clean_input(value: Optional[str]) -> Optional[str]:
     return value if value and value.strip() else None
 
 
-def calculate_total_upload_duration(outputs):
-    if not outputs:
-        return None
-
-    total_upload_duration = 0
-
-    for output in outputs.values():
-        if isinstance(output, list):
-            total_upload_duration += sum(
-                item.get("upload_duration", 0) for item in output
-            )
-        elif isinstance(output, dict):
-            total_upload_duration += output.get("upload_duration", 0)
-
-    return round(total_upload_duration, 2) if total_upload_duration > 0 else None
-
-
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
     request: Request,
@@ -126,7 +109,34 @@ async def get_runs(
       "comfyui_deploy"."workflow_versions".version,
       filtered_workflow_runs.machine_id,
       "comfyui_deploy"."machines".name AS machine_name,
-      "comfyui_deploy"."workflow_run_outputs".data AS outputs
+      "comfyui_deploy"."workflow_run_outputs".data AS outputs,
+      CASE
+        WHEN filtered_workflow_runs.started_at IS NOT NULL AND filtered_workflow_runs.created_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (filtered_workflow_runs.started_at - filtered_workflow_runs.created_at))
+        ELSE NULL
+      END AS queued_duration,
+      CASE
+        WHEN filtered_workflow_runs.ended_at IS NOT NULL AND filtered_workflow_runs.started_at IS NOT NULL
+        THEN EXTRACT(EPOCH FROM (filtered_workflow_runs.ended_at - filtered_workflow_runs.started_at))
+        ELSE NULL
+      END AS run_duration,
+      CASE
+        WHEN "comfyui_deploy"."workflow_run_outputs".data IS NOT NULL
+        THEN ROUND(CAST(
+          (SELECT COALESCE(SUM(
+            CASE
+              WHEN jsonb_typeof(value) = 'array' THEN
+                (SELECT COALESCE(SUM((elem->>'upload_duration')::float), 0)
+                 FROM jsonb_array_elements(value) elem)
+              WHEN jsonb_typeof(value) = 'object' THEN
+                COALESCE((value->>'upload_duration')::float, 0)
+              ELSE 0
+            END
+          ), 0)
+           FROM jsonb_each("comfyui_deploy"."workflow_run_outputs".data))
+        AS NUMERIC), 5)
+        ELSE NULL
+      END AS total_upload_duration
     FROM 
       filtered_workflow_runs
     LEFT JOIN 
@@ -165,9 +175,6 @@ async def get_runs(
         runs_data = [
             {
                 "created_at": run.created_at,
-                # "queued_at": run.queued_at,
-                # "started_at": run.started_at,
-                # "ended_at": run.ended_at,
                 "id": run.run_id,
                 "gpu": run.gpu,
                 "origin": run.origin,
@@ -175,14 +182,9 @@ async def get_runs(
                 "workflow": {"id": run.workflow_id, "name": run.workflow_name},
                 "workflow_version": run.version,
                 "machine": {"id": run.machine_id, "name": run.machine_name},
-                "queued_duration": (run.started_at - run.created_at).total_seconds()
-                if run.started_at and run.created_at
-                else None,
-                "run_duration": (run.ended_at - run.started_at).total_seconds()
-                if run.ended_at and run.started_at
-                else None,
-                # "outputs": run.outputs,
-                "total_upload_duration": calculate_total_upload_duration(run.outputs),
+                "queued_duration": run.queued_duration,
+                "run_duration": run.run_duration,
+                "total_upload_duration": run.total_upload_duration,
             }
             for run in runs
         ]
@@ -193,4 +195,4 @@ async def get_runs(
         )
     except Exception as e:
         logger.error(f"Error getting runs: {e}")
-        return JSONResponse(status_code=500, content={"Error. "})
+        return JSONResponse(status_code=500, content={"Error. ": str(e)})
