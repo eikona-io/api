@@ -29,6 +29,23 @@ def clean_input(value: Optional[str]) -> Optional[str]:
     return value if value and value.strip() else None
 
 
+def calculate_total_upload_duration(outputs):
+    if not outputs:
+        return None
+
+    total_upload_duration = 0
+
+    for output in outputs.values():
+        if isinstance(output, list):
+            total_upload_duration += sum(
+                item.get("upload_duration", 0) for item in output
+            )
+        elif isinstance(output, dict):
+            total_upload_duration += output.get("upload_duration", 0)
+
+    return round(total_upload_duration, 2) if total_upload_duration > 0 else None
+
+
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
     request: Request,
@@ -71,7 +88,7 @@ async def get_runs(
         machine_id = clean_input(machine_id)
         origin = clean_input(origin)
         workflow_version_id = clean_input(workflow_version_id)
-        
+
         conditions = [
             ("created_at >= :start_time", start_time),
             ("created_at <= :end_time", end_time),
@@ -108,7 +125,8 @@ async def get_runs(
       "comfyui_deploy"."workflows".name AS workflow_name,
       "comfyui_deploy"."workflow_versions".version,
       filtered_workflow_runs.machine_id,
-      "comfyui_deploy"."machines".name AS machine_name
+      "comfyui_deploy"."machines".name AS machine_name,
+      "comfyui_deploy"."workflow_run_outputs".data AS outputs
     FROM 
       filtered_workflow_runs
     LEFT JOIN 
@@ -117,6 +135,8 @@ async def get_runs(
       "comfyui_deploy"."machines" ON filtered_workflow_runs.machine_id = "comfyui_deploy"."machines".id
     LEFT JOIN
       "comfyui_deploy"."workflow_versions" ON filtered_workflow_runs.workflow_version_id = "comfyui_deploy"."workflow_versions".id
+    LEFT JOIN
+      "comfyui_deploy"."workflow_run_outputs" ON filtered_workflow_runs.id = "comfyui_deploy"."workflow_run_outputs".run_id
     LIMIT :limit OFFSET :offset;
     """)
 
@@ -145,9 +165,9 @@ async def get_runs(
         runs_data = [
             {
                 "created_at": run.created_at,
-                "queued_at": run.queued_at,
-                "started_at": run.started_at,
-                "ended_at": run.ended_at,
+                # "queued_at": run.queued_at,
+                # "started_at": run.started_at,
+                # "ended_at": run.ended_at,
                 "id": run.run_id,
                 "gpu": run.gpu,
                 "origin": run.origin,
@@ -155,6 +175,14 @@ async def get_runs(
                 "workflow": {"id": run.workflow_id, "name": run.workflow_name},
                 "workflow_version": run.version,
                 "machine": {"id": run.machine_id, "name": run.machine_name},
+                "queued_duration": (run.started_at - run.created_at).total_seconds()
+                if run.started_at and run.created_at
+                else None,
+                "run_duration": (run.ended_at - run.started_at).total_seconds()
+                if run.ended_at and run.started_at
+                else None,
+                # "outputs": run.outputs,
+                "total_upload_duration": calculate_total_upload_duration(run.outputs),
             }
             for run in runs
         ]
