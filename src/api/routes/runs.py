@@ -47,6 +47,8 @@ async def get_runs(
     machine_id: Optional[str] = None,
     # filter origin
     origin: Optional[str] = None,
+    # filter workflow version
+    workflow_version_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -68,7 +70,8 @@ async def get_runs(
         gpu = clean_input(gpu)
         machine_id = clean_input(machine_id)
         origin = clean_input(origin)
-
+        workflow_version_id = clean_input(workflow_version_id)
+        
         conditions = [
             ("created_at >= :start_time", start_time),
             ("created_at <= :end_time", end_time),
@@ -79,6 +82,7 @@ async def get_runs(
             ("gpu = :gpu", gpu),
             ("machine_id = :machine_id", machine_id),
             ("origin = :origin", origin),
+            ("workflow_version_id = :workflow_version_id", workflow_version_id),
         ]
 
         where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
@@ -86,19 +90,23 @@ async def get_runs(
         query = text(f"""
     WITH filtered_workflow_runs AS (
       SELECT
-        id, status, created_at, gpu, workflow_id, machine_id, origin
+        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id
       FROM "comfyui_deploy"."workflow_runs"
       WHERE {where_clause}
       ORDER BY created_at DESC
     )
     SELECT 
       filtered_workflow_runs.created_at,
+      filtered_workflow_runs.queued_at,
+      filtered_workflow_runs.started_at,
+      filtered_workflow_runs.ended_at,
       filtered_workflow_runs.id AS run_id,
       filtered_workflow_runs.gpu,
       filtered_workflow_runs.origin,
       filtered_workflow_runs.status AS run_status,
       filtered_workflow_runs.workflow_id,
       "comfyui_deploy"."workflows".name AS workflow_name,
+      "comfyui_deploy"."workflow_versions".version,
       filtered_workflow_runs.machine_id,
       "comfyui_deploy"."machines".name AS machine_name
     FROM 
@@ -107,6 +115,8 @@ async def get_runs(
       "comfyui_deploy"."workflows" ON filtered_workflow_runs.workflow_id = "comfyui_deploy"."workflows".id
     LEFT JOIN 
       "comfyui_deploy"."machines" ON filtered_workflow_runs.machine_id = "comfyui_deploy"."machines".id
+    LEFT JOIN
+      "comfyui_deploy"."workflow_versions" ON filtered_workflow_runs.workflow_version_id = "comfyui_deploy"."workflow_versions".id
     LIMIT :limit OFFSET :offset;
     """)
 
@@ -124,6 +134,7 @@ async def get_runs(
                 "gpu": gpu,
                 "machine_id": machine_id,
                 "origin": origin,
+                "workflow_version_id": workflow_version_id,
             }.items()
             if val is not None
         }
@@ -134,11 +145,15 @@ async def get_runs(
         runs_data = [
             {
                 "created_at": run.created_at,
+                "queued_at": run.queued_at,
+                "started_at": run.started_at,
+                "ended_at": run.ended_at,
                 "id": run.run_id,
                 "gpu": run.gpu,
                 "origin": run.origin,
                 "status": run.run_status,
                 "workflow": {"id": run.workflow_id, "name": run.workflow_name},
+                "workflow_version": run.version,
                 "machine": {"id": run.machine_id, "name": run.machine_name},
             }
             for run in runs
