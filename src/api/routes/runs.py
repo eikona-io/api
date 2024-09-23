@@ -53,9 +53,6 @@ async def get_runs(
     )
     end_time = datetime.fromtimestamp(max(1, end_time_unix)) if end_time_unix else None
 
-    print("start_time", start_time)
-    print("end_time", end_time)
-
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
