@@ -1,7 +1,7 @@
 import logging
 from typing import List, Optional
 from .types import WorkflowRunModel
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
 from datetime import datetime
@@ -38,17 +38,17 @@ async def get_runs(
     start_time_unix: int = None,
     end_time_unix: int = None,
     # filter workflow
-    workflow_id: Optional[str] = None,
+    workflow_id: Optional[List[str]] = Query(None),
     # filter status
-    status: Optional[str] = None,
+    status: Optional[List[str]] = Query(None),
     # filter gpu
-    gpu: Optional[str] = None,
+    gpu: Optional[List[str]] = Query(None),
     # filter machine
-    machine_id: Optional[str] = None,
+    machine_id: Optional[List[str]] = Query(None),
     # filter origin
-    origin: Optional[str] = None,
+    origin: Optional[List[str]] = Query(None),
     # filter workflow version
-    workflow_version_id: Optional[str] = None,
+    workflow_version_id: Optional[List[str]] = Query(None),
     # filter queued duration
     min_queued_duration: Optional[str] = 0,
     # filter run duration
@@ -71,13 +71,17 @@ async def get_runs(
         org_id = current_user["org_id"] if "org_id" in current_user else None
 
         # Clean input parameters
-        workflow_id = clean_input(workflow_id)
-        status = clean_input(status)
-        gpu = clean_input(gpu)
-        machine_id = clean_input(machine_id)
-        origin = clean_input(origin)
-        workflow_version_id = clean_input(workflow_version_id)
-        
+        workflow_id = [clean_input(c) for c in workflow_id] if workflow_id else None
+        status = [clean_input(s) for s in status] if status else None
+        gpu = [clean_input(g) for g in gpu] if gpu else None
+        machine_id = [clean_input(m) for m in machine_id] if machine_id else None
+        origin = [clean_input(o) for o in origin] if origin else None
+        workflow_version_id = (
+            [clean_input(w) for w in workflow_version_id]
+            if workflow_version_id
+            else None
+        )
+
         if min_queued_duration == "":
             min_queued_duration = 0
         if min_run_duration == "":
@@ -90,12 +94,12 @@ async def get_runs(
             ("created_at <= :end_time", end_time),
             ("org_id = :org_id", org_id),
             ("user_id = :user_id", user_id),
-            ("workflow_id = :workflow_id", workflow_id),
-            ("status = :status", status),
-            ("gpu = :gpu", gpu),
-            ("machine_id = :machine_id", machine_id),
-            ("origin = :origin", origin),
-            ("workflow_version_id = :workflow_version_id", workflow_version_id),
+            ("workflow_id = ANY(:workflow_id)", workflow_id),
+            ("status = ANY(:status)", status),
+            ("gpu = ANY(:gpu)", gpu),
+            ("machine_id = ANY(:machine_id)", machine_id),
+            ("origin = ANY(:origin)", origin),
+            ("workflow_version_id = ANY(:workflow_version_id)", workflow_version_id),
         ]
 
         where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
