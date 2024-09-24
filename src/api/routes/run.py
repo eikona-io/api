@@ -166,6 +166,7 @@ async def create_run(
         workflow_api_raw = workflow_version.workflow_api
         workflow_id = workflow_version.workflow_id
         workflow_version_version = workflow_version.version
+        workflow = workflow_version.workflow
 
     if machine_id is not None:
         # Get the machine associated with the deployment
@@ -221,6 +222,7 @@ async def create_run(
             "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
             "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
             + "/api/file-upload",
+            "workflow": workflow,
         }
 
         # Get the count of runs for this workflow
