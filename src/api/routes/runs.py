@@ -169,9 +169,9 @@ async def get_runs(
     LEFT JOIN
       "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
     WHERE
-      fwr.queued_duration >= :min_queued_duration
-      AND fwr.run_duration >= :min_run_duration
-      AND fwr.total_upload_duration >= :min_total_upload_duration
+      (fwr.queued_duration >= :min_queued_duration OR fwr.queued_duration IS NULL)
+      AND (fwr.run_duration >= :min_run_duration OR fwr.run_duration IS NULL)
+      AND (fwr.total_upload_duration >= :min_total_upload_duration OR fwr.total_upload_duration IS NULL)
     ORDER BY fwr.created_at DESC
     LIMIT :limit OFFSET :offset;
     """)
