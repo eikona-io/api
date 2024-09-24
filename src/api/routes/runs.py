@@ -25,8 +25,8 @@ class CustomJSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def clean_input(value: Optional[str | float]) -> Optional[str | float]:
-    return value if value and str(value).strip() else None
+def clean_input(value: Optional[str]) -> Optional[str]:
+    return value if value and value.strip() else None
 
 
 @router.get("/runs", response_model=List[WorkflowRunModel])
@@ -50,9 +50,9 @@ async def get_runs(
     # filter workflow version
     workflow_version_id: Optional[str] = None,
     # filter queued duration
-    min_queued_duration: Optional[float] = None,
+    min_queued_duration: Optional[str] = 0,
     # filter run duration
-    min_run_duration: Optional[float] = None,
+    min_run_duration: Optional[str] = 0,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -75,8 +75,11 @@ async def get_runs(
         machine_id = clean_input(machine_id)
         origin = clean_input(origin)
         workflow_version_id = clean_input(workflow_version_id)
-        min_queued_duration = clean_input(min_queued_duration)
-        min_run_duration = clean_input(min_run_duration)
+        
+        if min_queued_duration == "":
+            min_queued_duration = 0
+        if min_run_duration == "":
+            min_run_duration = 0
 
         conditions = [
             ("created_at >= :start_time", start_time),
@@ -96,7 +99,17 @@ async def get_runs(
         query = text(f"""
     WITH filtered_workflow_runs AS (
       SELECT
-        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id
+        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id,
+        CASE
+          WHEN started_at IS NOT NULL AND created_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (started_at - created_at))
+          ELSE NULL
+        END AS queued_duration,
+        CASE
+          WHEN ended_at IS NOT NULL AND started_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (ended_at - started_at))
+          ELSE NULL
+        END AS run_duration
       FROM "comfyui_deploy"."workflow_runs"
       WHERE {where_clause}
     )
@@ -115,16 +128,8 @@ async def get_runs(
       fwr.machine_id,
       "comfyui_deploy"."machines".name AS machine_name,
       "comfyui_deploy"."workflow_run_outputs".data AS outputs,
-      CASE
-        WHEN fwr.started_at IS NOT NULL AND fwr.created_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (fwr.started_at - fwr.created_at))
-        ELSE NULL
-      END AS queued_duration,
-      CASE
-        WHEN fwr.ended_at IS NOT NULL AND fwr.started_at IS NOT NULL
-        THEN EXTRACT(EPOCH FROM (fwr.ended_at - fwr.started_at))
-        ELSE NULL
-      END AS run_duration,
+      fwr.queued_duration,
+      fwr.run_duration,
       CASE
         WHEN "comfyui_deploy"."workflow_run_outputs".data IS NOT NULL
         THEN ROUND(CAST(
@@ -152,6 +157,10 @@ async def get_runs(
       "comfyui_deploy"."workflow_versions" ON fwr.workflow_version_id = "comfyui_deploy"."workflow_versions".id
     LEFT JOIN
       "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
+    WHERE
+      fwr.queued_duration >= :min_queued_duration
+      AND fwr.run_duration >= :min_run_duration
+      
     ORDER BY fwr.created_at DESC
     LIMIT :limit OFFSET :offset;
     """)
@@ -171,6 +180,8 @@ async def get_runs(
                 "machine_id": machine_id,
                 "origin": origin,
                 "workflow_version_id": workflow_version_id,
+                "min_queued_duration": min_queued_duration,
+                "min_run_duration": min_run_duration,
             }.items()
             if val is not None
         }
