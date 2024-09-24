@@ -585,3 +585,4 @@ class GPUEvent(SerializableMixin, Base):
     
     session_id = Column(String)
     modal_function_id = Column(String)
+    tunnel_url = Column(String)

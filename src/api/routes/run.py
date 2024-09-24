@@ -9,6 +9,7 @@ from .types import (
     CreateRunResponse,
     DeploymentRunRequest,
     WorkflowRunModel,
+    WorkflowRunNativeOutputModel,
     WorkflowRunOutputModel,
     WorkflowRunRequest,
     WorkflowRunVersionRequest,
@@ -90,7 +91,10 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
 @router.post(
     "/run",
     response_model=Union[
-        CreateRunResponse, CreateRunBatchResponse, WorkflowRunOutputModel
+        CreateRunResponse,
+        CreateRunBatchResponse,
+        WorkflowRunOutputModel,
+        WorkflowRunNativeOutputModel,
     ],
 )
 async def create_run(
@@ -124,6 +128,8 @@ async def create_run(
         if "org_id" in request.state.current_user
         else None
     )
+
+    is_native_run = data.is_native_run
 
     if isinstance(data, WorkflowRunVersionRequest):
         workflow_version_id = data.workflow_version_id
@@ -267,6 +273,13 @@ async def create_run(
         # logger.info(token)
         # logger.info("machine type " + machine.type)
 
+        # return the params for the native run
+        if is_native_run:
+            return {
+                **params,
+                "cd_token": token,
+            }
+
         if data.execution_mode == "async":
             match machine.type:
                 case "comfy-deploy-serverless":
@@ -313,10 +326,12 @@ async def create_run(
                     # headers["Authorization"] = f"Bearer {machine.auth_token}"
                     if machine.auth_token:
                         # Use Basic Authentication
-                        credentials = base64.b64encode(machine.auth_token.encode()).decode()
+                        credentials = base64.b64encode(
+                            machine.auth_token.encode()
+                        ).decode()
                         headers["Authorization"] = f"Basic {credentials}"
-                    
-                    print(headers)
+
+                    # print(headers)
 
                     async with httpx.AsyncClient() as _client:
                         try:

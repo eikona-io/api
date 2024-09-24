@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 import logging
 from typing import Optional
 from sqlalchemy import update
+from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +61,15 @@ async def get_session(
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
 
-    runner = get_comfy_runner(gpuEvent.machine_id, gpuEvent.session_id)
+    # runner = get_comfy_runner(gpuEvent.machine_id, gpuEvent.session_id)
 
-    async with modal.Queue.ephemeral() as q:
-        await runner.create_tunnel.spawn.aio(q, status_endpoint)
-        url = await q.get.aio()
+    # async with modal.Queue.ephemeral() as q:
+    #     await runner.create_tunnel.spawn.aio(q, status_endpoint)
+    #     url = await q.get.aio()
 
     return {
         "session_id": session_id,
-        "url": url,
+        "url": gpuEvent.tunnel_url,
     }
     # with logfire.span("spawn-run"):
     #     result = ComfyDeployRunner().run.spawn(params)
@@ -92,34 +93,9 @@ async def get_machine_sessions(
     return result.scalars().all()
 
 
-# Create a new session for a machine, return the session id and url
-@router.post("/machine/{machine_id}/session")
-async def create_session(
-    request: Request, machine_id: str, db: AsyncSession = Depends(get_db)
+async def create_session_background_task(
+    db: AsyncSession, machine_id: str, session_id: UUID, request: Request
 ):
-    machine = cast(
-        Optional[Machine],
-        (
-            await db.execute(
-                (
-                    select(Machine)
-                    .where(Machine.id == machine_id)
-                    .apply_org_check(request)
-                )
-            )
-        ).scalar_one_or_none(),
-    )
-
-    if machine is None:
-        raise HTTPException(status_code=404, detail="Machine not found")
-
-    if machine.type != "comfy-deploy-serverless":
-        raise HTTPException(
-            status_code=400,
-            detail="Machine is not a Comfy Deploy Serverless machine",
-        )
-
-    session_id = uuid4()
     runner = get_comfy_runner(machine_id, session_id)
     async with modal.Queue.ephemeral() as q:
         result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
@@ -155,10 +131,57 @@ async def create_session(
         print("gpuEvent", gpuEvent)
         await db.refresh(gpuEvent)
         url = await q.get.aio()
+        
+        result = await db.execute(
+            update(GPUEvent)
+            .where(GPUEvent.session_id == str(session_id))
+            .values(tunnel_url=url)
+            .returning(GPUEvent)
+        )
+        await db.commit()
+        gpuEvent = result.scalar_one()
+        print("gpuEvent", gpuEvent)
+        await db.refresh(gpuEvent)
+
+
+# Create a new session for a machine, return the session id and url
+@router.post("/machine/{machine_id}/session")
+async def create_session(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    machine_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    machine = cast(
+        Optional[Machine],
+        (
+            await db.execute(
+                (
+                    select(Machine)
+                    .where(Machine.id == machine_id)
+                    .apply_org_check(request)
+                )
+            )
+        ).scalar_one_or_none(),
+    )
+
+    if machine is None:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    if machine.type != "comfy-deploy-serverless":
+        raise HTTPException(
+            status_code=400,
+            detail="Machine is not a Comfy Deploy Serverless machine",
+        )
+
+    session_id = uuid4()
+    # Add the background task
+    background_tasks.add_task(
+        create_session_background_task, db, machine_id, session_id, request
+    )
 
     return {
         "session_id": session_id,
-        "url": url,
     }
 
 

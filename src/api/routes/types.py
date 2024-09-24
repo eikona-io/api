@@ -231,7 +231,7 @@ class MachineModel(BaseModel):
 
 class WorkflowRequestShare(BaseModel):
     execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = "async"
-    inputs: Dict[str, Any] = Field(default_factory=dict)
+    inputs: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
     webhook: Optional[str] = None
     webhook_intermediate_status: Optional[bool] = False
@@ -247,11 +247,13 @@ class WorkflowRequestShare(BaseModel):
         },
         description="Optional dictionary of batch input parameters. Keys are input names, values are lists of inputs.",
     )
+    
+    is_native_run: Optional[bool] = False
 
 
 class WorkflowRunRequest(WorkflowRequestShare):
     workflow_id: UUID
-    workflow_api_json: str
+    workflow_api_json: Dict[str, Any]
     machine_id: Optional[UUID] = None
 
 
@@ -262,8 +264,8 @@ class WorkflowRunVersionRequest(WorkflowRequestShare):
 
 class DeploymentRunRequest(WorkflowRequestShare):
     deployment_id: UUID
-
-
+    
+    
 CreateRunRequest = Union[
     WorkflowRunVersionRequest, WorkflowRunRequest, DeploymentRunRequest
 ]
@@ -294,6 +296,17 @@ class WorkflowRunOutputModel(BaseModel):
     updated_at: datetime
     type: Optional[str] = None
     node_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+        
+class WorkflowRunNativeOutputModel(BaseModel):
+    prompt_id: str
+    workflow_api_raw: Dict[str, Any]
+    inputs: Optional[Dict[str, Any]]
+    status_endpoint: str
+    file_upload_endpoint: str
+    cd_token: str
 
     class Config:
         from_attributes = True
