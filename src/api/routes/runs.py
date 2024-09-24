@@ -53,6 +53,8 @@ async def get_runs(
     min_queued_duration: Optional[str] = 0,
     # filter run duration
     min_run_duration: Optional[str] = 0,
+    # filter total upload duration
+    min_total_upload_duration: Optional[str] = 0,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -80,6 +82,8 @@ async def get_runs(
             min_queued_duration = 0
         if min_run_duration == "":
             min_run_duration = 0
+        if min_total_upload_duration == "":
+            min_total_upload_duration = 0
 
         conditions = [
             ("created_at >= :start_time", start_time),
@@ -112,6 +116,29 @@ async def get_runs(
         END AS run_duration
       FROM "comfyui_deploy"."workflow_runs"
       WHERE {where_clause}
+    ),
+    workflow_runs_with_upload_duration AS (
+      SELECT
+        fwr.*,
+        CASE
+          WHEN "comfyui_deploy"."workflow_run_outputs".data IS NOT NULL
+          THEN ROUND(CAST(
+            (SELECT COALESCE(SUM(
+              CASE
+                WHEN jsonb_typeof(value) = 'array' THEN
+                  (SELECT COALESCE(SUM((elem->>'upload_duration')::float), 0)
+                   FROM jsonb_array_elements(value) elem)
+                WHEN jsonb_typeof(value) = 'object' THEN
+                  COALESCE((value->>'upload_duration')::float, 0)
+                ELSE 0
+              END
+            ), 0)
+             FROM jsonb_each("comfyui_deploy"."workflow_run_outputs".data))
+          AS NUMERIC), 5)
+          ELSE NULL
+        END AS total_upload_duration
+      FROM filtered_workflow_runs fwr
+      LEFT JOIN "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
     )
     SELECT 
       fwr.created_at,
@@ -130,25 +157,9 @@ async def get_runs(
       "comfyui_deploy"."workflow_run_outputs".data AS outputs,
       fwr.queued_duration,
       fwr.run_duration,
-      CASE
-        WHEN "comfyui_deploy"."workflow_run_outputs".data IS NOT NULL
-        THEN ROUND(CAST(
-          (SELECT COALESCE(SUM(
-            CASE
-              WHEN jsonb_typeof(value) = 'array' THEN
-                (SELECT COALESCE(SUM((elem->>'upload_duration')::float), 0)
-                 FROM jsonb_array_elements(value) elem)
-              WHEN jsonb_typeof(value) = 'object' THEN
-                COALESCE((value->>'upload_duration')::float, 0)
-              ELSE 0
-            END
-          ), 0)
-           FROM jsonb_each("comfyui_deploy"."workflow_run_outputs".data))
-        AS NUMERIC), 5)
-        ELSE NULL
-      END AS total_upload_duration
+      fwr.total_upload_duration
     FROM 
-      filtered_workflow_runs fwr
+      workflow_runs_with_upload_duration fwr
     LEFT JOIN 
       "comfyui_deploy"."workflows" ON fwr.workflow_id = "comfyui_deploy"."workflows".id
     LEFT JOIN 
@@ -160,7 +171,7 @@ async def get_runs(
     WHERE
       fwr.queued_duration >= :min_queued_duration
       AND fwr.run_duration >= :min_run_duration
-      
+      AND fwr.total_upload_duration >= :min_total_upload_duration
     ORDER BY fwr.created_at DESC
     LIMIT :limit OFFSET :offset;
     """)
@@ -182,6 +193,7 @@ async def get_runs(
                 "workflow_version_id": workflow_version_id,
                 "min_queued_duration": min_queued_duration,
                 "min_run_duration": min_run_duration,
+                "min_total_upload_duration": min_total_upload_duration,
             }.items()
             if val is not None
         }
