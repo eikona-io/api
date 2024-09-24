@@ -104,6 +104,24 @@ async def get_runs(
 
         where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
 
+        time_duration_conditions = [
+            ("queued_duration >= :min_queued_duration", min_queued_duration),
+            ("run_duration >= :min_run_duration", min_run_duration),
+            (
+                "total_upload_duration >= :min_total_upload_duration",
+                min_total_upload_duration,
+            ),
+        ]
+
+        where_time_duration_clause = " AND ".join(
+            cond for cond, val in time_duration_conditions if val != 0
+        )
+        where_time_duration_clause = (
+            f" AND {where_time_duration_clause}" if where_time_duration_clause else ""
+        )
+
+        print("where_time_duration_clause", where_time_duration_clause)
+
         query = text(f"""
     WITH filtered_workflow_runs AS (
       SELECT
@@ -173,9 +191,8 @@ async def get_runs(
     LEFT JOIN
       "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
     WHERE
-      (fwr.queued_duration >= :min_queued_duration OR fwr.queued_duration IS NULL)
-      AND (fwr.run_duration >= :min_run_duration OR fwr.run_duration IS NULL)
-      AND (fwr.total_upload_duration >= :min_total_upload_duration OR fwr.total_upload_duration IS NULL)
+      TRUE
+      {where_time_duration_clause}
     ORDER BY fwr.created_at DESC
     LIMIT :limit OFFSET :offset;
     """)
