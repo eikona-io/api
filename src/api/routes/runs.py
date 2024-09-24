@@ -120,7 +120,7 @@ async def get_runs(
             f" AND {where_time_duration_clause}" if where_time_duration_clause else ""
         )
 
-        print("where_time_duration_clause", where_time_duration_clause)
+        # print("where_time_duration_clause", where_time_duration_clause)
 
         query = text(f"""
     WITH filtered_workflow_runs AS (
