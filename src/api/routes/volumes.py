@@ -292,7 +292,7 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
                 current_folder.contents.append(next_folder)
             current_folder = next_folder
 
-        path = f"{model.folder_path}/{model.model_name}"
+        path = os.path.join(model.folder_path, model.model_name)
         logger.info(f"model.model_name: { model.model_name }")
         logger.info(f"path: { path }")
         # Add the file to the last folder
