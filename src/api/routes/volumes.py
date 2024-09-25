@@ -266,6 +266,8 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     if not models:
         return structure
 
+    folders = {}
+
     for model in models:
         if not model.folder_path:
             continue
@@ -277,28 +279,29 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
         for i, part in enumerate(path_parts):
             new_path = "/".join(path_parts[: i + 1])
 
-            # Find or create the next folder
-            next_folder = next(
-                (
-                    item
-                    for item in current_folder.contents
-                    if isinstance(item, VolFolder) and item.path == new_path
-                ),
-                None,
-            )
-            if not next_folder:
-                logger.info(f"new_path: {new_path, path_parts[i], part}")
-                next_folder = VolFolder(path=part, type="folder", contents=[])
-                current_folder.contents.append(next_folder)
-            current_folder = next_folder
+            if i == 1:  # Second level directory
+                if new_path not in folders:
+                    folders[new_path] = VolFolder(path=part, type="folder", contents=[])
+                    current_folder.contents.append(folders[new_path])
+                current_folder = folders[new_path]
+            else:
+                next_folder = next(
+                    (
+                        item
+                        for item in current_folder.contents
+                        if isinstance(item, VolFolder) and item.path == part
+                    ),
+                    None,
+                )
+                if not next_folder:
+                    next_folder = VolFolder(path=part, type="folder", contents=[])
+                    current_folder.contents.append(next_folder)
+                current_folder = next_folder
 
         path = os.path.join(model.folder_path, model.model_name)
         logger.info(f"model.model_name: { model.model_name }")
         logger.info(f"path: { path }")
-        # Add the file to the last folder
-        current_folder.contents.append(
-            VolFile(path=path, type="file")
-        )
+        current_folder.contents.append(VolFile(path=path, type="file"))
 
     return structure
 
