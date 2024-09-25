@@ -266,6 +266,8 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     if not models:
         return structure
 
+    categorized_models: Dict[str, VolFolder] = {}
+
     for model in models:
         if not model.folder_path:
             continue
@@ -274,16 +276,20 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
             continue
 
         current_folder = structure
-        for part in path_parts:
-            # Find existing folder or create a new one
+        for i, part in enumerate(path_parts):
+            new_path = "/".join(path_parts[:i + 1])
+            
+            # Find or create the next folder
             next_folder = next(
                 (
                     item
                     for item in current_folder.contents
-                    if isinstance(item, VolFolder) and item.path == part
+                    if isinstance(item, VolFolder) and item.path == new_path
                 ),
                 None,
             )
+            # logger.info(f"next_folder: {next_folder}")
+            logger.info(f"new_path: {new_path, path_parts[i]}")
             if not next_folder:
                 next_folder = VolFolder(path=part, type="folder", contents=[])
                 current_folder.contents.append(next_folder)
