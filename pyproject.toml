@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "ruff>=0.6.2",
-    "modal>=0.64.51",
     "fastapi>=0.112.1",
     "uvicorn>=0.30.6",
     "sqlalchemy>=2.0.32",
@@ -31,6 +30,7 @@ dependencies = [
     "google-cloud-pubsub>=2.23.1",
     "websockets>=13.0.1",
     "python-multipart>=0.0.9",
+    "modal>=0.64.136",
 ]
 
 [build-system]

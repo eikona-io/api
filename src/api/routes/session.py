@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import (
     select,
 )
-
+from pydantic import BaseModel, Field
 
 # from sqlalchemy import select
 from api.models import (
@@ -28,13 +28,14 @@ router = APIRouter(tags=["Session"])
 status_endpoint = os.environ.get("CURRENT_API_URL") + "/api/update-run"
 
 
-def get_comfy_runner(machine_id: str, session_id: str | UUID):
+def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu: str):
     ComfyDeployRunner = modal.Cls.lookup(str(machine_id), "ComfyDeployRunner")
     runner = ComfyDeployRunner.with_options(
         concurrency_limit=1,
         allow_concurrent_inputs=1000,
-        timeout=3600,
-    )(session_id=str(session_id))
+        timeout=timeout * 60,
+        gpu=gpu,
+    )(session_id=str(session_id), gpu=gpu)
 
     return runner
 
@@ -94,9 +95,14 @@ async def get_machine_sessions(
 
 
 async def create_session_background_task(
-    db: AsyncSession, machine_id: str, session_id: UUID, request: Request
+    db: AsyncSession,
+    machine_id: str,
+    session_id: UUID,
+    request: Request,
+    timeout: int,
+    gpu: str,
 ):
-    runner = get_comfy_runner(machine_id, session_id)
+    runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
     async with modal.Queue.ephemeral() as q:
         result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
         modal_function_id = result.object_id
@@ -131,7 +137,7 @@ async def create_session_background_task(
         print("gpuEvent", gpuEvent)
         await db.refresh(gpuEvent)
         url = await q.get.aio()
-        
+
         result = await db.execute(
             update(GPUEvent)
             .where(GPUEvent.session_id == str(session_id))
@@ -144,10 +150,19 @@ async def create_session_background_task(
         await db.refresh(gpuEvent)
 
 
+class CreateSessionBody(BaseModel):
+    gpu: Optional[str] = Field(None, description="The GPU to use")
+    timeout: Optional[int] = Field(None, description="The timeout in minutes")
+    async_creation: bool = Field(
+        False, description="Whether to create the session asynchronously"
+    )
+
+
 # Create a new session for a machine, return the session id and url
 @router.post("/machine/{machine_id}/session")
 async def create_session(
     request: Request,
+    body: CreateSessionBody,
     background_tasks: BackgroundTasks,
     machine_id: str,
     db: AsyncSession = Depends(get_db),
@@ -176,9 +191,25 @@ async def create_session(
 
     session_id = uuid4()
     # Add the background task
-    background_tasks.add_task(
-        create_session_background_task, db, machine_id, session_id, request
-    )
+    if body.async_creation:
+        background_tasks.add_task(
+            create_session_background_task,
+            db,
+            machine_id,
+            session_id,
+            request,
+            body.timeout or 15,
+            body.gpu if body.gpu is not None else machine.gpu,
+        )
+    else:
+        await create_session_background_task(
+            db,
+            machine_id,
+            session_id,
+            request,
+            body.timeout or 15,
+            body.gpu if body.gpu is not None else machine.gpu,
+        )
 
     return {
         "session_id": session_id,

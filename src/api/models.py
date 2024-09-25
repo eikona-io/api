@@ -387,7 +387,7 @@ class Machine(SerializableMixin, Base):
     )
     machine_version = Column(String)
     machine_builder_version = Column(
-        Enum("2", "3", name="machine_builder_version"), default="2"
+        Enum("2", "3", "4", name="machine_builder_version"), default="2"
     )
     snapshot = Column(JSON)
     models = Column(JSON)

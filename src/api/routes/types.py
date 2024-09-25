@@ -254,6 +254,7 @@ class WorkflowRequestShare(BaseModel):
 class WorkflowRunRequest(WorkflowRequestShare):
     workflow_id: UUID
     workflow_api_json: Dict[str, Any]
+    workflow: Optional[Dict[str, Any]] = None
     machine_id: Optional[UUID] = None
 
 

@@ -501,7 +501,7 @@ async def build_logic(item: Item):
             f"builder - VSCODE_DEV_CONTAINER: {os.environ.get('VSCODE_DEV_CONTAINER', 'false')}"
         )
         version_to_file = item.machine_builder_version  # .replace(".", "_")
-        to_modal_deps_version = {"2": None, "3": "2024.04"}
+        to_modal_deps_version = {"2": None, "3": "2024.04", "4": "2024.04"}
         cp_process = await asyncio.subprocess.create_subprocess_exec(
             "cp",
             "-r",
@@ -755,9 +755,19 @@ async def build_logic(item: Item):
                 app_id = info["value"]
             elif info["type"] == "URL":
                 url = info["value"]
+                
+        try:
+            app = modal.App.lookup(item.name)
+            # print("my legit app id", app.app_id)
+            
+            if app.app_id:
+                app_id = app.app_id
+            
+        except Exception as e:
+            print("error", e)
 
         # Replace 'comfyui-api' in the URL with 'app-id' and parse the returned JSON to get app_id
-        if url and item.modal_app_id is None:
+        if app_id is None and url and item.modal_app_id is None:
             appid_url = url.replace("comfyui-api", "app-id")
             async with aiohttp.ClientSession() as session:
                 async with session.get(appid_url) as response:
@@ -772,7 +782,7 @@ async def build_logic(item: Item):
                         logger.error(
                             f"Failed to fetch App ID. HTTP Status: {response.status}"
                         )
-        
+
         if item.modal_app_id:
             app_id = item.modal_app_id
 

@@ -138,6 +138,7 @@ async def create_run(
         workflow_api_raw = data.workflow_api_json
         workflow_id = data.workflow_id
         machine_id = data.machine_id
+        workflow = data.workflow
     elif isinstance(data, DeploymentRunRequest):
         # Retrieve the deployment and its associated workflow version
         deployment_query = (
