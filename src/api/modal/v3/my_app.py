@@ -536,6 +536,7 @@ class Input(BaseModel):
     workflow_api_raw: dict
     status_endpoint: str
     file_upload_endpoint: str
+    workflow: Optional[dict] = None
 
 
 async def queue_workflow_comfy_deploy(data: Input):
