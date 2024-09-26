@@ -101,8 +101,10 @@ async def create_session_background_task(
     request: Request,
     timeout: int,
     gpu: str,
+    status_queue: Optional[asyncio.Queue] = None,
 ):
     runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
+    print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
         result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
         modal_function_id = result.object_id
@@ -134,7 +136,10 @@ async def create_session_background_task(
         )
         await db.commit()
         gpuEvent = result.scalar_one()
-        print("gpuEvent", gpuEvent)
+        print("async_creation", status_queue)
+        if status_queue is not None:
+            await status_queue.put(gpuEvent.modal_function_id)
+        print("async_creation", gpuEvent)
         await db.refresh(gpuEvent)
         url = await q.get.aio()
 
@@ -157,6 +162,13 @@ class CreateSessionBody(BaseModel):
         False, description="Whether to create the session asynchronously"
     )
 
+async def ensure_session_creation_complete(task: asyncio.Task):
+    try:
+        await task
+    except Exception as e:
+        # Handle any exceptions that occurred during session creation
+        logger.error(f"Session creation failed: {str(e)}")
+        # You might want to update the session status in the database here
 
 # Create a new session for a machine, return the session id and url
 @router.post("/machine/{machine_id}/session")
@@ -192,15 +204,32 @@ async def create_session(
     session_id = uuid4()
     # Add the background task
     if body.async_creation:
-        background_tasks.add_task(
-            create_session_background_task,
-            db,
-            machine_id,
-            session_id,
-            request,
-            body.timeout or 15,
-            body.gpu if body.gpu is not None else machine.gpu,
+        print("async_creation")
+        q = asyncio.Queue()
+        
+        task = asyncio.create_task(
+            create_session_background_task(
+                db,
+                machine_id,
+                session_id,
+                request,
+                body.timeout or 15,
+                body.gpu if body.gpu is not None else machine.gpu,
+                q
+            )
         )
+        
+        background_tasks.add_task(
+            ensure_session_creation_complete,
+            task,
+        )
+        
+        try:
+            modal_function_id = await asyncio.wait_for(q.get(), timeout=10.0)
+            print("async_creation", "modal_function_id", modal_function_id)
+        except asyncio.TimeoutError:
+            print("Timed out waiting for modal_function_id")
+            modal_function_id = None
     else:
         await create_session_background_task(
             db,
