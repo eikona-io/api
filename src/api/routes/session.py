@@ -13,7 +13,7 @@ from api.models import (
     GPUEvent,
     Machine,
 )
-from api.database import get_db
+from api.database import get_db, get_db_context
 from typing import Optional, cast
 from uuid import UUID, uuid4
 import logging
@@ -95,7 +95,6 @@ async def get_machine_sessions(
 
 
 async def create_session_background_task(
-    db: AsyncSession,
     machine_id: str,
     session_id: UUID,
     request: Request,
@@ -111,48 +110,51 @@ async def create_session_background_task(
 
         gpuEvent = None
         while gpuEvent is None:
-            gpuEvent = cast(
-                Optional[GPUEvent],
-                (
-                    await db.execute(
-                        (
-                            select(GPUEvent)
-                            .where(GPUEvent.session_id == str(session_id))
-                            .where(GPUEvent.end_time.is_(None))
-                            .apply_org_check(request)
+            async with get_db_context() as db:
+                gpuEvent = cast(
+                    Optional[GPUEvent],
+                    (
+                        await db.execute(
+                            (
+                                select(GPUEvent)
+                                .where(GPUEvent.session_id == str(session_id))
+                                .where(GPUEvent.end_time.is_(None))
+                                .apply_org_check(request)
+                            )
                         )
-                    )
-                ).scalar_one_or_none(),
-            )
+                    ).scalar_one_or_none(),
+                )
 
             if gpuEvent is None:
                 await asyncio.sleep(1)
-
-        result = await db.execute(
-            update(GPUEvent)
-            .where(GPUEvent.session_id == str(session_id))
-            .values(modal_function_id=modal_function_id)
-            .returning(GPUEvent)
-        )
-        await db.commit()
-        gpuEvent = result.scalar_one()
+                
         print("async_creation", status_queue)
         if status_queue is not None:
             await status_queue.put(gpuEvent.modal_function_id)
         print("async_creation", gpuEvent)
-        await db.refresh(gpuEvent)
-        url = await q.get.aio()
+    
+        async with get_db_context() as db:
+            result = await db.execute(
+                update(GPUEvent)
+                .where(GPUEvent.session_id == str(session_id))
+                .values(modal_function_id=modal_function_id)
+                .returning(GPUEvent)
+            )
+            await db.commit()
+            gpuEvent = result.scalar_one()
+            await db.refresh(gpuEvent)
+            url = await q.get.aio()
 
-        result = await db.execute(
-            update(GPUEvent)
-            .where(GPUEvent.session_id == str(session_id))
-            .values(tunnel_url=url)
-            .returning(GPUEvent)
-        )
-        await db.commit()
-        gpuEvent = result.scalar_one()
-        print("gpuEvent", gpuEvent)
-        await db.refresh(gpuEvent)
+            result = await db.execute(
+                update(GPUEvent)
+                .where(GPUEvent.session_id == str(session_id))
+                .values(tunnel_url=url)
+                .returning(GPUEvent)
+            )
+            await db.commit()
+            gpuEvent = result.scalar_one()
+            print("gpuEvent", gpuEvent)
+            await db.refresh(gpuEvent)
 
 
 class CreateSessionBody(BaseModel):
@@ -209,7 +211,6 @@ async def create_session(
         
         task = asyncio.create_task(
             create_session_background_task(
-                db,
                 machine_id,
                 session_id,
                 request,
@@ -232,7 +233,6 @@ async def create_session(
             modal_function_id = None
     else:
         await create_session_background_task(
-            db,
             machine_id,
             session_id,
             request,
