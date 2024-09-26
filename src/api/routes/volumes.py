@@ -1,6 +1,6 @@
 from .types import VolFSStructure, Model
 from fastapi import HTTPException, APIRouter, Request
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 import logging
 import os
 import httpx
@@ -266,7 +266,15 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     if not models:
         return structure
 
-    categorized_models: Dict[str, VolFolder] = {}
+    def create_or_get_folder(
+        path: str, parent: Union[VolFSStructure, VolFolder]
+    ) -> VolFolder:
+        for item in parent.contents:
+            if isinstance(item, VolFolder) and item.path == path:
+                return item
+        new_folder = VolFolder(path=path, type="folder", contents=[])
+        parent.contents.append(new_folder)
+        return new_folder
 
     for model in models:
         if not model.folder_path:
@@ -275,37 +283,12 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
         if not path_parts:
             continue
 
-        # Ensure there's at least one part in path_parts
-        category = path_parts[0] if path_parts else "uncategorized"
+        current_folder = structure
+        for part in path_parts:
+            current_folder = create_or_get_folder(part, current_folder)
 
-        if category not in categorized_models:
-            categorized_models[category] = VolFolder(
-                path=category, type="folder", contents=[]
-            )
-            structure.contents.append(categorized_models[category])
-
-        current_folder = categorized_models[category]
-        for i, part in enumerate(path_parts):
-            new_path = "/".join(path_parts[: i + 1])
-            if i == len(path_parts) - 1:
-                # Add the file
-                current_folder.contents.append(
-                    VolFile(path=f"{new_path}/{model.model_name}", type="file")
-                )
-            else:
-                # Find or create the next folder
-                next_folder = next(
-                    (
-                        item
-                        for item in current_folder.contents
-                        if isinstance(item, VolFolder) and item.path == new_path
-                    ),
-                    None,
-                )
-                if not next_folder:
-                    next_folder = VolFolder(path=new_path, type="folder", contents=[])
-                    current_folder.contents.append(next_folder)
-                current_folder = next_folder
+        file_path = os.path.join(model.folder_path, model.model_name)
+        current_folder.contents.append(VolFile(path=file_path, type="file"))
 
     return structure
 
