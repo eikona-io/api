@@ -1,6 +1,6 @@
 from .types import VolFSStructure, Model
 from fastapi import HTTPException, APIRouter, Request
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 import logging
 import os
 import httpx
@@ -266,7 +266,15 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     if not models:
         return structure
 
-    folders = {}
+    def create_or_get_folder(
+        path: str, parent: Union[VolFSStructure, VolFolder]
+    ) -> VolFolder:
+        for item in parent.contents:
+            if isinstance(item, VolFolder) and item.path == path:
+                return item
+        new_folder = VolFolder(path=path, type="folder", contents=[])
+        parent.contents.append(new_folder)
+        return new_folder
 
     for model in models:
         if not model.folder_path:
@@ -276,32 +284,11 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
             continue
 
         current_folder = structure
-        for i, part in enumerate(path_parts):
-            new_path = "/".join(path_parts[: i + 1])
+        for part in path_parts:
+            current_folder = create_or_get_folder(part, current_folder)
 
-            if i == 1:  # Second level directory
-                if new_path not in folders:
-                    folders[new_path] = VolFolder(path=part, type="folder", contents=[])
-                    current_folder.contents.append(folders[new_path])
-                current_folder = folders[new_path]
-            else:
-                next_folder = next(
-                    (
-                        item
-                        for item in current_folder.contents
-                        if isinstance(item, VolFolder) and item.path == part
-                    ),
-                    None,
-                )
-                if not next_folder:
-                    next_folder = VolFolder(path=part, type="folder", contents=[])
-                    current_folder.contents.append(next_folder)
-                current_folder = next_folder
-
-        path = os.path.join(model.folder_path, model.model_name)
-        logger.info(f"model.model_name: { model.model_name }")
-        logger.info(f"path: { path }")
-        current_folder.contents.append(VolFile(path=path, type="file"))
+        file_path = os.path.join(model.folder_path, model.model_name)
+        current_folder.contents.append(VolFile(path=file_path, type="file"))
 
     return structure
 
