@@ -37,7 +37,6 @@ def json_serial(obj):
 
 router = APIRouter(tags=["Workflow"])
 
-
 @router.get("/workflows", response_model=List[WorkflowModel])
 async def get_workflows(
     request: Request,

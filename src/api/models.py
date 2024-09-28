@@ -131,7 +131,7 @@ class WorkflowRun(SerializableMixin, Base):
         nullable=False,
     )
     workflow_api = Column(JSON)
-    machine_id = Column(UUID(as_uuid=True), nullable=True)
+    machine_id = Column(UUID(as_uuid=True), ForeignKey("machines.id"), nullable=True)
     origin = Column(
         Enum(
             "manual",
@@ -200,7 +200,7 @@ class WorkflowRun(SerializableMixin, Base):
     workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")
     version = relationship("WorkflowVersion", foreign_keys=[workflow_version_id])
-
+    machine = relationship("Machine", foreign_keys=[machine_id])
 
 class WorkflowRunWithExtra(WorkflowRun):
     pass
