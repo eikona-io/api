@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Models"])
+router = APIRouter(tags=["Comfy Node"])
 
 
 import asyncio
@@ -32,7 +32,7 @@ async def fetch_github_data(url: str, headers: Dict[str, str]) -> Dict[str, Any]
         return response.json()
 
 @async_lru_cache(expire_after=timedelta(hours=1))
-async def get_branch_info(git_url: str) -> Dict[str, Any] | None:
+async def _get_branch_info(git_url: str) -> Dict[str, Any] | None:
     try:
         repo_name = await extract_repo_name(git_url)
         headers = {
@@ -60,10 +60,10 @@ async def get_branch_info(git_url: str) -> Dict[str, Any] | None:
 
 
 @router.get("/branch-info", response_model=Dict[str, Any])
-async def get_branch_info_route(request: Request, git_url: str):
+async def get_branch_info(request: Request, git_url: str):
     if not git_url:
         raise HTTPException(status_code=400, detail="Git URL is required")
-    branch_info = await get_branch_info(git_url)
+    branch_info = await _get_branch_info(git_url)
     if branch_info is None:
         raise HTTPException(status_code=404, detail="Branch information not found")
     return JSONResponse(content=branch_info)

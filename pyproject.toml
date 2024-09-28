@@ -29,6 +29,8 @@ dependencies = [
     "scalar-fastapi>=1.0.3",
     "cryptography>=43.0.1",
     "google-cloud-pubsub>=2.23.1",
+    "websockets>=13.0.1",
+    "python-multipart>=0.0.9",
 ]
 
 [build-system]
