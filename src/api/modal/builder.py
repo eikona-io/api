@@ -23,7 +23,6 @@ import modal
 from fastapi import APIRouter
 import tempfile
 from database import get_db
-import logfire
 
 machine_id_websocket_dict = {}
 machine_id_websocket_dict_live_logs = {}
@@ -39,11 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import datetime as dt
 from asyncio import Queue
 
-# logger = logging.getLogger(__name__)
-
-logfire.configure()
-logger = logfire
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Machine"], prefix="/machine")
 
@@ -322,8 +317,6 @@ async def create_machine(
     item: Item,
     background_tasks: BackgroundTasks,
 ):
-    logger.info("Application starting up hahahahahaha")
-    
     if item.machine_id in machine_id_status and machine_id_status[item.machine_id]:
         return JSONResponse(
             status_code=400, content={"error": "Build already in progress."}
