@@ -33,8 +33,10 @@ def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu:
     runner = ComfyDeployRunner.with_options(
         concurrency_limit=1,
         allow_concurrent_inputs=1000,
+        # 2 seconds minimum idle timeout
+        container_idle_timeout=2,
         timeout=timeout * 60,
-        gpu=gpu,
+        gpu=gpu if gpu != "CPU" else None,
     )(session_id=str(session_id), gpu=gpu)
 
     return runner
@@ -137,7 +139,7 @@ async def create_session_background_task(
             result = await db.execute(
                 update(GPUEvent)
                 .where(GPUEvent.session_id == str(session_id))
-                .values(modal_function_id=modal_function_id)
+                .values(modal_function_id=modal_function_id, session_timeout=timeout)
                 .returning(GPUEvent)
             )
             await db.commit()
@@ -202,6 +204,12 @@ async def create_session(
             status_code=400,
             detail="Machine is not a Comfy Deploy Serverless machine",
         )
+        
+    if int(machine.machine_builder_version) < 4:
+        raise HTTPException(
+            status_code=400,
+            detail="Machine builder version is not larger than 4",
+        )
 
     session_id = uuid4()
     # Add the background task
@@ -233,6 +241,7 @@ async def create_session(
             modal_function_id = None
     else:
         await create_session_background_task(
+            db,
             machine_id,
             session_id,
             request,

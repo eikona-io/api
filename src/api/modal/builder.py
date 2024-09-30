@@ -111,6 +111,7 @@ class Model(BaseModel):
 
 
 class GPUType(str, Enum):
+    CPU = "CPU"
     T4 = "T4"
     A10G = "A10G"
     A100 = "A100"

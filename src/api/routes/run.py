@@ -88,6 +88,11 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
     return run_dict
 
 
+def get_comfy_deploy_runner(machine_id: str, gpu: str):
+    ComfyDeployRunner = modal.Cls.lookup(str(machine_id), "ComfyDeployRunner")
+    return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
+
+
 @router.post(
     "/run",
     response_model=Union[
@@ -287,11 +292,9 @@ async def create_run(
             match machine.type:
                 case "comfy-deploy-serverless":
                     # print("shit", str(machine_id))
-                    ComfyDeployRunner = modal.Cls.lookup(
-                        str(machine_id), "ComfyDeployRunner"
-                    )
+                    ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
                     with logfire.span("spawn-run"):
-                        result = ComfyDeployRunner().run.spawn(params)
+                        result = ComfyDeployRunner.run.spawn(params)
                         new_run.modal_function_call_id = result.object_id
                 # For runpod there will be a problem with the auth token cause v2 endpoint requires a token
                 case "runpod-serverless":
@@ -367,10 +370,8 @@ async def create_run(
             return {"run_id": new_run.id}
         elif data.execution_mode in ["sync", "sync_first_result"]:
             with logfire.span("run-sync"):
-                ComfyDeployRunner = modal.Cls.lookup(
-                    str(machine_id), "ComfyDeployRunner"
-                )
-                result = await ComfyDeployRunner().run.remote.aio(params)
+                ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
+                result = await ComfyDeployRunner.run.remote.aio(params)
 
             first_output_query = (
                 select(WorkflowRunOutput)

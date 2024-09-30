@@ -66,7 +66,9 @@ else:
     machine_name_for_label = config["name"]
 
 compile_with_gpu = config["install_custom_node_with_gpu"] == "True"
-gpu_param = config["gpu"] if compile_with_gpu else None
+final_gpu_param = str(config["gpu"]) if config["gpu"] != "CPU" else None
+gpu_param = final_gpu_param if compile_with_gpu else None
+
 deps = config["deps"]
 docker_commands = config["docker_commands"]
 
@@ -98,12 +100,15 @@ if base_docker_image is not None and base_docker_image != "":
 #     .pip_install("boto3", "aioboto3")
 # )
 
+print("final_gpu_param: ", final_gpu_param)
+print("docker_commands: ", docker_commands)
+
 # Install all custom nodes
 if docker_commands is not None:
     for commands in docker_commands:
         dockerfile_image = dockerfile_image.dockerfile_commands(
             commands,
-            gpu=config["gpu"] if compile_with_gpu else None,
+            gpu=gpu_param,
         )
 
 dockerfile_image = dockerfile_image.copy_local_file(
@@ -633,6 +638,7 @@ async def sync_report_gpu_event(
 
 
 class GPUType(str, Enum):
+    CPU = "CPU"
     T4 = "T4"
     A10G = "A10G"
     A100 = "A100"
@@ -1105,7 +1111,7 @@ def comfyui_api():
 
 @app.cls(
     image=target_image,
-    gpu=config["gpu"],
+    gpu=final_gpu_param,
     volumes=volumes,
     timeout=(config["run_timeout"] + 20),
     container_idle_timeout=config["idle_timeout"],
@@ -1920,7 +1926,7 @@ HRS24_SECONDS = 60 * 60 * 24
 
 @app.cls(
     image=target_image,
-    gpu=config["gpu"],
+    gpu=final_gpu_param,
     volumes=volumes,
     allow_concurrent_inputs=100,
     concurrency_limit=1,

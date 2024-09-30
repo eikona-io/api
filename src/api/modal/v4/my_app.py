@@ -66,7 +66,8 @@ else:
     machine_name_for_label = config["name"]
 
 compile_with_gpu = config["install_custom_node_with_gpu"] == "True"
-gpu_param = config["gpu"] if compile_with_gpu else None
+final_gpu_param = config["gpu"] if config["gpu"] != "CPU" else None
+gpu_param = final_gpu_param if compile_with_gpu else None
 deps = config["deps"]
 docker_commands = config["docker_commands"]
 
@@ -100,10 +101,11 @@ if base_docker_image is not None and base_docker_image != "":
 
 # Install all custom nodes
 if docker_commands is not None:
+    print("docker_commands: ", docker_commands)
     for commands in docker_commands:
         dockerfile_image = dockerfile_image.dockerfile_commands(
             commands,
-            gpu=config["gpu"] if compile_with_gpu else None,
+            gpu=gpu_param,
         )
 
 dockerfile_image = dockerfile_image.copy_local_file(
@@ -1104,7 +1106,8 @@ def comfyui_api():
 
 @app.cls(
     image=target_image,
-    gpu=config["gpu"],
+    # will be overridden by the run function
+    gpu=None,
     volumes=volumes,
     timeout=(config["run_timeout"] + 20),
     container_idle_timeout=config["idle_timeout"],
@@ -1612,7 +1615,7 @@ class ComfyDeployRunner:
             print(f"Directory {directory_path} does not exist.")
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO) + " --disable-metadata",
+            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU") + " --disable-metadata",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
