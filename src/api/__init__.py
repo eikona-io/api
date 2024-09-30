@@ -13,7 +13,19 @@ from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import AsyncSessionLocal, init_db, get_db, engine
-from api.routes import run, volumes, internal, workflow, log, workflows, machines, comfy_node, deployments
+from api.routes import (
+    run,
+    volumes,
+    internal,
+    workflow,
+    log,
+    workflows,
+    machines,
+    comfy_node,
+	deployments,
+	runs
+)
+from api.modal import builder
 from api.models import APIKey
 from dotenv import load_dotenv
 import logfire
@@ -103,11 +115,13 @@ api_router.include_router(run.router)
 api_router.include_router(internal.router)
 api_router.include_router(workflows.router)
 api_router.include_router(workflow.router)
+api_router.include_router(builder.router)
 api_router.include_router(machines.router)
 api_router.include_router(log.router)
 api_router.include_router(volumes.router)
 api_router.include_router(comfy_node.router)
 api_router.include_router(deployments.router)
+api_router.include_router(runs.router)
 # api_router.include_router(hello.router)
 
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
@@ -160,11 +174,19 @@ async def is_key_revoked(key: str, db: AsyncSession) -> bool:
 
 # Dependency to get user data from token
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
+    # Check for cd_token in query parameters
+    cd_token = request.query_params.get("cd_token")
+
+    # Check for Authorization header
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+
+    if cd_token:
+        token = cd_token
+    elif auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    else:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 
-    token = auth_header.split(" ")[1]
     user_data = await parse_jwt(token)
 
     if not user_data:
@@ -195,7 +217,7 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 @app.middleware("http")
 async def check_auth(request: Request, call_next):
     # with logfire.span("api_request"):
-        # logger.info(f"Received request: {request.method} {request.url.path}")
+    # logger.info(f"Received request: {request.method} {request.url.path}")
 
     # List of routes to ignore for authentication
     ignored_routes = [
@@ -206,19 +228,14 @@ async def check_auth(request: Request, call_next):
         "/api/fal-webhook",
     ]
 
-    if (
-        request.url.path.startswith("/api")
-        and request.url.path not in ignored_routes
-    ):
+    if request.url.path.startswith("/api") and request.url.path not in ignored_routes:
         try:
             async with AsyncSessionLocal() as db:
                 request.state.current_user = await get_current_user(request, db)
             # logger.info("Added current_user to request state")
         except HTTPException as e:
             # logger.error(f"Authentication error: {e.detail}")
-            return JSONResponse(
-                status_code=e.status_code, content={"detail": e.detail}
-            )
+            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
     # else:
     #     logger.info("Skipping auth check for non-API route or ignored route")
 
@@ -239,4 +256,14 @@ app.add_middleware(
 if __name__ == "__main__":
     reload = os.getenv("ENV", "production").lower() == "development"
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("api:app", host="0.0.0.0", port=port, workers=4, reload=reload)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+    print("hiii",project_root)
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=port,
+        workers=4,
+        reload=reload,
+        reload_dirs=[project_root + '/api/src'],
+    )

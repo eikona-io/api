@@ -114,14 +114,23 @@ async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
     await client.insert(table=table, data=data)
 
 
+# async def insert_to_clickhouse_multi(client: AsyncClient, table: str, data: list):
+#     # Prepare the data for batch insert
+#     columns = list(data[0].keys())
+#     values = [list(item.values()) for item in data]
+
+#     # Perform batch insert
+#     result = await client.insert(table=table, data=values, column_names=columns)
+#     print("result", result)
+
+
 @async_lru_cache(maxsize=1000)
 async def get_cached_workflow_run(run_id: str, db: AsyncSession):
-    existing_run = await db.execute(
-        select(WorkflowRun).where(WorkflowRun.id == run_id)
-    )
+    existing_run = await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))
     workflow_run = existing_run.scalar_one_or_none()
     workflow_run = cast(WorkflowRun, workflow_run)
     return workflow_run
+
 
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
@@ -144,7 +153,7 @@ async def update_run(
         # print("body.run_id", body.run_id)
         workflow_run = await get_cached_workflow_run(body.run_id, db)
         # print("workflow_run", workflow_run)
-        
+
         log_data = [
             (
                 uuid4(),
@@ -168,24 +177,22 @@ async def update_run(
             raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
         # Prepare data for ClickHouse insert
-        log_data = [
-            (
+        log_data = []
+        for log_entry in body.logs:
+            data = (
                 uuid4(),
                 body.run_id,
                 workflow_run.workflow_id,
                 workflow_run.machine_id,
-                updated_at,
+                datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
                 "info",
-                json.dumps(body.logs),
+                log_entry["logs"],
             )
-        ]
-
-        # Add ClickHouse insert to background tasks
+            print("data", log_entry["logs"])
+            log_data.append(data)
+            
         background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-
-        background_tasks.add_task(
-            send_workflow_update, str(body.run_id), {"logs": body.logs}
-        )
+        
         return {"status": "success"}
 
     # Updating the progress

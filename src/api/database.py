@@ -22,27 +22,36 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 
 big_pool_mgr = httputil.get_pool_manager(maxsize=16, num_pools=12)
 
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
+
 
 def init_db():
     # You can add any initialization logic here if needed
     pass
 
+
 clickhouse_client = None
+
 
 async def get_clickhouse_client():
     global clickhouse_client
-    if clickhouse_client is None:
-        clickhouse_client = await clickhouse_connect.get_async_client(
-            host=os.getenv("CLICKHOUSE_HOST"),
-            user=os.getenv("CLICKHOUSE_USER"),
-            password=os.getenv("CLICKHOUSE_PASSWORD"),
-            secure=True,
-            # pool_mgr=big_pool_mgr,
-        )
-    return clickhouse_client
+    try:
+        if clickhouse_client is None:
+            clickhouse_client = await clickhouse_connect.get_async_client(
+                host=os.getenv("CLICKHOUSE_HOST"),
+                user=os.getenv("CLICKHOUSE_USER"),
+                password=os.getenv("CLICKHOUSE_PASSWORD"),
+                secure=True,
+                pool_mgr=big_pool_mgr,
+            )
+        return clickhouse_client
+    except Exception as e:
+        print(f"Error creating ClickHouse client: {e}")
+        raise
+
 
 @asynccontextmanager
 async def get_db_context():
@@ -55,6 +64,7 @@ async def get_db_context():
             raise
         finally:
             await session.close()
+
 
 # @asynccontextmanager
 # async def get_clickhouse_client_context():

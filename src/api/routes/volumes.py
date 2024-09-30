@@ -1,6 +1,6 @@
 from .types import VolFSStructure, Model
 from fastapi import HTTPException, APIRouter, Request
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Union
 import logging
 import os
 import httpx
@@ -164,7 +164,11 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
         existing_models = existing_models.scalars().all()
 
         # Create a set of existing model names for faster lookup
-        existing_model_names = {model.model_name for model in existing_models}
+        existing_model_names = {
+            model.folder_path + "/" + model.model_name for model in existing_models
+        }
+
+        print("existing_model_names", existing_model_names)
 
         # Filter out existing models from volume_structure
         def filter_existing_models(contents):
@@ -176,7 +180,11 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
                     if filtered_item.contents:
                         filtered_contents.append(filtered_item)
                 elif isinstance(item, VolFile):
-                    if item.path.split("/")[-1] not in existing_model_names:
+                    logger.info(f"existing_model_names {existing_model_names}")
+                    logger.info(
+                        f"item.path, {item.path}, {item.path not in existing_model_names}"
+                    )
+                    if item.path not in existing_model_names:
                         filtered_contents.append(item)
             return filtered_contents
 
@@ -258,7 +266,15 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     if not models:
         return structure
 
-    categorized_models: Dict[str, VolFolder] = {}
+    def create_or_get_folder(
+        path: str, parent: Union[VolFSStructure, VolFolder]
+    ) -> VolFolder:
+        for item in parent.contents:
+            if isinstance(item, VolFolder) and item.path == path:
+                return item
+        new_folder = VolFolder(path=path, type="folder", contents=[])
+        parent.contents.append(new_folder)
+        return new_folder
 
     for model in models:
         if not model.folder_path:
@@ -266,84 +282,62 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
         path_parts = [part for part in model.folder_path.split("/") if part]
         if not path_parts:
             continue
-        
-        # Ensure there's at least one part in path_parts
-        category = path_parts[0] if path_parts else "uncategorized"
 
-        if category not in categorized_models:
-            categorized_models[category] = VolFolder(
-                path=category, type="folder", contents=[]
-            )
-            structure.contents.append(categorized_models[category])
+        current_folder = structure
+        for part in path_parts:
+            current_folder = create_or_get_folder(part, current_folder)
 
-        current_folder = categorized_models[category]
-        for i, part in enumerate(path_parts):
-            new_path = "/".join(path_parts[: i + 1])
-            if i == len(path_parts) - 1:
-                # Add the file
-                current_folder.contents.append(
-                    VolFile(path=f"{new_path}/{model.model_name}", type="file")
-                )
-            else:
-                # Find or create the next folder
-                next_folder = next(
-                    (
-                        item
-                        for item in current_folder.contents
-                        if isinstance(item, VolFolder) and item.path == new_path
-                    ),
-                    None,
-                )
-                if not next_folder:
-                    next_folder = VolFolder(path=new_path, type="folder", contents=[])
-                    current_folder.contents.append(next_folder)
-                current_folder = next_folder
+        file_path = os.path.join(model.folder_path, model.model_name)
+        current_folder.contents.append(VolFile(path=file_path, type="file"))
 
     return structure
 
 
-async def get_public_volume_from_db(db: AsyncSession) -> VolFSStructure:
+async def get_public_volume_from_db(
+    db: AsyncSession,
+) -> Tuple[VolFSStructure, List[ModelDB]]:
     public_volumes = await get_public_models_from_db(db)
-    return convert_to_vol_fs_structure(public_volumes)
+    return convert_to_vol_fs_structure(public_volumes), public_volumes
 
 
 async def get_private_volume_from_db(
     request: Request, db: AsyncSession
-) -> VolFSStructure:
+) -> Tuple[VolFSStructure, List[ModelDB]]:
     private_volumes = await get_private_models_from_db(request, db)
-    return convert_to_vol_fs_structure(private_volumes)
+    return convert_to_vol_fs_structure(private_volumes), private_volumes
 
 
-@router.get("/volume/private-models", response_model=VolFSStructure)
+@router.get("/volume/private-models", response_model=Dict[str, Any])
 async def private_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
         if disable_cache:
-            data = await get_private_volume_list(request, db)
+            await get_private_volume_list(request, db)
+            data, models = await get_private_volume_from_db(request, db)
         else:
-            data = await get_private_volume_from_db(request, db)
+            data, models = await get_private_volume_from_db(request, db)
         if len(data.contents) <= 0:
-            return VolFSStructure(contents=[])
-        return data
+            return {"structure": VolFSStructure(contents=[]), "models": []}
+        return {"structure": data, "models": [model.to_dict() for model in models]}
     except Exception as e:
         logger.error(f"Error fetching private models: {str(e)}")
         logger.exception(e)  # This will log the full stack trace
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/volume/public-models", response_model=VolFSStructure)
+@router.get("/volume/public-models", response_model=Dict[str, Any])
 async def public_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
     try:
-        if disable_cache:
-            data = await get_public_volume_list()
-        else:
-            data = await get_public_volume_from_db(db)
+        # if disable_cache:
+        #     data = await get_public_volume_list()
+        # else:
+        data, models = await get_public_volume_from_db(db)
         if len(data.contents) <= 0:
-            return VolFSStructure(contents=[])
-        return data
+            return {"structure": VolFSStructure(contents=[]), "models": []}
+        return {"structure": data, "models": [model.to_dict() for model in models]}
     except Exception as e:
         logger.error(f"Error fetching public models: {str(e)}")
         logger.exception(e)  # This will log the full stack trace

@@ -176,18 +176,18 @@ def select(__ent0: _ColumnsClauseArgument[T], /, *entities: Any) -> OrgAwareSele
 
 def ensure_run_timeout(run):
     # Apply timeout logic
-    timeout_minutes = 15
-    timeout_delta = timedelta(minutes=timeout_minutes)
+    timeout_hours = 24
+    timeout_delta = timedelta(hours=timeout_hours)
     now = datetime.now(timezone.utc)
 
-    # Not started for 15 mins
+    # Not started for 24 hours
     if (
         run.status == "not-started"
         and now - run.created_at.replace(tzinfo=timezone.utc) > timeout_delta
     ):
         run.status = "timeout"
 
-    # Queued for 15 mins
+    # Queued for 24 hours
     elif (
         run.status == "queued"
         and run.queued_at
@@ -195,7 +195,7 @@ def ensure_run_timeout(run):
     ):
         run.status = "timeout"
 
-    # Started for 15 mins
+    # Started for 24 hours
     elif (
         run.status == "started"
         and run.started_at
@@ -203,7 +203,7 @@ def ensure_run_timeout(run):
     ):
         run.status = "timeout"
 
-    # Running and not updated in the last 15 mins
+    # Running and not updated in the last 24 hours
     elif run.status not in ["success", "failed", "timeout", "cancelled"]:
         updated_at = (
             run.updated_at.replace(tzinfo=timezone.utc)
