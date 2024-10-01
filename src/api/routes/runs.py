@@ -92,8 +92,6 @@ async def get_runs(
         conditions = [
             ("created_at >= :start_time", start_time),
             ("created_at <= :end_time", end_time),
-            ("org_id = :org_id", org_id),
-            ("user_id = :user_id", user_id),
             ("workflow_id = ANY(:workflow_id)", workflow_id),
             ("status = ANY(:status)", status),
             ("gpu = ANY(:gpu)", gpu),
@@ -101,6 +99,15 @@ async def get_runs(
             ("origin = ANY(:origin)", origin),
             ("workflow_version_id = ANY(:workflow_version_id)", workflow_version_id),
         ]
+
+        # Special handling for org_id and user_id
+        if org_id:
+            conditions.append(("org_id = :org_id", org_id))
+        else:
+            conditions.extend([
+                ("org_id IS NULL", True),
+                ("user_id = :user_id", user_id)
+            ])
 
         where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
 
@@ -125,7 +132,7 @@ async def get_runs(
         query = text(f"""
     WITH filtered_workflow_runs AS (
       SELECT
-        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id,
+        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id, user_id,
         CASE
           WHEN started_at IS NOT NULL AND created_at IS NOT NULL
           THEN EXTRACT(EPOCH FROM (started_at - created_at))
@@ -179,7 +186,8 @@ async def get_runs(
       "comfyui_deploy"."workflow_run_outputs".data AS outputs,
       fwr.queued_duration,
       fwr.run_duration,
-      fwr.total_upload_duration
+      fwr.total_upload_duration,
+      fwr.user_id
     FROM 
       workflow_runs_with_upload_duration fwr
     LEFT JOIN 
@@ -235,6 +243,7 @@ async def get_runs(
                 "queued_duration": run.queued_duration,
                 "run_duration": run.run_duration,
                 "total_upload_duration": run.total_upload_duration,
+                "user_id": run.user_id,
             }
             for run in runs
         ]
@@ -309,8 +318,6 @@ async def get_runs_time_line(
         conditions = [
             ("created_at >= :start_time", start_time),
             ("created_at <= :end_time", end_time),
-            ("org_id = :org_id", org_id),
-            ("user_id = :user_id", user_id),
             ("workflow_id = ANY(:workflow_id)", workflow_id),
             ("status = ANY(:status)", status),
             ("gpu = ANY(:gpu)", gpu),
@@ -318,6 +325,15 @@ async def get_runs_time_line(
             ("origin = ANY(:origin)", origin),
             ("workflow_version_id = ANY(:workflow_version_id)", workflow_version_id),
         ]
+
+        # Special handling for org_id and user_id
+        if org_id:
+            conditions.append(("org_id = :org_id", org_id))
+        else:
+            conditions.extend([
+                ("org_id IS NULL", True),
+                ("user_id = :user_id", user_id)
+            ])
 
         where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
 
