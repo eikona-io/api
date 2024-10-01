@@ -223,6 +223,11 @@ async def create_run(
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
         )
+        
+        if is_native_run:
+            new_run.queued_at = dt.datetime.now(dt.UTC)
+            new_run.started_at = dt.datetime.now(dt.UTC)
+            
         db.add(new_run)
         await db.commit()
         await db.refresh(new_run)

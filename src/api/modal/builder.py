@@ -165,19 +165,24 @@ class Item(BaseModel):
 
 class KeepWarmBody(BaseModel):
     warm_pool_size: int = 1
-
+    gpu: Optional[GPUType] = Field(default=None)
 
 # Keep warm for workspace app
 @router.post("/modal/{app_name}/keep-warm")
 def set_modal_keep_warm(app_name: str, body: KeepWarmBody):
     try:
-        a = modal.Cls.lookup(app_name, "ComfyDeployRunner")
-        print("Keep warm start", a)
-        a().keep_warm(body.warm_pool_size)
+        model = modal.Cls.lookup(app_name, "ComfyDeployRunner")
+        print("Keep warm start", body)
+        if body.gpu:
+            gpu = body.gpu.value if body.gpu != GPUType.CPU else None
+            print("Keep warm start", gpu)
+            model.with_options(gpu=gpu)(gpu=body.gpu.value).keep_warm(body.warm_pool_size)
+        else:
+            model().keep_warm(body.warm_pool_size)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error keep machine warm {str(e)}")
 
-    print("Keep warm succuss", a)
+    print("Keep warm succuss", model)
     return {"status": "success"}
 
 
