@@ -219,7 +219,7 @@ async def _create_run(
         workflow_version_id = data.workflow_version_id
         machine_id = data.machine_id
     elif isinstance(data, WorkflowRunRequest):
-        workflow_api_raw = data.workflow_api
+        workflow_api_raw = data.workflow_api_json
         workflow_id = data.workflow_id
         machine_id = data.machine_id
         workflow = data.workflow
