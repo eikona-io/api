@@ -51,7 +51,7 @@ current_directory = os.path.dirname(os.path.realpath(__file__))
 
 deploy_test = config["deploy_test"] == "True"
 
-print("Builder Version: 3")
+print("Builder Version: 4")
 print("Builder Deps: ", os.getenv("MODAL_IMAGE_BUILDER_VERSION"))
 print("Modal Version: ", modal.__version__)
 
