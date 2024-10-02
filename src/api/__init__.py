@@ -69,6 +69,7 @@ app = FastAPI(
         {"url": "http://localhost:3011/api", "description": "Local development server"},
     ]
 )
+
 # add_pagination(app)
 logfire.instrument_fastapi(app)
 logfire.instrument_sqlalchemy(
@@ -86,8 +87,9 @@ def custom_openapi():
         title="ComfyDeploy API",
         version="1.0.0",
         description="API for ComfyDeploy",
-        routes=api_router.routes,
+        routes=public_api_router.routes,
         servers=app.servers,
+        webhooks=app.webhooks.routes,
     )
 
     openapi_schema["components"]["securitySchemes"] = {
@@ -103,6 +105,28 @@ def custom_openapi():
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
+def custom_openapi_internal():
+    openapi_schema = get_openapi(
+        title="ComfyDeploy API (Internal)",
+        version="1.0.0",
+        description="Internal API for ComfyDeploy",
+        routes=api_router.routes,
+        webhooks=app.webhooks.routes,
+        servers=app.servers,
+    )
+
+    openapi_schema["components"]["securitySchemes"] = {
+        "Bearer": {
+            "type": "http",
+            "scheme": "bearer",
+        }
+    }
+
+    # Apply Bearer Auth security globally
+    openapi_schema["security"] = [{"Bearer": []}]
+
+    return openapi_schema
+
 
 app.openapi = custom_openapi
 
@@ -110,6 +134,9 @@ app.openapi = custom_openapi
 
 
 api_router = APIRouter()  # Remove the prefix here
+public_api_router = APIRouter()  # Remove the prefix here
+
+# app.webhooks.include_router(run.webhook_router)
 
 # Include routers
 api_router.include_router(run.router)
@@ -125,6 +152,12 @@ api_router.include_router(deployments.router)
 api_router.include_router(session.router)
 api_router.include_router(runs.router)
 
+# This is for the docs generation
+public_api_router.include_router(run.router)
+public_api_router.include_router(session.router)
+public_api_router.include_router(deployments.router)
+public_api_router.include_router(run.webhook_router)
+
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 
 
@@ -138,6 +171,22 @@ async def scalar_html():
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
     )
+    
+@app.get("/internal/openapi.json", include_in_schema=False)
+async def openapi_json_internal():
+    return JSONResponse(status_code=200, content=custom_openapi_internal())
+    
+@app.get("/internal", include_in_schema=False)
+async def scalar_html_internal():
+    return get_scalar_api_reference(
+        openapi_url="/internal/openapi.json",
+        title=app.title,
+        scalar_proxy_url="https://proxy.scalar.com",
+        servers=[
+            {"url": server["url"]} for server in app.servers
+        ],  # Remove "/api" here
+    )
+
 
 
 # Get JWT secret from environment variable

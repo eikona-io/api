@@ -1,6 +1,7 @@
 import json
 import os
 from urllib.parse import urlparse, quote
+from api.sqlmodels import WorkflowRunStatus
 from fastapi import (
     APIRouter,
     Body,
@@ -80,17 +81,6 @@ async def send_webhook(workflow_run, updatedAt, run_id):
     except Exception as error:
         return {"status": "error", "message": str(error)}
 
-
-class WorkflowRunStatus(str, Enum):
-    NOT_STARTED = "not-started"
-    QUEUED = "queued"
-    STARTED = "started"
-    RUNNING = "running"
-    UPLOADING = "uploading"
-    SUCCESS = "success"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
 
 
 class UpdateRunBody(BaseModel):

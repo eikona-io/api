@@ -3,18 +3,21 @@ import datetime
 import os
 from urllib.parse import urljoin
 import uuid
+
+from api.sqlmodels import WorkflowRunWebhookBody, WorkflowRunWebhookResponse
 from .types import (
     CreateRunBatchResponse,
     CreateRunRequest,
     CreateRunResponse,
     DeploymentRunRequest,
+    WorkflowRequestShare,
     WorkflowRunModel,
     WorkflowRunNativeOutputModel,
     WorkflowRunOutputModel,
     WorkflowRunRequest,
     WorkflowRunVersionRequest,
 )
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Body
 from fastapi.responses import StreamingResponse
 import modal
 from sqlalchemy import func
@@ -58,6 +61,20 @@ import base64
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Run"])
+webhook_router = APIRouter(tags=["Callbacks"])
+
+
+@webhook_router.post(
+    "{$request.body#/webhook}",
+    response_model=WorkflowRunWebhookResponse,
+    summary="Receive run status updates via webhook",
+    description="This endpoint is called by the workflow runner to update the status of a run.",
+)
+async def run_update_webhook(
+    body: WorkflowRunWebhookBody = Body(description="The updated run information"),
+):
+    # Implement the webhook update logic here
+    pass
 
 
 @router.get("/run/{run_id}", response_model=WorkflowRunModel)
@@ -101,8 +118,70 @@ def get_comfy_deploy_runner(machine_id: str, gpu: str):
         WorkflowRunOutputModel,
         WorkflowRunNativeOutputModel,
     ],
+    summary="Run a workflow",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    callbacks=webhook_router.routes,
+    # include_in_schema=False,
 )
-async def create_run(
+async def create_run_all(
+    request: Request,
+    data: CreateRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+# @router.post(
+#     "/run/workflow",
+#     response_model=Union[
+#         CreateRunResponse,
+#         CreateRunBatchResponse,
+#         WorkflowRunOutputModel,
+#         WorkflowRunNativeOutputModel,
+#     ],
+#     summary="Run comfyui workflow",
+#     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+#     callbacks=webhook_router.routes,
+# )
+# async def create_run_workflow(
+#     request: Request,
+#     data: WorkflowRunRequest,
+#     background_tasks: BackgroundTasks,
+#     db: AsyncSession = Depends(get_db),
+#     client: AsyncClient = Depends(get_clickhouse_client),
+# ):
+#     return await _create_run(request, data, background_tasks, db, client)
+
+
+# @router.post(
+#     "/run",
+#     response_model=Union[
+#         CreateRunResponse,
+#         CreateRunBatchResponse,
+#         WorkflowRunOutputModel,
+#         WorkflowRunNativeOutputModel,
+#     ],
+#     summary="Run workflow",
+#     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+#     callbacks=webhook_router.routes,
+#     openapi_extra={
+#         "x-speakeasy-name-override": "create",
+#     },
+# )
+# async def create_run(
+#     request: Request,
+#     data: WorkflowRequestShare,
+#     background_tasks: BackgroundTasks,
+#     db: AsyncSession = Depends(get_db),
+#     client: AsyncClient = Depends(get_clickhouse_client),
+# ):
+#     data = DeploymentRunRequest(deployment_id=deployment_id, **data.model_dump())
+#     return await _create_run(request, data, background_tasks, db, client)
+
+
+async def _create_run(
     request: Request,
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
@@ -140,7 +219,7 @@ async def create_run(
         workflow_version_id = data.workflow_version_id
         machine_id = data.machine_id
     elif isinstance(data, WorkflowRunRequest):
-        workflow_api_raw = data.workflow_api_json
+        workflow_api_raw = data.workflow_api
         workflow_id = data.workflow_id
         machine_id = data.machine_id
         workflow = data.workflow
@@ -223,11 +302,11 @@ async def create_run(
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
         )
-        
+
         if is_native_run:
             new_run.queued_at = dt.datetime.now(dt.UTC)
             new_run.started_at = dt.datetime.now(dt.UTC)
-            
+
         db.add(new_run)
         await db.commit()
         await db.refresh(new_run)

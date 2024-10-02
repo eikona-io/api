@@ -9,6 +9,8 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from api.sqlmodels import WorkflowRunStatus
+
 from .utils import select
 
 # from sqlalchemy import select
@@ -230,15 +232,30 @@ class MachineModel(BaseModel):
 
 
 class WorkflowRequestShare(BaseModel):
-    execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = "async"
-    inputs: Optional[Dict[str, Any]] = Field(default_factory=dict)
-
-    webhook: Optional[str] = None
-    webhook_intermediate_status: Optional[bool] = False
-
-    origin: Optional[str] = "api"
-    batch_number: Optional[int] = None
-
+    execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = Field(
+        default="async",
+        example="async",
+    )
+    inputs: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        example={"prompt": "A beautiful landscape", "seed": 42},
+    )
+    webhook: Optional[str] = Field(
+        default=None,
+        example="https://example.com/webhook",
+    )
+    webhook_intermediate_status: Optional[bool] = Field(
+        default=False,
+        example=True,
+    )
+    origin: Optional[str] = Field(
+        default="api",
+        example="manual",
+    )
+    batch_number: Optional[int] = Field(
+        default=None,
+        example=5,
+    )
     batch_input_params: Optional[Dict[str, List[Any]]] = Field(
         default=None,
         example={
@@ -247,15 +264,50 @@ class WorkflowRequestShare(BaseModel):
         },
         description="Optional dictionary of batch input parameters. Keys are input names, values are lists of inputs.",
     )
-    
-    is_native_run: Optional[bool] = False
+    is_native_run: Optional[bool] = Field(
+        default=False,
+        example=True,
+    )
+
+    # model_config = {
+    #     "json_schema_extra": {
+    #         "examples": [
+    #             {
+    #                 "inputs": {
+    #                     "prompt": "A futuristic cityscape",
+    #                     "seed": 123456,
+    #                     "num_inference_steps": 30,
+    #                 },
+    #                 "webhook": "https://myapp.com/webhook",
+    #             }
+    #         ]
+    #     }
+    # }
 
 
 class WorkflowRunRequest(WorkflowRequestShare):
     workflow_id: UUID
-    workflow_api_json: Dict[str, Any]
+    workflow_api: Dict[str, Any]
     workflow: Optional[Dict[str, Any]] = None
     machine_id: Optional[UUID] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "workflow_id": "12345678-1234-5678-1234-567812345678",
+                    "workflow_api": {
+                        },
+                    "inputs": {
+                        "prompt": "A futuristic cityscape",
+                        "seed": 123456,
+                        "num_inference_steps": 30,
+                    },
+                    "webhook": "https://myapp.com/webhook",
+                }
+            ]
+        }
+    }
 
 
 class WorkflowRunVersionRequest(WorkflowRequestShare):
@@ -300,7 +352,8 @@ class WorkflowRunOutputModel(BaseModel):
 
     class Config:
         from_attributes = True
-        
+
+
 class WorkflowRunNativeOutputModel(BaseModel):
     prompt_id: str
     workflow_api_raw: Dict[str, Any]
@@ -392,6 +445,7 @@ class DeploymentModel(BaseModel):
 
 
 class MachineGPU(str, Enum):
+    CPU = "cpu"
     T4 = "T4"
     L4 = "L4"
     A10G = "A10G"

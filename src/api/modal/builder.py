@@ -169,7 +169,7 @@ class KeepWarmBody(BaseModel):
 
 # Keep warm for workspace app
 @router.post("/modal/{app_name}/keep-warm")
-def set_modal_keep_warm(app_name: str, body: KeepWarmBody):
+def set_machine_always_on(app_name: str, body: KeepWarmBody):
     try:
         model = modal.Cls.lookup(app_name, "ComfyDeployRunner")
         print("Keep warm start", body)
@@ -201,7 +201,7 @@ class CancelFunctionBody(BaseModel):
 
 
 @router.post("/modal/cancel-function")
-def modal_cancel_function(body: CancelFunctionBody):
+def cancel_run(body: CancelFunctionBody):
     try:
         a = modal.functions.FunctionCall.from_id(body.function_id)
         # print(a)
