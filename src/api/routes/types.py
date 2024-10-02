@@ -23,7 +23,7 @@ from api.models import (
     Workflow,
 )
 from typing import Literal, Optional, Union, cast
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 from typing import Dict, Any
 from uuid import UUID
 import logging
@@ -232,7 +232,9 @@ class MachineModel(BaseModel):
 
 
 class WorkflowRequestShare(BaseModel):
-    execution_mode: Optional[Literal["async", "sync", "sync_first_result"]] = Field(
+    execution_mode: Optional[
+        Literal["async", "sync", "sync_first_result", "stream"]
+    ] = Field(
         default="async",
         example="async",
     )
@@ -296,8 +298,7 @@ class WorkflowRunRequest(WorkflowRequestShare):
             "examples": [
                 {
                     "workflow_id": "12345678-1234-5678-1234-567812345678",
-                    "workflow_api": {
-                        },
+                    "workflow_api": {},
                     "inputs": {
                         "prompt": "A futuristic cityscape",
                         "seed": 123456,
@@ -317,8 +318,8 @@ class WorkflowRunVersionRequest(WorkflowRequestShare):
 
 class DeploymentRunRequest(WorkflowRequestShare):
     deployment_id: UUID
-    
-    
+
+
 CreateRunRequest = Union[
     WorkflowRunVersionRequest, WorkflowRunRequest, DeploymentRunRequest
 ]
@@ -341,10 +342,19 @@ class Input(BaseModel):
     file_upload_endpoint: str
 
 
+class MediaItem(BaseModel):
+    url: str
+    type: str
+    filename: str
+    is_public: Optional[bool]
+    subfolder: Optional[str]
+    upload_duration: Optional[float]
+
+
 class WorkflowRunOutputModel(BaseModel):
     id: UUID
     run_id: UUID
-    data: Dict[str, Any]
+    data: Dict[str, List[MediaItem]]
     created_at: datetime
     updated_at: datetime
     type: Optional[str] = None
@@ -353,6 +363,29 @@ class WorkflowRunOutputModel(BaseModel):
     class Config:
         from_attributes = True
 
+class LogDataContent(BaseModel):
+    logs: str
+    timestamp: datetime = Field(..., description="Timestamp in UTC")
+
+class LogUpdateEvent(BaseModel):
+    event: Literal["log_update"] = "log_update"
+    data: LogDataContent
+    # data: str
+
+class EventUpdate(BaseModel):
+    event: Optional[str] = None
+    data: Optional[Any] = None
+    
+class EventUpdateEvent(BaseModel):
+    event: Literal["event_update"] = "event_update"
+    # data: str
+    data: EventUpdate
+    
+# RunStream = Union[LogUpdateEvent, EventUpdateEvent]
+
+# Add this discriminator class
+class RunStream(RootModel):
+    root: Union[LogUpdateEvent, EventUpdateEvent] = Field(..., discriminator='event')
 
 class WorkflowRunNativeOutputModel(BaseModel):
     prompt_id: str
@@ -432,7 +465,7 @@ class DeploymentModel(BaseModel):
     workflow_version_id: UUID
     workflow_id: UUID
     machine_id: UUID
-    share_slug: str
+    share_slug: Optional[str]
     description: Optional[str]
     share_options: Optional[Dict[str, Any]]
     showcase_media: Optional[Dict[str, Any]]

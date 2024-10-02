@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+from pprint import pprint
 from urllib.parse import urljoin
 import uuid
 
@@ -10,6 +11,7 @@ from .types import (
     CreateRunRequest,
     CreateRunResponse,
     DeploymentRunRequest,
+    RunStream,
     WorkflowRequestShare,
     WorkflowRunModel,
     WorkflowRunNativeOutputModel,
@@ -29,6 +31,7 @@ from .utils import (
     ensure_run_timeout,
     generate_temporary_token,
     get_user_settings,
+    post_process_output_data,
     post_process_outputs,
     select,
 )
@@ -121,7 +124,10 @@ def get_comfy_deploy_runner(machine_id: str, gpu: str):
     summary="Run a workflow",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
     callbacks=webhook_router.routes,
-    # include_in_schema=False,
+    include_in_schema=False,
+    # openapi_extra={
+    #     "x-speakeasy-name-override": "create",
+    # },
 )
 async def create_run_all(
     request: Request,
@@ -130,6 +136,84 @@ async def create_run_all(
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/queue",
+    response_model=CreateRunResponse,
+    summary="Queue a workflow",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    callbacks=webhook_router.routes,
+    # include_in_schema=False,
+    openapi_extra={
+        "x-speakeasy-name-override": "queue",
+    },
+)
+async def create_run_queue(
+    request: Request,
+    data: CreateRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/sync",
+    response_model=List[WorkflowRunOutputModel],
+    summary="Run a workflow in sync",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    callbacks=webhook_router.routes,
+    # include_in_schema=False,
+    openapi_extra={
+        "x-speakeasy-name-override": "sync",
+    },
+)
+async def create_run_sync(
+    request: Request,
+    data: CreateRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    data.execution_mode = "sync"
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/stream",
+    response_model=RunStream,
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Stream of workflow run events",
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "$ref": "#/components/schemas/RunStream",
+                    },
+                },
+            },
+        }
+    },
+    summary="Run a workflow in stream",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    callbacks=webhook_router.routes,
+    # include_in_schema=False,
+    openapi_extra={
+        "x-speakeasy-name-override": "stream",
+    },
+)
+async def create_run_stream(
+    request: Request,
+    data: CreateRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+) -> StreamingResponse:
+    data.execution_mode = "stream"
     return await _create_run(request, data, background_tasks, db, client)
 
 
@@ -457,41 +541,125 @@ async def _create_run(
                 ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
                 result = await ComfyDeployRunner.run.remote.aio(params)
 
-            first_output_query = (
-                select(WorkflowRunOutput)
-                .where(WorkflowRunOutput.run_id == new_run.id)
-                .order_by(WorkflowRunOutput.created_at.desc())
-                .limit(1)
-            )
-
-            result = await db.execute(first_output_query)
-            output = result.scalar_one_or_none()
-
             if data.execution_mode == "sync_first_result":
-                if output and output.data and isinstance(output.data, dict):
-                    images = output.data.get("images", [])
-                    for image in images:
-                        if isinstance(image, dict):
-                            if "url" in image:
-                                # Fetch the image/video data
-                                async with httpx.AsyncClient() as _client:
-                                    response = await _client.get(image["url"])
-                                    if response.status_code == 200:
-                                        content_type = response.headers.get(
-                                            "content-type"
-                                        )
-                                        if content_type:
-                                            return Response(
-                                                content=response.content,
-                                                media_type=content_type,
+                first_output_query = (
+                    select(WorkflowRunOutput)
+                    .where(WorkflowRunOutput.run_id == new_run.id)
+                    .order_by(WorkflowRunOutput.created_at.desc())
+                    .limit(1)
+                )
+
+                result = await db.execute(first_output_query)
+                output = result.scalar_one_or_none()
+
+                user_settings = await get_user_settings(request, db)
+
+                post_process_outputs([output], user_settings)
+
+                if data.execution_mode == "sync_first_result":
+                    if output and output.data and isinstance(output.data, dict):
+                        images = output.data.get("images", [])
+                        for image in images:
+                            if isinstance(image, dict):
+                                if "url" in image:
+                                    # Fetch the image/video data
+                                    async with httpx.AsyncClient() as _client:
+                                        response = await _client.get(image["url"])
+                                        if response.status_code == 200:
+                                            content_type = response.headers.get(
+                                                "content-type"
                                             )
+                                            if content_type:
+                                                return Response(
+                                                    content=response.content,
+                                                    media_type=content_type,
+                                                )
+                    else:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="No output found is matching, please check the workflow or disable output_first_result",
+                        )
                 else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No output found is matching, please check the workflow or disable output_first_result",
-                    )
+                    return output
             else:
-                return output
+                output_query = (
+                    select(WorkflowRunOutput)
+                    .where(WorkflowRunOutput.run_id == new_run.id)
+                    .order_by(WorkflowRunOutput.created_at.desc())
+                )
+
+                result = await db.execute(output_query)
+                outputs = result.scalars().all()
+
+                user_settings = await get_user_settings(request, db)
+                post_process_outputs(outputs, user_settings)
+
+                return [output.to_dict() for output in outputs]
+        elif data.execution_mode == "stream":
+            ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
+            user_settings = await get_user_settings(request, db)
+
+            async def wrapped_generator():
+                yield f"event: event_update\ndata: {json.dumps({'event': 'queuing'})}\n\n"
+                try:
+                    with logfire.span("stream-run"):
+                        async for event in ComfyDeployRunner.streaming.remote_gen.aio(
+                            input=params
+                        ):
+                            if isinstance(event, (str, bytes)):
+                                # Convert bytes to string if necessary
+                                event_str = event.decode('utf-8') if isinstance(event, bytes) else event
+                                lines = event_str.strip().split("\n")
+                                event_type = None
+                                event_data = None
+                                for line in lines:
+                                    if line.startswith("event:"):
+                                        event_type = line.split(":", 1)[1].strip()
+                                    elif line.startswith("data:"):
+                                        event_data = line.split(":", 1)[1].strip()
+                                
+                                # logger.info(event_type)
+                                # logger.info(lines)
+
+                                if event_type == "event_update" and event_data:
+                                    try:
+                                        data = json.loads(event_data)
+                                        if data.get("event") == "function_call_id":
+                                            new_run.modal_function_call_id = data.get(
+                                                "data"
+                                            )
+                                            await db.commit()
+                                        if data.get("event") == "executed":
+                                            logger.info(data.get("data", {}).get("output"))
+                                            post_process_output_data(data.get("data", {}).get("output"), user_settings)
+                                            new_event_data = {
+                                                "event": "executed",
+                                                "data": data.get("data", {})
+                                            }
+                                            new_event = f"event: event_update\ndata: {json.dumps(new_event_data)}\n\n"
+                                            yield new_event
+                                            continue
+                                            
+                                    except json.JSONDecodeError:
+                                        pass  # Invalid JSON, ignore
+                                    
+                            # logger.info(event)
+                            yield event
+                            
+                            
+                        
+                except Exception as e:
+                    print(e)
+
+            return StreamingResponse(
+                wrapped_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
         else:
             raise HTTPException(status_code=400, detail="Invalid execution_mode")
 

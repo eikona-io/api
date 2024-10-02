@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Deployments"])
 
 
-@router.get("/deployments", response_model=List[DeploymentModel])
+@router.get(
+    "/deployments",
+    response_model=List[DeploymentModel],
+    openapi_extra={
+        "x-speakeasy-name-override": "list",
+    },
+)
 async def get_deployments(
     request: Request,
     environment: DeploymentEnvironment,
@@ -31,7 +37,6 @@ async def get_deployments(
 
     result = await db.execute(query)
     deployments = result.scalars().all()
-
 
     deployments_data = [deployment.to_dict() for deployment in deployments]
 

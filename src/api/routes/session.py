@@ -43,7 +43,12 @@ def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu:
 
 
 # Return the session tunnel url
-@router.get("/session/{session_id}")
+@router.get(
+    "/session/{session_id}",
+    openapi_extra={
+        "x-speakeasy-name-override": "get",
+    },
+)
 async def get_session(
     request: Request, session_id: str, db: AsyncSession = Depends(get_db)
 ):
@@ -80,7 +85,12 @@ async def get_session(
 
 
 # Return the sessions for a machine
-@router.get("/machine/{machine_id}/sessions")
+@router.get(
+    "/machine/{machine_id}/sessions",
+    openapi_extra={
+        "x-speakeasy-name-override": "list",
+    },
+)
 async def get_machine_sessions(
     request: Request, machine_id: str, db: AsyncSession = Depends(get_db)
 ):
@@ -129,12 +139,12 @@ async def create_session_background_task(
 
             if gpuEvent is None:
                 await asyncio.sleep(1)
-                
+
         print("async_creation", status_queue)
         if status_queue is not None:
             await status_queue.put(gpuEvent.modal_function_id)
         print("async_creation", gpuEvent)
-    
+
         async with get_db_context() as db:
             result = await db.execute(
                 update(GPUEvent)
@@ -166,6 +176,7 @@ class CreateSessionBody(BaseModel):
         False, description="Whether to create the session asynchronously"
     )
 
+
 async def ensure_session_creation_complete(task: asyncio.Task):
     try:
         await task
@@ -174,8 +185,14 @@ async def ensure_session_creation_complete(task: asyncio.Task):
         logger.error(f"Session creation failed: {str(e)}")
         # You might want to update the session status in the database here
 
+
 # Create a new session for a machine, return the session id and url
-@router.post("/machine/{machine_id}/session")
+@router.post(
+    "/machine/{machine_id}/session",
+    openapi_extra={
+        "x-speakeasy-name-override": "create",
+    },
+)
 async def create_session(
     request: Request,
     body: CreateSessionBody,
@@ -204,7 +221,7 @@ async def create_session(
             status_code=400,
             detail="Machine is not a Comfy Deploy Serverless machine",
         )
-        
+
     if int(machine.machine_builder_version) < 4:
         raise HTTPException(
             status_code=400,
@@ -216,7 +233,7 @@ async def create_session(
     if body.async_creation:
         print("async_creation")
         q = asyncio.Queue()
-        
+
         task = asyncio.create_task(
             create_session_background_task(
                 machine_id,
@@ -224,15 +241,15 @@ async def create_session(
                 request,
                 body.timeout or 15,
                 body.gpu if body.gpu is not None else machine.gpu,
-                q
+                q,
             )
         )
-        
+
         background_tasks.add_task(
             ensure_session_creation_complete,
             task,
         )
-        
+
         try:
             modal_function_id = await asyncio.wait_for(q.get(), timeout=10.0)
             print("async_creation", "modal_function_id", modal_function_id)
@@ -255,7 +272,12 @@ async def create_session(
 
 
 # Delete a session by id
-@router.delete("/session/{session_id}")
+@router.delete(
+    "/session/{session_id}",
+    openapi_extra={
+        "x-speakeasy-name-override": "cancel",
+    },
+)
 async def delete_session(
     request: Request, session_id: str, db: AsyncSession = Depends(get_db)
 ):
