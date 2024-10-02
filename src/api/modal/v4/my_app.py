@@ -66,9 +66,8 @@ else:
     machine_name_for_label = config["name"]
 
 compile_with_gpu = config["install_custom_node_with_gpu"] == "True"
-final_gpu_param = str(config["gpu"]) if config["gpu"] != "CPU" else None
+final_gpu_param = config["gpu"] if config["gpu"] != "CPU" else None
 gpu_param = final_gpu_param if compile_with_gpu else None
-
 deps = config["deps"]
 docker_commands = config["docker_commands"]
 
@@ -100,11 +99,9 @@ if base_docker_image is not None and base_docker_image != "":
 #     .pip_install("boto3", "aioboto3")
 # )
 
-print("final_gpu_param: ", final_gpu_param)
-print("docker_commands: ", docker_commands)
-
 # Install all custom nodes
 if docker_commands is not None:
+    print("docker_commands: ", docker_commands)
     for commands in docker_commands:
         dockerfile_image = dockerfile_image.dockerfile_commands(
             commands,
@@ -541,7 +538,6 @@ class Input(BaseModel):
     workflow_api_raw: dict
     status_endpoint: str
     file_upload_endpoint: str
-    workflow: Optional[dict] = None
 
 
 async def queue_workflow_comfy_deploy(data: Input):
@@ -638,7 +634,6 @@ async def sync_report_gpu_event(
 
 
 class GPUType(str, Enum):
-    CPU = "CPU"
     T4 = "T4"
     A10G = "A10G"
     A100 = "A100"
@@ -1111,7 +1106,8 @@ def comfyui_api():
 
 @app.cls(
     image=target_image,
-    gpu=final_gpu_param,
+    # will be overridden by the run function
+    gpu=None,
     volumes=volumes,
     timeout=(config["run_timeout"] + 20),
     container_idle_timeout=config["idle_timeout"],
@@ -1174,7 +1170,7 @@ class ComfyDeployRunner:
         org_id: Optional[str] = None,
         gpu: Optional[str] = None,
         timeout: Optional[int] = None,
-        session_id: Optional[str] = False,
+        session_id: Optional[str] = None,
         workspace_tunnel: Optional[bool] = False,
     ) -> None:
         if volume_name is None:
@@ -1619,7 +1615,7 @@ class ComfyDeployRunner:
             print(f"Directory {directory_path} does not exist.")
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO) + " --disable-metadata",
+            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU") + " --disable-metadata",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
@@ -1875,112 +1871,3 @@ class ComfyDeployRunner:
 
 HOST = "127.0.0.1"
 PORT = "8188"
-
-
-def spawn_comfyui_in_background(cpu_only: bool = False):
-    import socket
-    import subprocess
-
-    commands = [
-        "python",
-        "main.py",
-        "--listen",
-        "0.0.0.0",  # need to allow local network connections for the tunnel to work
-        "--dont-print-server",
-        "--enable-cors-header",
-        "--port",
-        PORT,
-    ]
-    if cpu_only:
-        commands.append("--cpu")
-    process = subprocess.Popen(
-        commands,
-        cwd="/comfyui",
-    )
-
-    # Poll until webserver accepts connections before running inputs.
-    while True:
-        try:
-            socket.create_connection((HOST, int(PORT)), timeout=1).close()
-            print("ComfyUI webserver ready!")
-            break
-        except (socket.timeout, ConnectionRefusedError):
-            # Check if launcher webserving process has exited.
-            # If so, a connection can never be made.
-            retcode = process.poll()
-            if retcode is not None:
-                raise RuntimeError(
-                    f"comfyui main.py exited unexpectedly with code {retcode}"
-                )
-
-    return process
-
-
-class Body(BaseModel):
-    comfy_deploy_url: str
-
-
-CPU_TIMEOUT_SECONDS = 60 * 15  # 15 minutes
-HRS24_SECONDS = 60 * 60 * 24
-
-
-@app.cls(
-    image=target_image,
-    gpu=final_gpu_param,
-    volumes=volumes,
-    allow_concurrent_inputs=100,
-    concurrency_limit=1,
-    # keep_warm=0,
-    timeout=1800,
-    # _allow_background_volume_commits=True,
-    secrets=modal_secrets,
-)
-class Workspace:
-    @modal.web_server(
-        8188, startup_timeout=120, label=machine_name_for_label + "-workspace"
-    )
-    def web(self):
-        cmd = comfyui_cmd()
-        #  + " --front-end-version Comfy-Org/ComfyUI_frontend@latest"
-        subprocess.Popen(cmd, shell=True, cwd="/comfyui")
-
-    @enter()
-    async def setup(self):
-        self.gpu_event_id = await sync_report_gpu_event(None)
-
-    @exit()
-    async def cleanup(self):
-        await sync_report_gpu_event(self.gpu_event_id)
-
-
-# Do not account for billing for cpu only
-@app.cls(
-    image=target_image,
-    gpu=None,
-    volumes=volumes,
-    allow_concurrent_inputs=100,
-    concurrency_limit=1,
-    # keep_warm=0,
-    timeout=1800,
-    container_idle_timeout=1200,
-    # _allow_background_volume_commits=True,
-    secrets=modal_secrets,
-)
-class WorkspaceCPU:
-    @modal.web_server(
-        8188, startup_timeout=120, label=machine_name_for_label + "-ws-cpu"
-    )
-    def web(self):
-        cmd = comfyui_cmd(True)
-        subprocess.Popen(cmd, shell=True, cwd="/comfyui")
-
-
-@app.function(
-    image=image,
-    gpu=None,
-)
-@web_endpoint(
-    method="GET", wait_for_response=True, label=machine_name_for_label + "-app-id"
-)
-def get_app_id():
-    return {"app_id": app.app_id}

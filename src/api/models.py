@@ -168,7 +168,7 @@ class WorkflowRun(SerializableMixin, Base):
     started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
     gpu = Column(
-        Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     machine_version = Column(String)
     machine_type = Column(
@@ -387,12 +387,12 @@ class Machine(SerializableMixin, Base):
     )
     machine_version = Column(String)
     machine_builder_version = Column(
-        Enum("2", "3", name="machine_builder_version"), default="2"
+        Enum("2", "3", "4", name="machine_builder_version"), default="2"
     )
     snapshot = Column(JSON)
     models = Column(JSON)
     gpu = Column(
-        Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     pod_id = Column(String)
@@ -569,7 +569,7 @@ class GPUEvent(SerializableMixin, Base):
     start_time = Column(DateTime(timezone=True))
     end_time = Column(DateTime(timezone=True))
     gpu = Column(
-        Enum("T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     gpu_provider = Column(Enum("runpod", "modal", name="gpu_provider"), nullable=False)
@@ -582,3 +582,8 @@ class GPUEvent(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+    
+    session_timeout = Column(Integer)
+    session_id = Column(String)
+    modal_function_id = Column(String)
+    tunnel_url = Column(String)
