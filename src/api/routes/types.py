@@ -457,6 +457,25 @@ class DeploymentEnvironment(str, Enum):
     PUBLIC_SHARE = "public-share"
     PRIVATE_SHARE = "private-share"
 
+class WorkflowWithName(BaseModel):
+    id: UUID
+    name: str
+
+class InputModel(BaseModel):
+    type: str
+    class_type: str
+    input_id: str
+    default_value: Optional[Union[str, int, float, bool, List[str]]] = None
+    min_value: Optional[Union[int, float]] = None
+    max_value: Optional[Union[int, float]] = None
+    display_name: str = ""
+    description: str = ""
+    # Add any other fields from value["inputs"] that you want to include
+
+    # You might want to add additional fields based on the specific input types
+    # For example:
+    enum_options: Optional[List[str]] = Field(None, description="Options for enum input type")
+    step: Optional[Union[int, float]] = Field(None, description="Step for number slider input types")
 
 class DeploymentModel(BaseModel):
     id: UUID
@@ -472,13 +491,15 @@ class DeploymentModel(BaseModel):
     environment: DeploymentEnvironment
     created_at: datetime
     updated_at: datetime
+    workflow: WorkflowWithName
+    
+    input_types: Optional[List[InputModel]] = None
 
     class Config:
         from_attributes = True
 
-
 class MachineGPU(str, Enum):
-    CPU = "cpu"
+    CPU = "CPU"
     T4 = "T4"
     L4 = "L4"
     A10G = "A10G"
@@ -509,6 +530,9 @@ class GPUEventModel(BaseModel):
     provider_type: GPUProviderType
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    session_timeout: Optional[int] = None
+    session_id: Optional[UUID] = None
+    modal_function_id: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -1548,21 +1548,26 @@ class ComfyDeployRunner:
         self.status_endpoint = status_endpoint
         print("status_endpoint", status_endpoint)
 
-        ok = await check_server(
+        async for event in check_server_with_log(
             f"http://{COMFY_HOST}",
             COMFY_API_AVAILABLE_MAX_RETRIES,
             COMFY_API_AVAILABLE_INTERVAL_MS,
-        )
+            self.machine_logs,
+            self.last_sent_log_index,
+        ):
+            pass
+            # asyncio.create_task(q.put.aio(event))
 
         if self.current_tunnel_url != "":
-            await q.put.aio(self.current_tunnel_url)
+            await q.put.aio("url:" + self.current_tunnel_url)
             return
 
         with modal.forward(8188) as tunnel:
             self.current_tunnel_url = tunnel.url
             self.current_function_call_id = modal.current_function_call_id()
 
-            await q.put.aio(tunnel.url)
+            await q.put.aio("url:" + self.current_tunnel_url)
+            # await q.put.aio(tunnel.url)
 
             print(f"tunnel.url        = {tunnel.url}")
             print(f"tunnel.tls_socket = {tunnel.tls_socket}")
