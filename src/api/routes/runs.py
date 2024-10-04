@@ -391,7 +391,7 @@ async def get_runs_time_line(
       FROM filtered_workflow_runs fwr
       LEFT JOIN "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
     )
-    SELECT 
+    SELECT DISTINCT
       fwr.created_at,
       fwr.id AS run_id,
       fwr.status AS run_status
