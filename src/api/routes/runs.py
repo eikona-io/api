@@ -169,7 +169,7 @@ async def get_runs(
       FROM filtered_workflow_runs fwr
       LEFT JOIN "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
     )
-    SELECT 
+    SELECT DISTINCT
       fwr.created_at,
       fwr.queued_at,
       fwr.started_at,
@@ -183,21 +183,17 @@ async def get_runs(
       "comfyui_deploy"."workflow_versions".version,
       fwr.machine_id,
       "comfyui_deploy"."machines".name AS machine_name,
-      "comfyui_deploy"."workflow_run_outputs".data AS outputs,
       fwr.queued_duration,
       fwr.run_duration,
       fwr.total_upload_duration,
       fwr.user_id
-    FROM 
-      workflow_runs_with_upload_duration fwr
-    LEFT JOIN 
-      "comfyui_deploy"."workflows" ON fwr.workflow_id = "comfyui_deploy"."workflows".id
-    LEFT JOIN 
-      "comfyui_deploy"."machines" ON fwr.machine_id = "comfyui_deploy"."machines".id
-    LEFT JOIN
-      "comfyui_deploy"."workflow_versions" ON fwr.workflow_version_id = "comfyui_deploy"."workflow_versions".id
-    LEFT JOIN
-      "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
+    FROM workflow_runs_with_upload_duration AS fwr
+    LEFT JOIN "comfyui_deploy"."workflows"
+      ON fwr.workflow_id = "comfyui_deploy"."workflows".id
+    LEFT JOIN "comfyui_deploy"."machines"
+      ON fwr.machine_id = "comfyui_deploy"."machines".id
+    LEFT JOIN "comfyui_deploy"."workflow_versions"
+      ON fwr.workflow_version_id = "comfyui_deploy"."workflow_versions".id
     WHERE
       TRUE
       {where_time_duration_clause}
