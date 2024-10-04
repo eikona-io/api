@@ -48,6 +48,7 @@ class Session(BaseModel):
     session_id: str
     url: str
 
+
 # Return the session tunnel url
 @router.get(
     "/session/{session_id}",
@@ -93,6 +94,7 @@ async def get_session(
 class GetSessionsBody(BaseModel):
     machine_id: str
 
+
 # Return the sessions for a machine
 @router.get(
     "/sessions",
@@ -101,12 +103,12 @@ class GetSessionsBody(BaseModel):
     },
 )
 async def get_machine_sessions(
-    request: Request, body: GetSessionsBody, db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: str, db: AsyncSession = Depends(get_db)
 ) -> List[GPUEventModel]:
     result = await db.execute(
         (
             select(GPUEvent)
-            .where(GPUEvent.machine_id == body.machine_id)
+            .where(GPUEvent.machine_id == machine_id)
             .where(GPUEvent.end_time.is_(None))
             .where(GPUEvent.session_id.isnot(None))
             .apply_org_check(request)
@@ -164,7 +166,7 @@ async def create_session_background_task(
             await db.commit()
             gpuEvent = result.scalar_one()
             await db.refresh(gpuEvent)
-        
+
         while True:
             msg = await q.get.aio()
             if msg.startswith("url:"):
@@ -172,7 +174,7 @@ async def create_session_background_task(
                 break
             else:
                 logger.info(msg)
-            
+
         async with get_db_context() as db:
             result = await db.execute(
                 update(GPUEvent)
@@ -208,6 +210,7 @@ async def ensure_session_creation_complete(task: asyncio.Task):
 class CreateSessionResponse(BaseModel):
     session_id: UUID
     url: Optional[str] = None
+
 
 # Create a new session for a machine, return the session id and url
 @router.post(
