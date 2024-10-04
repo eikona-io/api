@@ -249,6 +249,7 @@ def post_process_output_data(data, user_settings):
                             access_key,
                             secret_key,
                         )
+    return data
 
 
 async def get_user_settings(request: Request, db: AsyncSession):

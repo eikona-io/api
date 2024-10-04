@@ -156,7 +156,7 @@ api_router.include_router(runs.router)
 public_api_router.include_router(run.router)
 public_api_router.include_router(session.router)
 public_api_router.include_router(deployments.router)
-public_api_router.include_router(run.webhook_router)
+# public_api_router.include_router(run.webhook_router)
 
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 

@@ -47,9 +47,13 @@ class SerializableMixin:
     def _serialize_value(self, value):
         if isinstance(value, uuid.UUID):
             return str(value)
+        # if isinstance(value, datetime):
+        #     return value
+            # return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
         if isinstance(value, datetime):
             # .replace(tzinfo=timezone.utc)
             return value.isoformat()[:-3] + "Z"
+            # return value.isoformat() + "Z"
         if isinstance(value, list):
             return [self._serialize_value(item) for item in value]
         if isinstance(value, dict):

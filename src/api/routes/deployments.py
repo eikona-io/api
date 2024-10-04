@@ -1,6 +1,8 @@
+import json
 import logging
+from api.utils.inputs import get_inputs_from_workflow_api
 from fastapi import APIRouter, Depends, Request
-from typing import List
+from typing import Any, Dict, List, Optional, Union
 from .types import DeploymentModel, DeploymentEnvironment
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
@@ -14,25 +16,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Deployments"])
 
 
-@router.get("/deployments", response_model=List[DeploymentModel])
+@router.get(
+    "/deployments",
+    response_model=List[DeploymentModel],
+    openapi_extra={
+        "x-speakeasy-name-override": "list",
+    },
+)
 async def get_deployments(
     request: Request,
-    environment: DeploymentEnvironment,
+    environment: Optional[DeploymentEnvironment] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    print("environment", environment)
-
-    query = (
-        select(Deployment)
-        .where(Deployment.environment == environment)
-        .options(joinedload(Deployment.workflow).load_only(Workflow.name))
-        .apply_org_check(request)
+    query = select(Deployment).options(
+        joinedload(Deployment.workflow).load_only(Workflow.name),
+        joinedload(Deployment.version),
     )
+
+    if environment is not None:
+        query = query.where(Deployment.environment == environment)
+
+    query = query.apply_org_check(request)
 
     result = await db.execute(query)
     deployments = result.scalars().all()
 
+    deployments_data = []
+    for deployment in deployments:
+        deployment_dict = deployment.to_dict()
+        workflow_api = deployment.version.workflow_api if deployment.version else None
+        inputs = get_inputs_from_workflow_api(workflow_api)
+        if inputs:
+            deployment_dict["input_types"] = inputs
+        deployments_data.append(deployment_dict)
 
-    deployments_data = [deployment.to_dict() for deployment in deployments]
-
-    return JSONResponse(content=deployments_data)
+    return deployments_data

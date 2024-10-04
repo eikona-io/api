@@ -180,7 +180,7 @@ async def update_run(
                 "info",
                 log_entry["logs"],
             )
-            print("data", log_entry["logs"])
+            # print("data", log_entry["logs"])
             log_data.append(data)
 
         background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)

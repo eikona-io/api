@@ -51,7 +51,7 @@ current_directory = os.path.dirname(os.path.realpath(__file__))
 
 deploy_test = config["deploy_test"] == "True"
 
-print("Builder Version: 3")
+print("Builder Version: 4")
 print("Builder Deps: ", os.getenv("MODAL_IMAGE_BUILDER_VERSION"))
 print("Modal Version: ", modal.__version__)
 
@@ -478,6 +478,9 @@ async def check_server_with_log(
         if machine_logs and last_sent_log_index != -1:
             while last_sent_log_index < len(machine_logs):
                 log = machine_logs[last_sent_log_index]
+                if isinstance(log["timestamp"], float):
+                    log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                print(log)
                 yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                 last_sent_log_index += 1
 
@@ -904,10 +907,6 @@ def create_web_app():
             media_type="text/event-stream",
         )
 
-    async def ws(websocket: WebSocket):
-        await ComfyDeployRunner().websocket_endpoint.run(websocket)
-        # await self.websocket_endpoint(websocket)
-
     async def view(
         volume_name: str,
         filename: str,
@@ -1051,31 +1050,10 @@ def create_web_app():
 
         return {"message": "File uploaded successfully", "path": str(file_location)}
 
-    async def static_assets(
-        private_volume_name: Optional[str] = None,
-        get_object_info=True,
-        get_filename_list_cache=True,
-        get_extensions=True,
-        upload_extensions=True,
-    ):
-        # request_input = OverrideInput()
-        # request_input.cpu_only = True
-        print("before getting model")
-        # comfy_runner = get_model(request_input)
-        print("after model")
-        result = await get_static_assets.remote.aio(
-            get_object_info, get_filename_list_cache, get_extensions, upload_extensions
-        )
-        print("static assets retrieved")
-        # print(result)
-        return result
-
     web_app.add_api_route("/run", post_run, methods=["POST"])
     web_app.add_api_route("/run/streaming", post_run_streaming, methods=["POST"])
-    web_app.add_api_websocket_route("/comfyui-deploy/ws", ws)
     web_app.add_api_route("/view", view, methods=["GET"])
     web_app.add_api_route("/upload", upload, methods=["POST"])
-    web_app.add_api_route("/static-assets", static_assets, methods=["GET"])
 
     origins = [
         "*",
@@ -1257,8 +1235,15 @@ class ComfyDeployRunner:
     async def streaming(
         self, input: Input, kill: bool = False, extend_timeout: Optional[int] = None
     ):
+        if isinstance(input, dict):
+            input = Input(**input)
+            
         try:
             print("post_run_streaming")
+            
+            print(input)
+            
+            yield f"event: event_update\ndata: {json.dumps({'event': 'function_call_id', 'data': modal.current_function_call_id()})}\n\n"
 
             self.current_function_call_id = modal.current_function_call_id()
 
@@ -1318,6 +1303,8 @@ class ComfyDeployRunner:
                         # Send the machine logs
                         while self.last_sent_log_index < len(self.machine_logs):
                             log = self.machine_logs[self.last_sent_log_index]
+                            if isinstance(log["timestamp"], float):
+                                log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
                             yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                             self.last_sent_log_index += 1
 
@@ -1561,21 +1548,26 @@ class ComfyDeployRunner:
         self.status_endpoint = status_endpoint
         print("status_endpoint", status_endpoint)
 
-        ok = await check_server(
+        async for event in check_server_with_log(
             f"http://{COMFY_HOST}",
             COMFY_API_AVAILABLE_MAX_RETRIES,
             COMFY_API_AVAILABLE_INTERVAL_MS,
-        )
+            self.machine_logs,
+            self.last_sent_log_index,
+        ):
+            pass
+            # asyncio.create_task(q.put.aio(event))
 
         if self.current_tunnel_url != "":
-            await q.put.aio(self.current_tunnel_url)
+            await q.put.aio("url:" + self.current_tunnel_url)
             return
 
         with modal.forward(8188) as tunnel:
             self.current_tunnel_url = tunnel.url
             self.current_function_call_id = modal.current_function_call_id()
 
-            await q.put.aio(tunnel.url)
+            await q.put.aio("url:" + self.current_tunnel_url)
+            # await q.put.aio(tunnel.url)
 
             print(f"tunnel.url        = {tunnel.url}")
             print(f"tunnel.tls_socket = {tunnel.tls_socket}")

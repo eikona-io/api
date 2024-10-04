@@ -10,6 +10,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
     Request,
+    Query,
 )
 from fastapi.responses import JSONResponse
 import os
@@ -69,16 +70,24 @@ change_log_dict = {
     "0.2.5": "fix: timezone issues",
     "0.2.6": "feat: change base docker image",
     "0.3.0": "feat: v3",
+    "0.4.0": "feat: v4",
     # Add future version changes here
 }
 BUILDER_VERSION = list(change_log_dict.keys())[-1]
 
 
 @router.get("/version")
-def read_version():
+def read_version(machine_builder_version: int = Query(None)):
+    if machine_builder_version is not None and machine_builder_version >= 4:
+        # Return the latest 0.4.x version
+        version = max(v for v in change_log_dict.keys() if v.startswith("0.4"))
+    else:
+        # Return the latest 0.3.x version
+        version = max(v for v in change_log_dict.keys() if v.startswith("0.3"))
+
     return {
-        "version": BUILDER_VERSION,
-        "changelog": change_log_dict.get(BUILDER_VERSION, "No change log available"),
+        "version": version,
+        "changelog": change_log_dict.get(version, "No change log available"),
     }
 
 
