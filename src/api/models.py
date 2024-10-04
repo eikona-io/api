@@ -430,6 +430,7 @@ class Machine(SerializableMixin, Base):
     object_info_str = Column(String)
     filename_list_cache = Column(JSON)
     extensions = Column(JSON)
+    import_failed_logs = Column(String)
 
 
 class UserSettings(SerializableMixin, Base):
