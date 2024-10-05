@@ -1241,7 +1241,7 @@ class ComfyDeployRunner:
         try:
             print("post_run_streaming")
             
-            print(input)
+            # print(input)
             
             yield f"event: event_update\ndata: {json.dumps({'event': 'function_call_id', 'data': modal.current_function_call_id()})}\n\n"
 

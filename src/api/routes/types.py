@@ -238,7 +238,7 @@ class WorkflowRequestShare(BaseModel):
         default="async",
         example="async",
     )
-    inputs: Optional[Dict[str, Any]] = Field(
+    inputs: Optional[Dict[str, Union[str, int, float, bool, List[Any]]]] = Field(
         default_factory=dict,
         example={"prompt": "A beautiful landscape", "seed": 42},
     )
