@@ -854,7 +854,9 @@ async def build_logic(item: Item):
                     {
                         "machine_id": item.machine_id,
                         "build_log": json.dumps(machine_logs),
-                        "import_failed_logs": json.dumps(import_failed_logs),
+                        "import_failed_logs": json.dumps(import_failed_logs)
+                        if not item.skip_static_assets
+                        else None,
                     }
                 ).encode("utf-8"),
             )
@@ -879,7 +881,9 @@ async def build_logic(item: Item):
                     {
                         "machine_id": item.machine_id,
                         "build_log": json.dumps(machine_logs),
-                        "import_failed_logs": json.dumps(import_failed_logs),
+                        "import_failed_logs": json.dumps(import_failed_logs)
+                        if not item.skip_static_assets
+                        else None,
                     }
                 ).encode("utf-8"),
             )
@@ -900,7 +904,9 @@ async def build_logic(item: Item):
                     "endpoint": url,
                     "app_id": app_id,
                     "build_log": json.dumps(machine_logs),
-                    "import_failed_logs": json.dumps(import_failed_logs),
+                    "import_failed_logs": json.dumps(import_failed_logs)
+                    if not item.skip_static_assets
+                    else None,
                     # "static_fe_assets": static_fe_assets,
                 }
             ).encode("utf-8"),
