@@ -94,7 +94,7 @@ class UpdateRunBody(BaseModel):
     log_data: Optional[Any] = None
     logs: Optional[Any] = None
     ws_event: Optional[Any] = None
-
+    live_status: Optional[str] = None
     progress: Optional[float] = None
     modal_function_call_id: Optional[str] = None
     gpu_event_id: Optional[str] = None
