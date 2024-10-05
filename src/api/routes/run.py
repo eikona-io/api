@@ -727,4 +727,6 @@ async def _create_run(
 
         return {"status": "success", "batch_id": str(batch_id)}
     else:
-        return await run()
+        return await run(
+            data.inputs,
+        )
