@@ -527,12 +527,13 @@ class GPUEventModel(BaseModel):
     end_time: Optional[datetime]
     gpu: Optional[MachineGPU]
     ws_gpu: Optional[WorkspaceGPU]
-    provider_type: GPUProviderType
+    gpu_provider: GPUProviderType
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     session_timeout: Optional[int] = None
     session_id: Optional[UUID] = None
     modal_function_id: Optional[str] = None
+    tunnel_url: Optional[str] = None
 
     class Config:
         from_attributes = True

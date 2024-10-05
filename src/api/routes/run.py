@@ -365,6 +365,8 @@ async def _create_run(
 
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         prompt_id = uuid.uuid4()
+        user_id = request.state.current_user["user_id"]
+
 
         # Create a new run
         new_run = WorkflowRun(
@@ -374,7 +376,7 @@ async def _create_run(
             workflow_inputs=inputs if inputs is not None else data.inputs,
             workflow_api=workflow_api_raw,
             # User
-            user_id=request.state.current_user["user_id"],
+            user_id=user_id,
             org_id=org_id,
             origin=data.origin,
             # Machine
@@ -430,19 +432,22 @@ async def _create_run(
         # Sending to clickhouse
         progress_data = [
             (
-                uuid4(),
+                user_id,
+                org_id,
+                machine_id,
+                None, # gpu_event_id
+                workflow_id,
+                workflow_version_id,
                 new_run.id,
-                new_run.workflow_id,
-                new_run.machine_id,
                 dt.datetime.now(dt.UTC),
-                None,
-                None,
                 "queued",
+                0,
+                "",
             )
         ]
 
         background_tasks.add_task(
-            insert_to_clickhouse, client, "progress_updates", progress_data
+            insert_to_clickhouse, client, "workflow_events", progress_data
         )
 
         token = generate_temporary_token(request.state.current_user["user_id"], org_id)

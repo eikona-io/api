@@ -13,6 +13,53 @@ async def insert_to_clickhouse(client, table_name: str, data: List[Tuple]):
     query = f"INSERT INTO {table_name} VALUES"
     await client.execute(query, data)
 
+
+async def insert_workflow_event(
+    client,
+    user_id: str,
+    org_id: str | None,
+    machine_id: str,
+    gpu_event_id: str,
+    workflow_id: str,
+    workflow_version_id: str,
+    run_id: str,
+    log_type: str,
+    progress: float = 0.0,
+    node_class: str = ""
+):
+    """
+    Function to handle inserting data into workflow_events table in ClickHouse.
+
+    :param client: ClickHouse client
+    :param user_id: ID of the user
+    :param org_id: ID of the organization (can be None)
+    :param machine_id: ID of the machine
+    :param gpu_event_id: ID of the GPU event (can be None)
+    :param workflow_id: ID of the workflow
+    :param workflow_version_id: ID of the workflow version (can be None)
+    :param run_id: ID of the run
+    :param log_type: Type of the log event
+    """
+    timestamp = datetime.utcnow()
+    event_data = [
+        (
+            user_id,
+            org_id if org_id else None,
+            machine_id,
+            gpu_event_id if gpu_event_id else None,
+            workflow_id,
+            workflow_version_id if workflow_version_id else None,
+            run_id,
+            timestamp,
+            log_type,
+            progress,
+            node_class
+        )
+    ]
+    await insert_to_clickhouse(client, "workflow_events", event_data)
+
+
+# NOTE: not used
 async def insert_progress_update(client, run_id: str, workflow_id: str, machine_id: str, progress: int, live_status: str, status: str):
     """
     Function to handle inserting data into progress_updates table in ClickHouse.

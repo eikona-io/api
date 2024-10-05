@@ -244,8 +244,8 @@ async def stream_progress(
             )
 
             query = f"""
-            SELECT run_id, workflow_id, machine_id, timestamp, progress, node_class, status
-            FROM progress_updates
+            SELECT run_id, workflow_id, workflow_version_id, machine_id, timestamp, progress, node_class, log_type
+            FROM workflow_events
             WHERE {id_type}_id = '{id_value}'
             {f"AND timestamp > toDateTime64('{formatted_time}', 6)" if formatted_time is not None else ""}
             ORDER BY timestamp ASC
