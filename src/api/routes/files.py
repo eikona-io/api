@@ -82,9 +82,6 @@ async def upload_file(
     request: Request,
     db: AsyncSession = Depends(get_db),
     file: UploadFile = File(...),
-    # run_id: Optional[str] = Query(None),
-    # upload_type: UploadType = Query(UploadType.INPUT),
-    # file_type: Optional[str] = Query(None, regex="^(image/|video/|application/)"),
 ) -> FileUploadResponse:
     # if not file_type:
     # Infer file type from the filename
@@ -148,37 +145,13 @@ async def upload_file(
         config=Config(signature_version="s3v4"),
     ) as s3_client:
         try:
-            multipart_upload = await s3_client.create_multipart_upload(
+            file_content = await file.read()
+            await s3_client.put_object(
                 Bucket=bucket,
                 Key=file_path,
+                Body=file_content,
                 ACL="public-read" if public else "private",
                 ContentType=file_type,
-            )
-
-            parts = []
-            part_number = 1
-            chunk_size = 5 * 1024 * 1024  # 5MB chunks
-
-            while True:
-                chunk = await file.read(chunk_size)
-                if not chunk:
-                    break
-
-                part = await s3_client.upload_part(
-                    Bucket=bucket,
-                    Key=file_path,
-                    PartNumber=part_number,
-                    UploadId=multipart_upload["UploadId"],
-                    Body=chunk,
-                )
-                parts.append({"PartNumber": part_number, "ETag": part["ETag"]})
-                part_number += 1
-
-            await s3_client.complete_multipart_upload(
-                Bucket=bucket,
-                Key=file_path,
-                UploadId=multipart_upload["UploadId"],
-                MultipartUpload={"Parts": parts},
             )
 
             file_url = f"https://{bucket}.s3.{region}.amazonaws.com/{file_path}"
