@@ -25,7 +25,7 @@ async def insert_workflow_event(
     run_id: str,
     log_type: str,
     progress: float = 0.0,
-    node_class: str = ""
+    log: str = ""
 ):
     """
     Function to handle inserting data into workflow_events table in ClickHouse.
@@ -39,6 +39,7 @@ async def insert_workflow_event(
     :param workflow_version_id: ID of the workflow version (can be None)
     :param run_id: ID of the run
     :param log_type: Type of the log event
+    :param log: Log data
     """
     timestamp = datetime.utcnow()
     event_data = [
@@ -53,7 +54,7 @@ async def insert_workflow_event(
             timestamp,
             log_type,
             progress,
-            node_class
+            log
         )
     ]
     await insert_to_clickhouse(client, "workflow_events", event_data)

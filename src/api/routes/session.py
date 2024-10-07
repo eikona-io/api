@@ -46,6 +46,7 @@ def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu:
 
 class Session(BaseModel):
     session_id: str
+    gpu_event_id: str
     url: str
 
 

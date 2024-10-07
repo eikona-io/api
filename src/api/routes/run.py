@@ -446,11 +446,14 @@ async def _create_run(
                 workflow_version_id,
                 new_run.id,
                 dt.datetime.now(dt.UTC),
-                "queued",
+                "input",
                 0,
-                "",
+                json.dumps(inputs),
             )
         ]
+
+        print("INPUT")
+        print("progress_data", progress_data)
 
         background_tasks.add_task(
             insert_to_clickhouse, client, "workflow_events", progress_data

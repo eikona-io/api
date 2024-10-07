@@ -198,6 +198,7 @@ async def update_run(
                 live_status=body.live_status,
                 progress=body.progress,
                 updated_at=updated_at,
+                gpu_event_id=body.gpu_event_id,
             )
             .returning(WorkflowRun)
         )
@@ -233,6 +234,9 @@ async def update_run(
             )
         ]
 
+        print('workflow_run', workflow_run)
+        print('body', body)
+        print("WORKFLOW_EVENTS: ", progress_data)
         background_tasks.add_task(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
@@ -309,11 +313,14 @@ async def update_run(
                 body.run_id,
                 updated_at,
                 "output",
-                body.progress,
-                body.live_status,
+                body.progress if body.progress is not None else -1,
+                json.dumps(body.output_data),
             )
         ]
-        print("output_data", output_data)
+        print("OUTPUT")
+        print('workflow_run', workflow_run)
+        print('body', body)
+        print("WORKFLOW_EVENTS: ", output_data)
         background_tasks.add_task(insert_to_clickhouse, client, "workflow_events", output_data)
 
     elif body.status is not None:
@@ -348,11 +355,13 @@ async def update_run(
                 body.run_id,
                 updated_at,
                 body.status,
-                body.progress if body.progress is not None else 0,
+                body.progress if body.progress is not None else -1,
                 body.live_status if body.live_status is not None else "",
             )
         ]
-
+        print('workflow_run', workflow_run)
+        print('body', body)
+        print("WORKFLOW_EVENTS: ", progress_data)
         background_tasks.add_task(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
