@@ -32,6 +32,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "modal>=0.64.136",
     "sqlmodel>=0.0.22",
+    "aioboto3>=7.0.0",
 ]
 
 [build-system]
