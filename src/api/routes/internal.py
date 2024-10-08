@@ -234,9 +234,6 @@ async def update_run(
             )
         ]
 
-        print('workflow_run', workflow_run)
-        print('body', body)
-        print("WORKFLOW_EVENTS: ", progress_data)
         background_tasks.add_task(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
@@ -317,10 +314,6 @@ async def update_run(
                 json.dumps(body.output_data),
             )
         ]
-        print("OUTPUT")
-        print('workflow_run', workflow_run)
-        print('body', body)
-        print("WORKFLOW_EVENTS: ", output_data)
         background_tasks.add_task(insert_to_clickhouse, client, "workflow_events", output_data)
 
     elif body.status is not None:
@@ -359,9 +352,6 @@ async def update_run(
                 body.live_status if body.live_status is not None else "",
             )
         ]
-        print('workflow_run', workflow_run)
-        print('body', body)
-        print("WORKFLOW_EVENTS: ", progress_data)
         background_tasks.add_task(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
@@ -376,7 +366,6 @@ async def update_run(
         if body.modal_function_call_id:
             update_values["modal_function_call_id"] = body.modal_function_call_id
 
-        # print("modal_function_call_id", request.modal_function_call_id)
 
         update_stmt = (
             update(WorkflowRun)
