@@ -403,6 +403,9 @@ async def _create_run(
         await db.commit()
         await db.refresh(new_run)
 
+        print('data', data)
+        print("GPU EVENT ID", data.gpu_event_id)
+
         params = {
             "prompt_id": str(new_run.id),
             "workflow_api_raw": workflow_api_raw,
@@ -411,6 +414,7 @@ async def _create_run(
             "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
             + "/api/file-upload",
             "workflow": workflow,
+            "gpu_event_id": data.gpu_event_id if data.gpu_event_id is not None else None,
         }
 
         # Get the count of runs for this workflow
@@ -441,7 +445,7 @@ async def _create_run(
                 user_id,
                 org_id,
                 machine_id,
-                None, # gpu_event_id
+                data.gpu_event_id if data.gpu_event_id is not None else None,
                 workflow_id,
                 workflow_version_id,
                 new_run.id,
