@@ -398,6 +398,7 @@ class WorkflowRunNativeOutputModel(BaseModel):
     status_endpoint: str
     file_upload_endpoint: str
     cd_token: str
+    gpu_event_id: Optional[str] = None
 
     class Config:
         from_attributes = True
