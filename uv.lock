@@ -194,7 +194,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "logfire", extras = ["fastapi"], specifier = ">=0.51.0" },
-    { name = "modal", specifier = ">=0.64.136" },
+    { name = "modal", specifier = "==0.64.168" },
     { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
     { name = "protobuf", specifier = ">=4.25.4" },
@@ -815,7 +815,7 @@ wheels = [
 
 [[package]]
 name = "modal"
-version = "0.64.136"
+version = "0.64.168"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -835,7 +835,7 @@ dependencies = [
     { name = "watchfiles" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/aa/8195034525ee3e2d5b044803df3b927f0810b2b987c489f91835b59fa82d/modal-0.64.136-py3-none-any.whl", hash = "sha256:90bfe57c0ab79cbda260b3810da26e5717ddce1148c1f43a5a7f265ff33f58c1", size = 545358 },
+    { url = "https://files.pythonhosted.org/packages/7e/c4/14a06c0e5c054f354e1efb10f57c712aafeccd787dfb3f5e7fb551db5358/modal-0.64.168-py3-none-any.whl", hash = "sha256:283d1585f0000010e7d8716aa71b3ebe2f261d80dd784d44f419bf901a4a099c", size = 550677 },
 ]
 
 [[package]]
@@ -1507,14 +1507,14 @@ wheels = [
 
 [[package]]
 name = "synchronicity"
-version = "0.7.6"
+version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "sigtools" },
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/9c/3dde3ff3b79cc0a14239001f63e5304d0466c2041f3c4535fd39276cd258/synchronicity-0.7.6-py3-none-any.whl", hash = "sha256:c5bb60a0f39c5a161b5013d183cfe6229dc4ee6e3a09714f37da2905635cf983", size = 31312 },
+    { url = "https://files.pythonhosted.org/packages/10/9c/3e919ec06af976bdc1825c86f5e958c4b3eba57a83cf61ac9077e361ac44/synchronicity-0.8.2-py3-none-any.whl", hash = "sha256:87c2adc3f388b80629e55d202bd8404b17cf28b857a58c0094bf3ab093d430c6", size = 31809 },
 ]
 
 [[package]]
