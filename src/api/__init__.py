@@ -24,7 +24,8 @@ from api.routes import (
     comfy_node,
 	deployments,
 	runs,
-    session
+    session,
+    files
 )
 from api.modal import builder
 from api.models import APIKey
@@ -150,12 +151,16 @@ api_router.include_router(volumes.router)
 api_router.include_router(comfy_node.router)
 api_router.include_router(deployments.router)
 api_router.include_router(session.router)
+api_router.include_router(session.beta_router)
 api_router.include_router(runs.router)
+api_router.include_router(files.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)
 public_api_router.include_router(session.router)
+public_api_router.include_router(session.beta_router)
 public_api_router.include_router(deployments.router)
+public_api_router.include_router(files.router)
 # public_api_router.include_router(run.webhook_router)
 
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead

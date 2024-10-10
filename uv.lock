@@ -6,6 +6,38 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "aioboto3"
+version = "7.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiobotocore", extra = ["boto3"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3b/5f/cf6de345760520907ab91573be61853552e6402d94fa781b09fa84ce3f42/aioboto3-7.0.0.tar.gz", hash = "sha256:84fc1ed0d456f2f0ff5626e5045bb9871461155aa9d91f44be0e3b1554e30552", size = 47935 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5d/02/d2b8ec2172577329daec50b0e547ac68955e04983ae42367fe3ae8388229/aioboto3-7.0.0-py2.py3-none-any.whl", hash = "sha256:db3db4058115fe610e631d98fe90a6d98de55cc93da7d9f6ddab4a5f74b2ff0c", size = 28941 },
+]
+
+[[package]]
+name = "aiobotocore"
+version = "2.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aioitertools" },
+    { name = "botocore" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d4/1c/4b70176e1609f48e319525c9d49f3e35ef20898edfbc73b1f870e87a1aca/aiobotocore-2.14.0.tar.gz", hash = "sha256:680dcbcde9cb0dcefbcddc180d273c2d048940f87f2bdb0eebe0f4c30c1e39b9", size = 106885 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/7f/eec1f4d121a9692f49f6144408d5efb39471550d4a7894b5b018c947e3fd/aiobotocore-2.14.0-py3-none-any.whl", hash = "sha256:721c52f5d1221daa4851cfa9ab5db14440477f33d763da9019691c4f67163873", size = 77320 },
+]
+
+[package.optional-dependencies]
+boto3 = [
+    { name = "boto3" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -61,6 +93,15 @@ wheels = [
 ]
 
 [[package]]
+name = "aioitertools"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/de/38491a84ab323b47c7f86e94d2830e748780525f7a10c8600b67ead7e9ea/aioitertools-0.12.0.tar.gz", hash = "sha256:c2a9055b4fbb7705f561b9d86053e8af5d10cc845d22c32008c43490b2d8dd6b", size = 19369 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/13/58b70a580de00893223d61de8fea167877a3aed97d4a5e1405c9159ef925/aioitertools-0.12.0-py3-none-any.whl", hash = "sha256:fc1f5fac3d737354de8831cbba3eb04f79dd649d8f3afb4c5b114925e662a796", size = 24345 },
+]
+
+[[package]]
 name = "aiosignal"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -111,6 +152,7 @@ name = "api"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aioboto3" },
     { name = "asyncpg" },
     { name = "boto3" },
     { name = "clickhouse-connect" },
@@ -142,6 +184,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aioboto3", specifier = ">=7.0.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "boto3", specifier = ">=1.35.5" },
     { name = "clickhouse-connect", specifier = ">=0.7.19" },
@@ -151,7 +194,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "logfire", extras = ["fastapi"], specifier = ">=0.51.0" },
-    { name = "modal", specifier = ">=0.64.136" },
+    { name = "modal", specifier = "==0.64.168" },
     { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
     { name = "protobuf", specifier = ">=4.25.4" },
@@ -772,7 +815,7 @@ wheels = [
 
 [[package]]
 name = "modal"
-version = "0.64.136"
+version = "0.64.168"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -792,7 +835,7 @@ dependencies = [
     { name = "watchfiles" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/aa/8195034525ee3e2d5b044803df3b927f0810b2b987c489f91835b59fa82d/modal-0.64.136-py3-none-any.whl", hash = "sha256:90bfe57c0ab79cbda260b3810da26e5717ddce1148c1f43a5a7f265ff33f58c1", size = 545358 },
+    { url = "https://files.pythonhosted.org/packages/7e/c4/14a06c0e5c054f354e1efb10f57c712aafeccd787dfb3f5e7fb551db5358/modal-0.64.168-py3-none-any.whl", hash = "sha256:283d1585f0000010e7d8716aa71b3ebe2f261d80dd784d44f419bf901a4a099c", size = 550677 },
 ]
 
 [[package]]
@@ -1464,14 +1507,14 @@ wheels = [
 
 [[package]]
 name = "synchronicity"
-version = "0.7.6"
+version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "sigtools" },
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/9c/3dde3ff3b79cc0a14239001f63e5304d0466c2041f3c4535fd39276cd258/synchronicity-0.7.6-py3-none-any.whl", hash = "sha256:c5bb60a0f39c5a161b5013d183cfe6229dc4ee6e3a09714f37da2905635cf983", size = 31312 },
+    { url = "https://files.pythonhosted.org/packages/10/9c/3e919ec06af976bdc1825c86f5e958c4b3eba57a83cf61ac9077e361ac44/synchronicity-0.8.2-py3-none-any.whl", hash = "sha256:87c2adc3f388b80629e55d202bd8404b17cf28b857a58c0094bf3ab093d430c6", size = 31809 },
 ]
 
 [[package]]

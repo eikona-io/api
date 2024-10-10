@@ -30,8 +30,9 @@ dependencies = [
     "google-cloud-pubsub>=2.23.1",
     "websockets>=13.0.1",
     "python-multipart>=0.0.9",
-    "modal>=0.64.136",
+    "modal==0.64.168",
     "sqlmodel>=0.0.22",
+    "aioboto3>=7.0.0",
 ]
 
 [build-system]

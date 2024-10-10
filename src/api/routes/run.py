@@ -80,7 +80,13 @@ async def run_update_webhook(
     pass
 
 
-@router.get("/run/{run_id}", response_model=WorkflowRunModel)
+@router.get(
+    "/run/{run_id}",
+    response_model=WorkflowRunModel,
+    openapi_extra={
+        "x-speakeasy-name-override": "get",
+    },
+)
 @router.get("/run", response_model=WorkflowRunModel, include_in_schema=False)
 async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_db)):
     query = (
@@ -608,7 +614,11 @@ async def _create_run(
                         ):
                             if isinstance(event, (str, bytes)):
                                 # Convert bytes to string if necessary
-                                event_str = event.decode('utf-8') if isinstance(event, bytes) else event
+                                event_str = (
+                                    event.decode("utf-8")
+                                    if isinstance(event, bytes)
+                                    else event
+                                )
                                 lines = event_str.strip().split("\n")
                                 event_type = None
                                 event_data = None
@@ -617,7 +627,7 @@ async def _create_run(
                                         event_type = line.split(":", 1)[1].strip()
                                     elif line.startswith("data:"):
                                         event_data = line.split(":", 1)[1].strip()
-                                
+
                                 # logger.info(event_type)
                                 # logger.info(lines)
 
@@ -630,24 +640,27 @@ async def _create_run(
                                             )
                                             await db.commit()
                                         if data.get("event") == "executed":
-                                            logger.info(data.get("data", {}).get("output"))
-                                            post_process_output_data(data.get("data", {}).get("output"), user_settings)
+                                            logger.info(
+                                                data.get("data", {}).get("output")
+                                            )
+                                            post_process_output_data(
+                                                data.get("data", {}).get("output"),
+                                                user_settings,
+                                            )
                                             new_event_data = {
                                                 "event": "executed",
-                                                "data": data.get("data", {})
+                                                "data": data.get("data", {}),
                                             }
                                             new_event = f"event: event_update\ndata: {json.dumps(new_event_data)}\n\n"
                                             yield new_event
                                             continue
-                                            
+
                                     except json.JSONDecodeError:
                                         pass  # Invalid JSON, ignore
-                                    
+
                             # logger.info(event)
                             yield event
-                            
-                            
-                        
+
                 except Exception as e:
                     print(e)
 
@@ -714,4 +727,6 @@ async def _create_run(
 
         return {"status": "success", "batch_id": str(batch_id)}
     else:
-        return await run()
+        return await run(
+            data.inputs,
+        )
