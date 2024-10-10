@@ -1174,7 +1174,7 @@ class ComfyDeployRunner:
         org_id: Optional[str] = None,
         gpu: Optional[str] = None,
         timeout: Optional[int] = None,
-        session_id: Optional[str] = False,
+        session_id: Optional[str] = None,
         workspace_tunnel: Optional[bool] = False,
     ) -> None:
         if volume_name is None:
