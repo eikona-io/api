@@ -1,7 +1,18 @@
 import asyncio
+from datetime import datetime
 import os
+from pprint import pprint
 from api.routes.types import GPUEventModel, MachineGPU
+from api.utils.docker import (
+    CustomNode,
+    DepsBody,
+    DockerStep,
+    DockerSteps,
+    comfyui_cmd,
+    generate_all_docker_commands,
+)
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 import modal
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import (
@@ -15,7 +26,7 @@ from api.models import (
     Machine,
 )
 from api.database import get_db, get_db_context
-from typing import List, Optional, cast
+from typing import Any, Dict, List, Optional, cast, Union
 from uuid import UUID, uuid4
 import logging
 from typing import Optional
@@ -25,6 +36,7 @@ from fastapi import BackgroundTasks
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Session"])
+beta_router = APIRouter(tags=["Beta"])
 
 status_endpoint = os.environ.get("CURRENT_API_URL") + "/api/update-run"
 
@@ -117,7 +129,6 @@ async def get_machine_sessions(
     )
     return result.scalars().all()
 
-
 async def create_session_background_task(
     machine_id: str,
     session_id: UUID,
@@ -194,6 +205,25 @@ class CreateSessionBody(BaseModel):
     machine_id: str
     gpu: Optional[MachineGPU] = Field(None, description="The GPU to use")
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
+    wait_for_server: bool = Field(
+        False, description="Whether to create the session asynchronously"
+    )
+
+
+class CreateDynamicSessionBody(BaseModel):
+    machine_id: str
+    gpu: MachineGPU = Field(None, description="The GPU to use")
+    timeout: Optional[int] = Field(None, description="The timeout in minutes")
+    dependencies: Optional[Union[List[str], DepsBody]] = Field(
+        None,
+        description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
+        examples=[
+            [
+                "Stability-AI/ComfyUI-SAI_API@1793086",
+                "cubiq/ComfyUI_IPAdapter_plus@b188a6c",
+            ]
+        ],
+    )
     wait_for_server: bool = Field(
         False, description="Whether to create the session asynchronously"
     )
@@ -303,6 +333,168 @@ async def create_session(
 
     return {
         "session_id": session_id,
+    }
+
+
+@beta_router.post(
+    "/deps",
+    openapi_extra={
+        "x-speakeasy-name-override": "generateDockerSteps",
+    },
+)
+async def convert_to_docker_steps(
+    body: DepsBody,
+):
+    converted = generate_all_docker_commands(body)
+
+    return JSONResponse(status_code=200, content=converted)
+
+
+def extract_hash(dependency_string):
+    parts = dependency_string.split("@")
+    if len(parts) > 1:
+        return parts[-1]
+    return ""
+
+
+def extract_url(dependency_string):
+    parts = dependency_string.split("@")
+    if len(parts) > 1:
+        return "https://github.com/" + parts[0]
+    return ""
+
+
+async def create_dynamic_sesssion_background_task(
+    session_id: UUID,
+    body: CreateDynamicSessionBody,
+    status_queue: Optional[asyncio.Queue] = None,
+):
+    app = modal.App(str(session_id))
+    
+    gpu_event_id = uuid4()
+
+    try:
+        async with app.run.aio():
+            async with get_db_context() as db:
+                # Insert GPU event
+                new_gpu_event = GPUEvent(
+                    id=gpu_event_id,
+                    session_id=str(session_id),
+                    machine_id=body.machine_id,
+                    gpu=body.gpu.value if body.gpu is not None else "CPU",
+                    session_timeout=body.timeout or 15,
+                    gpu_provider="modal",
+                    start_time=datetime.now(),
+                    # Add other necessary fields here
+                )
+                db.add(new_gpu_event)
+                await db.commit()
+                await db.refresh(new_gpu_event)
+            
+            dockerfile_image = modal.Image.debian_slim(python_version="3.11")
+
+            if body.dependencies:
+                if isinstance(body.dependencies, list):
+                    # Handle shorthand dependencies
+                    deps_body = DepsBody(
+                        docker_command_steps=DockerSteps(
+                            steps=[
+                                DockerStep(
+                                    type="custom-node",
+                                    data=CustomNode(
+                                        install_type="git-clone",
+                                        url=extract_url(dep),
+                                        hash=extract_hash(dep),
+                                        name=dep.split("/")[-1],
+                                    ),
+                                )
+                                for dep in body.dependencies
+                            ]
+                        )
+                    )
+                    converted = generate_all_docker_commands(deps_body)
+                else:
+                    converted = generate_all_docker_commands(body.dependencies)
+
+                pprint(converted)
+
+                # return {
+                #     "session_id": session_id,
+                #     "url": "",
+                # }
+
+                docker_commands = converted.docker_commands
+                if docker_commands is not None:
+                    for commands in docker_commands:
+                        dockerfile_image = dockerfile_image.dockerfile_commands(
+                            commands,
+                        )
+
+            sb = await modal.Sandbox.create.aio(
+                "bash",
+                "-c",
+                comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
+                image=dockerfile_image,
+                timeout=(body.timeout or 15) * 60,
+                gpu=body.gpu.value
+                if body.gpu is not None and body.gpu.value != "CPU"
+                else None,
+                app=app,
+                workdir="/comfyui",
+                encrypted_ports=[8188],
+            )
+
+            logger.info(sb.tunnels())
+            tunnel = sb.tunnels()[8188]
+
+            await status_queue.put(tunnel.url)
+
+            logger.info(tunnel.url)
+
+            await sb.wait.aio()
+    except Exception as e:
+        async with get_db_context() as db:
+            new_gpu_event.end_time = datetime.now()
+            new_gpu_event.error = str(e)
+            await db.commit()
+            await db.refresh(new_gpu_event)
+            
+        raise e
+
+
+@beta_router.post(
+    "/session/dynamic",
+    openapi_extra={
+        "x-speakeasy-name-override": "createDynamic",
+    },
+)
+async def create_dynamic_session(
+    request: Request,
+    body: CreateDynamicSessionBody,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> CreateSessionResponse:
+    session_id = uuid4()
+    q = asyncio.Queue()
+
+    task = asyncio.create_task(
+        create_dynamic_sesssion_background_task(session_id, body, q)
+    )
+
+    background_tasks.add_task(
+        ensure_session_creation_complete,
+        task,
+    )
+
+    try:
+        tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
+    except asyncio.TimeoutError:
+        print("Timed out waiting for tunnel_url")
+        tunnel_url = None
+
+    return {
+        "session_id": session_id,
+        "url": tunnel_url,
     }
 
 
