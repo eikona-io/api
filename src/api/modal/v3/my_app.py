@@ -1261,6 +1261,9 @@ class ComfyDeployRunner:
     async def streaming(
         self, input: Input, kill: bool = False, extend_timeout: Optional[int] = None
     ):
+        if isinstance(input, dict):
+            input = Input(**input)
+
         try:
             print("post_run_streaming")
 
