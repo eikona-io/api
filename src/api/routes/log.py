@@ -237,7 +237,6 @@ async def stream_progress(
         last_update_time = None if from_start else dt.datetime.now(dt.timezone.utc)
         while True:
             # Convert last_update_time to the format expected by ClickHouse
-            print('last_update_time', last_update_time)
             formatted_time = (
                 last_update_time.strftime("%Y-%m-%d %H:%M:%S.%f")
                 if last_update_time is not None
@@ -253,7 +252,6 @@ async def stream_progress(
             LIMIT 100
             """
             result = await client.query(query)
-            print("result", result)
 
             if result.result_rows and return_run:
                 async with get_db_context() as db:

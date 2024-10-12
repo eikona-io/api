@@ -46,8 +46,7 @@ async def get_clickhouse_client():
                 password=os.getenv("CLICKHOUSE_PASSWORD"),
                 secure=False if os.getenv("CLICKHOUSE_HOST") == "localhost" else True,
                 pool_mgr=big_pool_mgr,
-                # port=os.getenv("CLICKHOUSE_PORT", None),
-                port=8123,
+                port=os.getenv("CLICKHOUSE_PORT", None),
             )
         return clickhouse_client
     except Exception as e:

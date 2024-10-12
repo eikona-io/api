@@ -542,6 +542,7 @@ class Input(BaseModel):
     status_endpoint: str
     file_upload_endpoint: str
     workflow: Optional[dict] = None
+    gpu_event_id: Optional[str] = None
 
 
 async def queue_workflow_comfy_deploy(data: Input):
