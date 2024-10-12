@@ -247,6 +247,8 @@ async def get_private_models_from_db(
         .apply_org_check(request)
         .where(
             ModelDB.deleted == False,
+            ModelDB.model_name != None,
+            ModelDB.folder_path != None,
         )
     )
 
