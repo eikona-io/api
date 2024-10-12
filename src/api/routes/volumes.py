@@ -424,7 +424,6 @@ async def rename_file(request: Request, body: RenameFileBody):
                 f"{MODAL_VOLUME_ENDPOINT}/rename_file",
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": auth_token,
                 },
                 json=body.dict(),
             )
@@ -449,7 +448,6 @@ async def remove_file(request: Request, body: RemoveFileInput):
                 f"{MODAL_VOLUME_ENDPOINT}/rm",
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": auth_token,
                 },
                 json=body.dict(),
             )
@@ -474,35 +472,41 @@ async def add_file(request: Request, body: AddFileInput):
                 f"{MODAL_VOLUME_ENDPOINT}/add_file",
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": auth_token,
                 },
                 json=body.dict(),
             )
 
         response.raise_for_status()
-        
+
         # Start pulling the file
-        pulling_response = await pull_file(body.volume_name, body.folder_path, body.filename)
-        
+        pulling_response = await pull_file(
+            body.volume_name, body.folder_path, body.filename
+        )
+
         if pulling_response.get("status") == "success":
-            return JSONResponse(content={"status": "success", "message": "Model installed successfully"})
+            return JSONResponse(
+                content={"status": "success", "message": "Model installed successfully"}
+            )
         else:
-            return JSONResponse(content={"status": "error", "message": "Failed to install model"})
+            return JSONResponse(
+                content={"status": "error", "message": "Failed to install model"}
+            )
 
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 async def pull_file(volume_name: str, folder_path: str, filename: str):
     try:
         volume = Volume.from_name(volume_name)
         file_path = os.path.join(folder_path, filename)
-        
+
         # Implement the logic to pull the file here
         # This is a placeholder and should be replaced with actual implementation
         # For example, you might use volume.read() or other appropriate methods
-        
+
         # Simulating a successful pull
         return {"status": "success"}
     except Exception as e:
@@ -521,14 +525,7 @@ async def volume_full(
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{MODAL_VOLUME_ENDPOINT}/ls_full",
-                headers={
-                    "Authorization": auth_token,
-                },
-                params={
-                    "volume_name": volume_name,
-                    "create_if_missing": create_if_missing,
-                },
+                f"{MODAL_VOLUME_ENDPOINT}/ls_full?volume_name={volume_name}&create_if_missing={create_if_missing}",
             )
 
         response.raise_for_status()
@@ -548,14 +545,7 @@ async def list_contents(request: Request, volume_name: str, path: str = "/"):
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{MODAL_VOLUME_ENDPOINT}/ls",
-                headers={
-                    "Authorization": auth_token,
-                },
-                params={
-                    "volume_name": volume_name,
-                    "path": path,
-                },
+                f"{MODAL_VOLUME_ENDPOINT}/ls?volume_name={volume_name}&path={path}",
             )
 
         response.raise_for_status()
