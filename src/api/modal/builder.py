@@ -408,7 +408,7 @@ async def stop_app(item: StopAppItem):
 
 # Initialize the logs cache
 machine_logs_cache = {}
-
+import_failed_logs_cache = {}
 
 async def listen_logs(machine_id):
     process = await asyncio.subprocess.create_subprocess_shell(
@@ -622,6 +622,11 @@ async def build_logic(item: Item):
 
         machine_logs = machine_logs_cache[item.machine_id]
 
+        if item.machine_id not in import_failed_logs_cache:
+            import_failed_logs_cache[item.machine_id] = []
+
+        import_failed_logs = import_failed_logs_cache[item.machine_id]
+
         build_info_queue = asyncio.Queue()
 
         # Initialize a buffer for logs
@@ -674,6 +679,9 @@ async def build_logic(item: Item):
                     if not isStderr:
                         logger.info(l)
                         machine_logs.append({"logs": l, "timestamp": time.time()})
+
+                        if "(IMPORT FAILED)" in l:
+                            import_failed_logs.append({"logs": l, "timestamp": time.time()})
 
                         if l.startswith("APPID="):
                             app_id = l.split("=")[1].strip()
@@ -818,6 +826,9 @@ async def build_logic(item: Item):
         if machine_id in machine_logs_cache:
             del machine_logs_cache[machine_id]
 
+        if machine_id in import_failed_logs_cache:
+            del import_failed_logs_cache[machine_id]
+
         import shutil
 
         # Remove the copied folder
@@ -843,6 +854,9 @@ async def build_logic(item: Item):
                     {
                         "machine_id": item.machine_id,
                         "build_log": json.dumps(machine_logs),
+                        "import_failed_logs": json.dumps(import_failed_logs)
+                        if not item.skip_static_assets
+                        else None,
                     }
                 ).encode("utf-8"),
             )
@@ -867,6 +881,9 @@ async def build_logic(item: Item):
                     {
                         "machine_id": item.machine_id,
                         "build_log": json.dumps(machine_logs),
+                        "import_failed_logs": json.dumps(import_failed_logs)
+                        if not item.skip_static_assets
+                        else None,
                     }
                 ).encode("utf-8"),
             )
@@ -887,6 +904,9 @@ async def build_logic(item: Item):
                     "endpoint": url,
                     "app_id": app_id,
                     "build_log": json.dumps(machine_logs),
+                    "import_failed_logs": json.dumps(import_failed_logs)
+                    if not item.skip_static_assets
+                    else None,
                     # "static_fe_assets": static_fe_assets,
                 }
             ).encode("utf-8"),
