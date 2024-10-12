@@ -371,25 +371,25 @@ async def create_dynamic_sesssion_background_task(
 ):
     app = modal.App(str(session_id))
     
-    gpu_event_id = uuid4()
+    # gpu_event_id = uuid4()
 
     try:
         async with app.run.aio():
-            async with get_db_context() as db:
-                # Insert GPU event
-                new_gpu_event = GPUEvent(
-                    id=gpu_event_id,
-                    session_id=str(session_id),
-                    machine_id=body.machine_id,
-                    gpu=body.gpu.value if body.gpu is not None else "CPU",
-                    session_timeout=body.timeout or 15,
-                    gpu_provider="modal",
-                    start_time=datetime.now(),
-                    # Add other necessary fields here
-                )
-                db.add(new_gpu_event)
-                await db.commit()
-                await db.refresh(new_gpu_event)
+            # async with get_db_context() as db:
+            #     # Insert GPU event
+            #     new_gpu_event = GPUEvent(
+            #         id=gpu_event_id,
+            #         session_id=str(session_id),
+            #         machine_id=body.machine_id,
+            #         gpu=body.gpu.value if body.gpu is not None else "CPU",
+            #         session_timeout=body.timeout or 15,
+            #         gpu_provider="modal",
+            #         start_time=datetime.now(),
+            #         # Add other necessary fields here
+            #     )
+            #     db.add(new_gpu_event)
+            #     await db.commit()
+            #     await db.refresh(new_gpu_event)
             
             dockerfile_image = modal.Image.debian_slim(python_version="3.11")
 
@@ -453,11 +453,11 @@ async def create_dynamic_sesssion_background_task(
 
             await sb.wait.aio()
     except Exception as e:
-        async with get_db_context() as db:
-            new_gpu_event.end_time = datetime.now()
-            new_gpu_event.error = str(e)
-            await db.commit()
-            await db.refresh(new_gpu_event)
+        # async with get_db_context() as db:
+        #     new_gpu_event.end_time = datetime.now()
+        #     new_gpu_event.error = str(e)
+        #     await db.commit()
+        #     await db.refresh(new_gpu_event)
             
         raise e
 

@@ -1,6 +1,7 @@
+import time
 from .types import VolFSStructure, Model
-from fastapi import HTTPException, APIRouter, Request
-from typing import Any, Dict, List, Tuple, Union
+from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
+from typing import Any, Dict, List, Tuple, Union, Optional
 import logging
 import os
 import httpx
@@ -14,6 +15,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import update
 from .types import VolFolder, VolFile
 from sqlalchemy.exc import MultipleResultsFound
+from pydantic import BaseModel
+from enum import Enum
+import re
+import grpclib
+from modal import Volume
 
 
 logger = logging.getLogger(__name__)
@@ -34,14 +40,21 @@ async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str
     return [volume.to_dict() for volume in volumes]
 
 
-async def get_volume_list(volume_name: str) -> VolFSStructure:
+async def get_volume_list(request: Request, volume_name: str) -> VolFSStructure:
     if not volume_name:
         raise ValueError("Volume name is not provided")
-    endpoint = f"{os.environ.get('MODAL_VOLUME_ENDPOINT')}/ls_full?volume_name={volume_name}&create_if_missing=true"
+    endpoint = f"{os.environ.get('CURRENT_API_URL')}/api/volume/ls_full?volume_name={volume_name}&create_if_missing=true"
+
+    # Get the auth token from the request
+    auth_token = request.headers.get("Authorization")
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Authorization token is missing")
+
+    headers = {"Cache-Control": "no-cache", "Authorization": auth_token}
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
-            response = await client.get(endpoint, headers={"Cache-Control": "no-cache"})
+            response = await client.get(endpoint, headers=headers)
             response.raise_for_status()
             data = response.json()
             return VolFSStructure(**data)
@@ -155,7 +168,9 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
         private_volumes = await add_model_volume(request, db)
 
     if private_volumes and len(private_volumes) > 0:
-        volume_structure = await get_volume_list(private_volumes[0]["volume_name"])
+        volume_structure = await get_volume_list(
+            request, private_volumes[0]["volume_name"]
+        )
 
         # Check if models already exist in the database
         existing_models = await db.execute(
@@ -167,8 +182,6 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
         existing_model_names = {
             model.folder_path + "/" + model.model_name for model in existing_models
         }
-
-        print("existing_model_names", existing_model_names)
 
         # Filter out existing models from volume_structure
         def filter_existing_models(contents):
@@ -201,12 +214,12 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
 
 
 @async_lru_cache(expire_after=timedelta(hours=1))
-async def get_public_volume_list() -> VolFSStructure:
+async def get_public_volume_list(request: Request) -> VolFSStructure:
     if not os.environ.get("SHARED_MODEL_VOLUME_NAME"):
         raise ValueError(
             "public volume name env var `SHARED_MODEL_VOLUME_NAME` is not set"
         )
-    return await get_volume_list(os.environ.get("SHARED_MODEL_VOLUME_NAME"))
+    return await get_volume_list(request, os.environ.get("SHARED_MODEL_VOLUME_NAME"))
 
 
 async def get_downloading_models(request: Request, db: AsyncSession):
@@ -234,8 +247,8 @@ async def get_private_models_from_db(
         .apply_org_check(request)
         .where(
             ModelDB.deleted == False,
-            ModelDB.download_progress == 100,
-            ModelDB.status == "success",
+            ModelDB.model_name != None,
+            ModelDB.folder_path != None,
         )
     )
 
@@ -358,4 +371,186 @@ async def downloading_models(request: Request, db: AsyncSession = Depends(get_db
         return JSONResponse(content=model_data)
     except Exception as e:
         logger.error(f"Error fetching downloading models: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Type definitions
+class RenameFileBody(BaseModel):
+    volume_name: str
+    src_path: str
+    new_filename: str
+    overwrite: Optional[bool] = False
+
+
+class RemoveFileInput(BaseModel):
+    path: str
+    volume_name: str
+
+
+class AddFileInput(BaseModel):
+    volume_name: str
+    download_url: str
+    folder_path: str
+    filename: str
+    callback_url: str
+    db_model_id: str
+
+
+class ModelDownloadStatus(Enum):
+    PROGRESS = "progress"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+# Constants
+FILE_TYPE = 1
+DIRECTORY_TYPE = 2
+
+# New routes and helper functions
+
+
+MODAL_VOLUME_ENDPOINT = os.environ.get("MODAL_VOLUME_ENDPOINT")
+
+
+@router.post("/volume/rename_file")
+async def rename_file(request: Request, body: RenameFileBody):
+    auth_token = request.headers.get("Authorization")
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Authorization token is missing")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{MODAL_VOLUME_ENDPOINT}/rename_file",
+                headers={
+                    "Content-Type": "application/json",
+                },
+                json=body.dict(),
+            )
+
+        response.raise_for_status()
+        return JSONResponse(content=response.json())
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/volume/rm")
+async def remove_file(request: Request, body: RemoveFileInput):
+    auth_token = request.headers.get("Authorization")
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Authorization token is missing")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{MODAL_VOLUME_ENDPOINT}/rm",
+                headers={
+                    "Content-Type": "application/json",
+                },
+                json=body.dict(),
+            )
+
+        response.raise_for_status()
+        return JSONResponse(content=response.json())
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/volume/add_file")
+async def add_file(request: Request, body: AddFileInput):
+    auth_token = request.headers.get("Authorization")
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Authorization token is missing")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{MODAL_VOLUME_ENDPOINT}/add_file",
+                headers={
+                    "Content-Type": "application/json",
+                },
+                json=body.dict(),
+            )
+
+        response.raise_for_status()
+
+        # Start pulling the file
+        pulling_response = await pull_file(
+            body.volume_name, body.folder_path, body.filename
+        )
+
+        if pulling_response.get("status") == "success":
+            return JSONResponse(
+                content={"status": "success", "message": "Model installed successfully"}
+            )
+        else:
+            return JSONResponse(
+                content={"status": "error", "message": "Failed to install model"}
+            )
+
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def pull_file(volume_name: str, folder_path: str, filename: str):
+    try:
+        volume = Volume.from_name(volume_name)
+        file_path = os.path.join(folder_path, filename)
+
+        # Implement the logic to pull the file here
+        # This is a placeholder and should be replaced with actual implementation
+        # For example, you might use volume.read() or other appropriate methods
+
+        # Simulating a successful pull
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error pulling file: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+
+@router.get("/volume/ls_full")
+async def volume_full(
+    request: Request, volume_name: str, create_if_missing: bool = False
+):
+    auth_token = request.headers.get("Authorization")
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Authorization token is missing")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{MODAL_VOLUME_ENDPOINT}/ls_full?volume_name={volume_name}&create_if_missing={create_if_missing}",
+            )
+
+        response.raise_for_status()
+        return JSONResponse(content=response.json())
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/volume/ls")
+async def list_contents(request: Request, volume_name: str, path: str = "/"):
+    auth_token = request.headers.get("Authorization")
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="Authorization token is missing")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{MODAL_VOLUME_ENDPOINT}/ls?volume_name={volume_name}&path={path}",
+            )
+
+        response.raise_for_status()
+        return JSONResponse(content=response.json())
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -226,6 +226,7 @@ class MachineModel(BaseModel):
     object_info_str: Optional[str]
     filename_list_cache: Optional[Dict[str, Any]]
     extensions: Optional[Dict[str, Any]]
+    import_failed_logs: Optional[str]
 
     class Config:
         from_attributes = True

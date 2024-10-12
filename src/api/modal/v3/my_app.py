@@ -481,6 +481,8 @@ async def check_server_with_log(
         if machine_logs and last_sent_log_index != -1:
             while last_sent_log_index < len(machine_logs):
                 log = machine_logs[last_sent_log_index]
+                if isinstance(log["timestamp"], float):
+                    log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
                 yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                 last_sent_log_index += 1
 
@@ -1262,6 +1264,9 @@ class ComfyDeployRunner:
     async def streaming(
         self, input: Input, kill: bool = False, extend_timeout: Optional[int] = None
     ):
+        if isinstance(input, dict):
+            input = Input(**input)
+
         try:
             print("post_run_streaming")
 
@@ -1323,6 +1328,8 @@ class ComfyDeployRunner:
                         # Send the machine logs
                         while self.last_sent_log_index < len(self.machine_logs):
                             log = self.machine_logs[self.last_sent_log_index]
+                            if isinstance(log["timestamp"], float):
+                                log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
                             yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                             self.last_sent_log_index += 1
 
