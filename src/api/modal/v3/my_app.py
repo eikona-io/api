@@ -1269,6 +1269,7 @@ class ComfyDeployRunner:
         if isinstance(input, dict):
             input = Input(**input)
 
+        input.gpu_event_id = self.gpu_event_id
         try:
             print("post_run_streaming")
 
