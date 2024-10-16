@@ -178,6 +178,7 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
     { name = "trio" },
+    { name = "upstash-redis" },
     { name = "uvicorn" },
     { name = "websockets" },
 ]
@@ -210,6 +211,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.32" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
     { name = "trio", specifier = ">=0.26.2" },
+    { name = "upstash-redis", specifier = ">=1.2.0" },
     { name = "uvicorn", specifier = ">=0.30.6" },
     { name = "websockets", specifier = ">=13.0.1" },
 ]
@@ -1583,6 +1585,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/df/db/f35a00659bc03fec321ba8bce9420de607a1d37f8342eee1863174c69557/typing_extensions-4.12.2.tar.gz", hash = "sha256:1a7ead55c7e559dd4dee8856e3a88b41225abfe1ce8df57b7c13915fe121ffb8", size = 85321 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/26/9f/ad63fc0248c5379346306f8668cda6e2e2e9c95e01216d2b8ffd9ff037d0/typing_extensions-4.12.2-py3-none-any.whl", hash = "sha256:04e5ca0351e0f3f85c6853954072df659d0d13fac324d0072316b67d7794700d", size = 37438 },
+]
+
+[[package]]
+name = "upstash-redis"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/ec/4d137a714a3e1a621fbf39eac88489291bbc43912f9c2f8f4c8258eda5be/upstash_redis-1.2.0.tar.gz", hash = "sha256:8708ef56241832df1ed0dd3c27c19c14ca38dc34df9c5d3fc2c1ba8c2586edc6", size = 32898 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/97/2eaef1e7ffcf846733256aba60cee69ffc86daeaf039877eae6d4ee7416c/upstash_redis-1.2.0-py3-none-any.whl", hash = "sha256:a23db26bafb3706e80dbdcbdbb50bb419ca229247cb47eebfff986c59cfcaabf", size = 35351 },
 ]
 
 [[package]]

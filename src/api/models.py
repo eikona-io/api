@@ -459,6 +459,9 @@ class UserSettings(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+    
+    spend_limit = Column(Float, default=500)
+    max_spend_limit = Column(Float, default=1000)
 
     # Optionally, add relationship to User model
     # user = relationship("User", back_populates="settings")
@@ -592,3 +595,22 @@ class GPUEvent(SerializableMixin, Base):
     session_id = Column(String)
     modal_function_id = Column(String)
     tunnel_url = Column(String)
+    
+class SubscriptionStatus(SerializableMixin, Base):
+    __tablename__ = "subscription_status"
+    metadata = metadata
+
+    stripe_customer_id = Column(String, primary_key=True)
+    user_id = Column(String)
+    org_id = Column(String)
+    plan = Column(Enum("basic", "pro", "enterprise", "creator", "business", "ws_basic", "ws_pro", name="subscription_plan"))
+    status = Column(Enum("active", "deleted", "paused", name="subscription_plan_status"))
+    subscription_id = Column(String)
+    subscription_item_plan_id = Column(String)
+    subscription_item_api_id = Column(String)
+    cancel_at_period_end = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    trial_end = Column(DateTime(timezone=True))
+    trial_start = Column(DateTime(timezone=True))
+    last_invoice_timestamp = Column(DateTime(timezone=True))

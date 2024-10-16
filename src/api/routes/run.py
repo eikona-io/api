@@ -34,6 +34,7 @@ from .utils import (
     post_process_output_data,
     post_process_outputs,
     select,
+    is_exceed_spend_limit,
 )
 from clickhouse_connect.driver.asyncclient import AsyncClient
 
@@ -278,6 +279,11 @@ async def _create_run(
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
+    # check if the user has reached the spend limit
+    # exceed_spend_limit = await is_exceed_spend_limit(request, db)
+    # if exceed_spend_limit:
+    #     raise HTTPException(status_code=400, detail="Spend limit reached")
+    
     if (
         data.batch_number is not None
         and data.batch_number > 1

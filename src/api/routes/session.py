@@ -17,6 +17,7 @@ import modal
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import (
     select,
+    is_exceed_spend_limit,
 )
 from pydantic import BaseModel, Field
 
@@ -255,6 +256,12 @@ async def create_session(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
+    
+    # check if the user has reached the spend limit
+    # exceed_spend_limit = await is_exceed_spend_limit(request, db)
+    # if exceed_spend_limit:
+    #     raise HTTPException(status_code=400, detail="Spend limit reached")
+
     machine_id = body.machine_id
     machine = cast(
         Optional[Machine],

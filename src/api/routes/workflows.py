@@ -7,7 +7,7 @@ from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
 from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion
-from .utils import get_user_settings
+from .utils import get_user_settings, is_exceed_spend_limit
 from sqlalchemy import func, select as sa_select, distinct, and_, or_
 from sqlalchemy.orm import joinedload, load_only, contains_eager
 from fastapi.responses import JSONResponse
