@@ -33,6 +33,7 @@ dependencies = [
     "modal==0.64.168",
     "sqlmodel>=0.0.22",
     "aioboto3>=7.0.0",
+    "upstash-redis>=1.2.0",
 ]
 
 [build-system]

@@ -35,7 +35,7 @@ import io
 import httpx
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+# from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -543,3 +543,40 @@ class GPUEventModel(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SubscriptionPlanType(str, Enum):
+    BASIC = "basic"
+    PRO = "pro"
+    ENTERPRISE = "enterprise"
+    CREATOR = "creator"
+    BUSINESS = "business"
+    WS_BASIC = "ws_basic"
+    WS_PRO = "ws_pro"
+
+class SubscriptionPlanStatus(str, Enum):
+    ACTIVE = "active"
+    DELETED = "deleted"
+    PAUSED = "paused"
+        
+class SubscriptionStatusType(BaseModel):
+    stripe_customer_id: str
+    user_id: str
+    org_id: Optional[str]
+    plan: SubscriptionPlanType
+    status: SubscriptionPlanStatus
+    subscription_id: str
+    subscription_item_plan_id: str
+    subscription_item_api_id: str
+    cancel_at_period_end: bool
+    created_at: datetime
+    updated_at: datetime
+    trial_end: Optional[datetime]
+    trial_start: Optional[datetime]
+    last_invoice_timestamp: datetime
+    
+class PlanInfo(BaseModel):
+    plan: str
+    status: str
+    expires_at: int
+    spent: Optional[float] = None
+    spend_limit: float = Field(default=500.0)
