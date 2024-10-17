@@ -544,6 +544,7 @@ class Input(BaseModel):
     status_endpoint: str
     file_upload_endpoint: str
     workflow: Optional[dict] = None
+    gpu_event_id: Optional[str] = None
 
 
 async def queue_workflow_comfy_deploy(data: Input):
@@ -697,13 +698,14 @@ if "TAILSCALE_AUTHKEY" in config and config["TAILSCALE_AUTHKEY"] is not None:
     ]
 
 
-async def send_status_update(input: Input, status: str, function_id: str = None):
-    print("sending status update", input.status_endpoint, status, function_id)
+async def send_status_update(input: Input, status: str, gpu_event_id: str | None = None, function_id: str | None = None):
+    print("sending status update", input.status_endpoint, status, gpu_event_id, function_id)
     async with aiohttp.ClientSession() as session:
         data = {
             "run_id": input.prompt_id,
             "status": status,
             "time": datetime.now(timezone.utc).isoformat(),
+            "gpu_event_id": gpu_event_id,
         }
         if function_id is not None:
             data["modal_function_call_id"] = function_id
@@ -824,7 +826,7 @@ def create_web_app():
 
         # asyncio.create_task(send_status_update(request_input.input, "queued", result.object_id))
         asyncio.create_task(
-            send_status_update(request_input.input, "not-started", result.object_id)
+            send_status_update(request_input.input, "not-started", None, result.object_id)
         )
         return JSONResponse({"call_id": result.object_id})
 
@@ -898,7 +900,7 @@ def create_web_app():
 
             asyncio.create_task(
                 send_status_update(
-                    request_input.input, "not-started", modal.current_function_call_id()
+                    request_input.input, "not-started", None, modal.current_function_call_id()
                 )
             )
             # asyncio.create_task(send_status_update(request_input.input, "queued", modal.current_function_call_id()))
@@ -1192,6 +1194,7 @@ class ComfyDeployRunner:
         self.log_queues = deque()
         self.workspace_tunnel = workspace_tunnel
         self.session_id = session_id
+        self.gpu_event_id = None
 
     # self.log_task = None
 
@@ -1266,12 +1269,13 @@ class ComfyDeployRunner:
         if isinstance(input, dict):
             input = Input(**input)
 
+        input.gpu_event_id = self.gpu_event_id
         try:
             print("post_run_streaming")
 
             self.current_function_call_id = modal.current_function_call_id()
 
-            asyncio.create_task(send_status_update(input, "queued"))
+            asyncio.create_task(send_status_update(input, "queued", self.gpu_event_id))
 
             if extend_timeout is not None:
                 remaining_time = self.timeout - (time.time() - self.timeout_start_time)
@@ -1305,7 +1309,7 @@ class ComfyDeployRunner:
             ):
                 yield event
 
-            await send_status_update(input, "started")
+            await send_status_update(input, "started", self.gpu_event_id)
 
             yield f"event: event_update\ndata: {json.dumps({'event': 'comfyui_ready'})}\n\n"
 
@@ -1344,7 +1348,7 @@ class ComfyDeployRunner:
             except Exception as e:
                 pass
             finally:
-                await send_status_update(input, "cancelled")
+                await send_status_update(input, "cancelled", self.gpu_event_id)
 
     @modal.method()
     async def read_output_file(self, file):
@@ -1697,6 +1701,7 @@ class ComfyDeployRunner:
     async def run(self, input: Input):
         if isinstance(input, dict):
             input = Input(**input)
+            input.gpu_event_id = self.gpu_event_id
 
         try:
             self.log_queues.append({"logs": deque(), "current_input": input})
@@ -1712,7 +1717,7 @@ class ComfyDeployRunner:
 
             # self.private_volume.reload()
 
-            await send_status_update(input, "queued", modal.current_function_call_id())
+            await send_status_update(input, "queued", self.gpu_event_id, modal.current_function_call_id())
 
             result = {"status": "queued"}
 
@@ -1751,7 +1756,7 @@ class ComfyDeployRunner:
                     COMFY_API_AVAILABLE_INTERVAL_MS,
                 )
 
-                await send_status_update(input, "started")
+                await send_status_update(input, "started", self.gpu_event_id)
 
                 job_input = input
 
@@ -1812,7 +1817,7 @@ class ComfyDeployRunner:
                 # return {"status": "failed"}
             except Exception as e:
                 print(f"Unexpected error occurred: {str(e)}")
-                await send_status_update(input, "failed")
+                await send_status_update(input, "failed", self.gpu_event_id)
                 self.machine_logs.append({"logs": str(e), "timestamp": time.time()})
             finally:
                 signal.alarm(0)
@@ -1862,7 +1867,7 @@ class ComfyDeployRunner:
             except Exception as e:
                 pass
             finally:
-                await send_status_update(input, "cancelled")
+                await send_status_update(input, "cancelled", self.gpu_event_id)
 
         finally:
             # self.log_queues.pop(input.prompt_id)

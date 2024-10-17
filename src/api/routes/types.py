@@ -271,6 +271,10 @@ class WorkflowRequestShare(BaseModel):
         default=False,
         example=True,
     )
+    gpu_event_id: Optional[str] = Field(
+        default=None,
+        example="123e4567-e89b-12d3-a456-426614174000",
+    )
 
     # model_config = {
     #     "json_schema_extra": {
@@ -395,6 +399,7 @@ class WorkflowRunNativeOutputModel(BaseModel):
     status_endpoint: str
     file_upload_endpoint: str
     cd_token: str
+    gpu_event_id: Optional[str] = None
 
     class Config:
         from_attributes = True

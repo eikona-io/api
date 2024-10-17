@@ -244,8 +244,8 @@ async def stream_progress(
             )
 
             query = f"""
-            SELECT run_id, workflow_id, machine_id, timestamp, progress, node_class, status
-            FROM progress_updates
+            SELECT run_id, workflow_id, workflow_version_id, machine_id, timestamp, progress, log, log_type
+            FROM workflow_events
             WHERE {id_type}_id = '{id_value}'
             {f"AND timestamp > toDateTime64('{formatted_time}', 6)" if formatted_time is not None else ""}
             ORDER BY timestamp ASC
@@ -262,7 +262,7 @@ async def stream_progress(
 
                     # update the last_update_time to the timestamp of the last row
                     if result.result_rows:
-                        last_update_time = result.result_rows[-1][3]
+                        last_update_time = result.result_rows[-1][4]
 
                     for run_id in run_ids:
                         query = (
@@ -292,10 +292,11 @@ async def stream_progress(
                     (
                         run_id,
                         workflow_id,
+                        workflow_version_id,
                         machine_id,
                         timestamp,
                         progress,
-                        node_class,
+                        log,
                         status,
                     ) = row
                     last_update_time = timestamp
@@ -305,7 +306,7 @@ async def stream_progress(
                         "machine_id": str(machine_id),
                         "progress": progress,
                         "status": status,
-                        "node_class": node_class,
+                        "node_class": log,
                         "timestamp": timestamp.isoformat()[:-3] + "Z",
                     }
                     yield f"data: {json.dumps(progress_data)}\n\n"
