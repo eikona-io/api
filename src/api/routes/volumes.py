@@ -481,9 +481,7 @@ async def remove_file(request: Request, body: RemoveFileInput):
     return {"deleted_path": body.path}
 
 
-
-
-def download_file_task(
+async def download_file_task(
     download_url,
     folder_path,
     filename,
@@ -491,10 +489,13 @@ def download_file_task(
     db_model_id,
     full_path,
     volume_name,
-    auth_token,
 ):
     app = modal.App("volume-operations")
-    @app.function(serialized=True)
+
+    @app.function(
+        serialized=True,
+        image=modal.Image.debian_slim().pip_install("aiohttp"),
+    )
     async def download_file_task(
         download_url,
         folder_path,
@@ -503,14 +504,12 @@ def download_file_task(
         db_model_id,
         full_path,
         volume_name,
-        auth_token,
     ):
         import time
         import os
         from enum import Enum
         from modal import Volume
-        import urllib.request
-        import json
+        import aiohttp
 
         print("download_file_task start")
         print("callback_url", callback_url)
@@ -520,7 +519,7 @@ def download_file_task(
             SUCCESS = "success"
             FAILED = "failed"
 
-        def progress_callback(
+        async def progress_callback(
             callback_url,
             model_id,
             progress,
@@ -531,82 +530,91 @@ def download_file_task(
                 "download_progress": progress,
                 "status": status.value,
             }
+            # print("auth_token: ", auth_token)
+            # print("callback_url: ", callback_url)
             try:
-                data = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(callback_url, data=data, method="POST")
-                req.add_header("Content-Type", "application/json")
-                req.add_header("Authorization", auth_token)
-                with urllib.request.urlopen(req) as response:
-                    response.read()
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        callback_url,
+                        json=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                        },
+                    )
             except Exception as e:
                 print("error in progress callback: ", e)
 
+        async def download_file(download_url):
+            headers = {"Accept-Encoding": "identity"}
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(download_url, headers=headers) as response:
+                        response.raise_for_status()
+                        total_size = int(response.headers.get("Content-Length", 0))
+                        downloaded_size = 0
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        last_callback_time = time.time()
+
+                        with open(full_path, "wb") as file:
+                            async for data in response.content.iter_chunked(8192):
+                                if data:
+                                    file.write(data)
+                                    downloaded_size += len(data)
+                                    progress = (
+                                        int((downloaded_size / total_size) * 90)
+                                        if total_size
+                                        else 0
+                                    )
+                                    current_time = time.time()
+                                    if current_time - last_callback_time >= 5:
+                                        print("=======================================")
+                                        print("folder_path: ", folder_path)
+                                        print("filename: ", filename)
+                                        print("full_path: ", full_path)
+                                        print("downloaded_size: ", downloaded_size)
+                                        print("total_size: ", total_size)
+                                        print("progress: ", progress)
+                                        print("=======================================")
+                                        await progress_callback(
+                                            callback_url,
+                                            db_model_id,
+                                            progress,
+                                            ModelDownloadStatus.PROGRESS,
+                                        )
+                                        last_callback_time = current_time
+
+            except Exception as e:
+                await progress_callback(
+                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                )
+                raise e
+
         if "civitai.com" in download_url:
-            download_url = (
-                download_url
-                + ("&" if "?" in download_url else "?")
-                + "token="
-                + os.environ["CIVITAI_KEY"]
-            )
-        print("auth_token", auth_token)
+            download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
 
-        full_path = os.path.join(folder_path, filename)
-        headers = {"Accept-Encoding": "identity"}  # Ensure we get the actual file size
-        try:
-            req = urllib.request.Request(download_url, headers=headers)
-            with urllib.request.urlopen(req) as response:
-                total_size = int(response.headers.get("Content-Length", 0))
-                downloaded_size = 0
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                last_callback_time = time.time()
-
-                with open(full_path, "wb") as file:
-                    while True:
-                        chunk = response.read(8192)
-                        if not chunk:
-                            break
-                        file.write(chunk)
-                        downloaded_size += len(chunk)
-                        if total_size:
-                            progress = (
-                                downloaded_size / total_size
-                            ) * 90  # need to upload after, so this is 90
-                        else:
-                            progress = 0
-                        current_time = time.time()
-                        if current_time - last_callback_time >= 5:
-                            progress_callback(
-                                callback_url,
-                                db_model_id,
-                                int(progress),
-                                ModelDownloadStatus.PROGRESS,
-                            )
-                            last_callback_time = current_time
-        except urllib.error.URLError as e:
-            progress_callback(callback_url, db_model_id, 0, ModelDownloadStatus.FAILED)
-            raise e
-
-        print("download_file_task done")
+        await download_file(download_url)
         volume = Volume.lookup(volume_name, create_if_missing=True)
-
+        print("=======================================")
+        print("download_file_task done")
         print("download_url: ", download_url)
         print("folder_path: ", folder_path)
         print("filename: ", filename)
         print("callback_url: ", callback_url)
         print("body.db_model_id: ", db_model_id)
+        print("=======================================")
 
         with volume.batch_upload() as batch:
             batch.put_file(full_path, full_path)
 
         try:
-            progress_callback(
+            await progress_callback(
                 callback_url, db_model_id, 100, ModelDownloadStatus.SUCCESS
             )
         except Exception as e:
             print(f"Failed to send progress callback: {str(e)}")
 
-    with app.run.aio():
-        download_file_task.remote(
+    async with app.run.aio():
+        await download_file_task.remote.aio(
             download_url,
             folder_path,
             filename,
@@ -614,7 +622,6 @@ def download_file_task(
             db_model_id,
             full_path,
             volume_name,
-            auth_token,
         )
 
 
@@ -630,9 +637,6 @@ async def add_file(
 
     volume = lookup_volume(volume_name, create_if_missing=True)
     full_path = os.path.join(folder_path, filename)
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
 
     print("volume: ", volume)
     print("full_path: ", full_path)
@@ -654,7 +658,6 @@ async def add_file(
         body.db_model_id,
         full_path,
         volume_name,
-        auth_token,
     )
 
     return {"full_path": full_path}
@@ -708,70 +711,6 @@ def lookup_volume(volume_name: str, create_if_missing: bool = False):
         return Volume.lookup(volume_name, create_if_missing=create_if_missing)
     except Exception as e:
         raise Exception(f"Can't find Volume: {e}")
-
-
-def download_file(url, path, filename, callback_url, model_id):
-    import requests
-
-    full_path = os.path.join(path, filename)
-    headers = {"Accept-Encoding": "identity"}  # Ensure we get the actual file size
-    try:
-        with requests.get(url, headers=headers, stream=True) as response:
-            response.raise_for_status()  # Raise an exception for non-2xx status codes
-            total_size = int(response.headers.get("Content-Length", 0))
-            downloaded_size = 0
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            last_callback_time = time.time()
-
-            with open(full_path, "wb") as file:
-                for data in response.iter_content(chunk_size=8192):
-                    if data:
-                        file.write(data)
-                        downloaded_size += len(data)
-                        if total_size:
-                            progress = (
-                                downloaded_size / total_size
-                            ) * 90  # need to upload after, so this is 90
-                        else:
-                            progress = 0
-                        current_time = time.time()
-                        if current_time - last_callback_time >= 5:
-                            progress_callback(
-                                callback_url,
-                                model_id,
-                                int(progress),
-                                ModelDownloadStatus.PROGRESS,
-                            )
-                            last_callback_time = current_time
-    except requests.exceptions.RequestException as e:
-        progress_callback(callback_url, model_id, 0, ModelDownloadStatus.FAILED)
-        raise e
-
-
-def progress_callback(
-    callback_url,
-    model_id,
-    progress,
-    status: ModelDownloadStatus,
-    filehash: Optional[str] = None,
-    error_log: Optional[str] = None,
-):
-    import requests
-
-    payload = {
-        "model_id": model_id,
-        "download_progress": progress,
-        "status": status.value,
-    }
-    if filehash:
-        payload["filehash"] = filehash
-    if error_log:
-        payload["error_log"] = error_log
-
-    try:
-        requests.post(callback_url, json=payload)
-    except Exception as e:
-        print("error in progress callback: ", e)
 
 
 @router.get("/volume/ls_full")
