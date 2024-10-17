@@ -510,6 +510,7 @@ async def _create_run(
                             machine.auth_token.encode()
                         ).decode()
                         headers["Authorization"] = f"Basic {credentials}"
+                        headers["authorizationheader"] = machine.auth_token
 
                     # print(headers)
 
