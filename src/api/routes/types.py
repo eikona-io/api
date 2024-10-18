@@ -42,13 +42,13 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 
-class WorkflowRunOutputModel(BaseModel):
-    id: UUID
-    run_id: UUID
-    data: Optional[Dict[str, Any]]
-    node_meta: Optional[Dict[str, Any]]
-    created_at: datetime
-    updated_at: datetime
+# class WorkflowRunOutputModel(BaseModel):
+#     id: UUID
+#     run_id: UUID
+#     data: Optional[Dict[str, Any]]
+#     node_meta: Optional[Dict[str, Any]]
+#     created_at: datetime
+#     updated_at: datetime
 
 
 def format_datetime(dt: Optional[datetime]) -> Optional[str]:
@@ -76,6 +76,27 @@ class WorkflowListResponse(BaseModel):
     workflows: List[WorkflowModel]
     query_length: int
 
+class MediaItem(BaseModel):
+    url: str
+    type: str
+    filename: str
+    is_public: Optional[bool]
+    subfolder: Optional[str]
+    upload_duration: Optional[float]
+
+
+class WorkflowRunOutputModel(BaseModel):
+    id: UUID
+    run_id: UUID
+    data: Dict[str, List[MediaItem]]
+    node_meta: Optional[Dict[str, Any]]
+    created_at: datetime
+    updated_at: datetime
+    type: Optional[str] = None
+    node_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 class WorkflowRunModel(BaseModel):
     id: UUID
@@ -346,27 +367,6 @@ class Input(BaseModel):
     status_endpoint: str
     file_upload_endpoint: str
 
-
-class MediaItem(BaseModel):
-    url: str
-    type: str
-    filename: str
-    is_public: Optional[bool]
-    subfolder: Optional[str]
-    upload_duration: Optional[float]
-
-
-class WorkflowRunOutputModel(BaseModel):
-    id: UUID
-    run_id: UUID
-    data: Dict[str, List[MediaItem]]
-    created_at: datetime
-    updated_at: datetime
-    type: Optional[str] = None
-    node_id: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 class LogDataContent(BaseModel):
     logs: str

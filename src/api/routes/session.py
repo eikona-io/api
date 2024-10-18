@@ -125,6 +125,7 @@ async def get_machine_sessions(
             .where(GPUEvent.machine_id == machine_id)
             .where(GPUEvent.end_time.is_(None))
             .where(GPUEvent.session_id.isnot(None))
+            .order_by(GPUEvent.start_time.desc())
             .apply_org_check(request)
         )
     )
