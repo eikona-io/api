@@ -233,7 +233,7 @@ async def update_run(
             insert_to_clickhouse, client, "progress_updates", progress_data
         )
 
-        if workflow_run.webhook and workflow_run.webhook_intermediate_status:
+        if workflow_run.webhook is not None and workflow_run.webhook_intermediate_status:
             background_tasks.add_task(
                 send_webhook, workflow_run, updated_at, workflow_run.id
             )
