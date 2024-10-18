@@ -80,9 +80,9 @@ class MediaItem(BaseModel):
     url: str
     type: str
     filename: str
-    is_public: Optional[bool]
-    subfolder: Optional[str]
-    upload_duration: Optional[float]
+    is_public: Optional[bool] = True
+    subfolder: Optional[str] = None
+    upload_duration: Optional[float] = None
 
 
 class WorkflowRunOutputModel(BaseModel):
