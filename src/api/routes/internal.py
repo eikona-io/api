@@ -371,7 +371,7 @@ async def update_run(
             send_realtime_update, str(workflow_run.id), workflow_run_data
         )
 
-        if workflow_run.webhook:
+        if workflow_run.webhook is not None:
             background_tasks.add_task(
                 send_webhook, workflow_run, updated_at, workflow_run.id
             )
