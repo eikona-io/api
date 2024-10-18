@@ -101,9 +101,9 @@ class WorkflowRunOutputModel(BaseModel):
 class WorkflowRunModel(BaseModel):
     id: UUID
     workflow_version_id: Optional[UUID]
-    workflow_inputs: Optional[Dict[str, Any]]
+    workflow_inputs: Optional[Any]
     workflow_id: UUID
-    workflow_api: Optional[Dict[str, Any]]
+    workflow_api: Optional[Any]
     machine_id: Optional[UUID]
     origin: str
     status: str
