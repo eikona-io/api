@@ -80,7 +80,7 @@ class MediaItem(BaseModel):
     url: str
     type: str
     filename: str
-    is_public: Optional[bool] = True
+    is_public: Optional[bool] = None
     subfolder: Optional[str] = None
     upload_duration: Optional[float] = None
 
@@ -89,7 +89,7 @@ class WorkflowRunOutputModel(BaseModel):
     id: UUID
     run_id: UUID
     data: Dict[str, List[MediaItem]]
-    node_meta: Optional[Dict[str, Any]]
+    node_meta: Optional[Any]
     created_at: datetime
     updated_at: datetime
     type: Optional[str] = None
