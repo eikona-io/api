@@ -53,33 +53,41 @@ from fastapi import Depends
 router = APIRouter()
 
 
-async def send_webhook(workflow_run, updatedAt, run_id):
-    url = workflow_run.webhook
+async def send_webhook(workflow_run, updatedAt: datetime, run_id: str):
+    # try:
+    url = workflow_run['webhook']
     extra_headers = {}  # You may want to define this based on your requirements
-
+    
     payload = {
-        "status": workflow_run.status,
-        "live_status": workflow_run.live_status,
-        "progress": workflow_run.progress,
-        "run_id": workflow_run.id,
-        "outputs": workflow_run.data,  # Assuming 'data' contains the outputs
+        "status": workflow_run['status'],
+        "live_status": workflow_run['live_status'],
+        "progress": workflow_run['progress'],
+        "run_id": workflow_run['id'],
+        "outputs": workflow_run['outputs'] if 'outputs' in workflow_run else []  # Assuming 'data' contains the outputs
     }
+    
+    logging.info("Webhook going to be sent to: " + url)
 
     headers = {"Content-Type": "application/json", **extra_headers}
 
     options = {"method": "POST", "headers": headers, "json": payload}
-
-    try:
-        response = await retry_fetch(url, options)
-        if response.ok:
-            return {"status": "success", "message": "Webhook sent successfully"}
-        else:
-            return {
-                "status": "error",
-                "message": f"Webhook failed with status {response.status}",
-            }
-    except Exception as error:
-        return {"status": "error", "message": str(error)}
+    
+    response = await retry_fetch(url, options)
+    if response.ok:
+        logging.info("Webhook sent successfully")
+        return {"status": "success", "message": "Webhook sent successfully"}
+    else:
+        logging.info(
+            f"Webhook failed with status {response.status}",
+        )
+        return {
+            "status": "error",
+            "message": f"Webhook failed with status {response.status}",
+        }
+    # except Exception as error:
+    #     logging.info("Webhook failed with error: " + str(error))
+    #     raise error
+    #     return {"status": "error", "message": str(error)}
 
 
 
@@ -234,9 +242,12 @@ async def update_run(
         )
 
         if workflow_run.webhook is not None and workflow_run.webhook_intermediate_status:
-            background_tasks.add_task(
-                send_webhook, workflow_run, updated_at, workflow_run.id
+            asyncio.create_task(
+                send_webhook(workflow_run.to_dict(), updated_at, workflow_run.id)
             )
+            # background_tasks.add_task(
+            #     send_webhook, workflow_run, updated_at, workflow_run.id
+            # )
 
         return {"status": "success"}
 
@@ -372,9 +383,12 @@ async def update_run(
         )
 
         if workflow_run.webhook is not None:
-            background_tasks.add_task(
-                send_webhook, workflow_run, updated_at, workflow_run.id
+            asyncio.create_task(
+                send_webhook(workflow_run_data, updated_at, workflow_run.id)
             )
+            # background_tasks.add_task(
+            #     send_webhook, workflow_run, updated_at, workflow_run.id
+            # )
 
         return {"status": "success"}
 
