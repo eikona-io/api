@@ -21,7 +21,7 @@ import re
 import grpclib
 from modal import Volume
 import modal
-
+from huggingface_hub import HfApi
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +395,7 @@ class AddFileInput(BaseModel):
     filename: str
     callback_url: str
     db_model_id: str
+    upload_type: str
 
 
 class ModelDownloadStatus(Enum):
@@ -489,12 +490,13 @@ async def download_file_task(
     db_model_id,
     full_path,
     volume_name,
+    upload_type,
 ):
     app = modal.App("volume-operations")
 
     @app.function(
         serialized=True,
-        image=modal.Image.debian_slim().pip_install("aiohttp"),
+        image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
     )
     async def download_file_task(
         download_url,
@@ -504,12 +506,16 @@ async def download_file_task(
         db_model_id,
         full_path,
         volume_name,
+        upload_type,
+        token,
     ):
         import time
         import os
         from enum import Enum
         from modal import Volume
         import aiohttp
+        from huggingface_hub import hf_hub_download, HfApi
+        import re
 
         print("download_file_task start")
         print("callback_url", callback_url)
@@ -530,8 +536,6 @@ async def download_file_task(
                 "download_progress": progress,
                 "status": status.value,
             }
-            # print("auth_token: ", auth_token)
-            # print("callback_url: ", callback_url)
             try:
                 async with aiohttp.ClientSession() as session:
                     await session.post(
@@ -544,7 +548,11 @@ async def download_file_task(
             except Exception as e:
                 print("error in progress callback: ", e)
 
-        async def download_file(download_url):
+        def extract_huggingface_repo_id(url: str) -> str | None:
+            match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
+            return match.group(1) if match else None
+
+        async def download_url_file(download_url):
             headers = {"Accept-Encoding": "identity"}
             try:
                 async with aiohttp.ClientSession() as session:
@@ -568,6 +576,7 @@ async def download_file_task(
                                     current_time = time.time()
                                     if current_time - last_callback_time >= 5:
                                         print("=======================================")
+                                        print("download url started")
                                         print("folder_path: ", folder_path)
                                         print("filename: ", filename)
                                         print("full_path: ", full_path)
@@ -583,16 +592,62 @@ async def download_file_task(
                                         )
                                         last_callback_time = current_time
 
+                return full_path
             except Exception as e:
                 await progress_callback(
                     callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
                 )
                 raise e
 
-        if "civitai.com" in download_url:
-            download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
+        async def download_hf_model(folder_path):
+            try:
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-        await download_file(download_url)
+                # def custom_progress_callback(progress):
+                #     print(f"Download progress: {progress:.2f}%")
+                #     progress_callback(
+                #         callback_url,
+                #         db_model_id,
+                #         int(progress),
+                #         ModelDownloadStatus.PROGRESS,
+                #     )
+
+                repo_id = extract_huggingface_repo_id(download_url)
+
+                print("=======================================")
+                print("huggingface started")
+                print("repo_id: ", repo_id)
+                print("folder_path: ", folder_path)
+                print("filename: ", filename)
+                print("full_path: ", full_path)
+                print("=======================================")
+
+                folder_path = folder_path.rstrip("/")
+
+                downloaded_model_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    subfolder=folder_path,
+                    force_download=True,
+                    token=token,
+                )
+
+                return downloaded_model_path
+            except Exception as e:
+                await progress_callback(
+                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                )
+                raise e
+
+        if upload_type == "huggingface":
+            downloaded_path = await download_hf_model(folder_path)
+        elif upload_type == "download-url":
+            if "civitai.com" in download_url:
+                download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
+            downloaded_path = await download_url_file(download_url)
+        else:
+            raise ValueError(f"Unsupported upload_type: {upload_type}")
+
         volume = Volume.lookup(volume_name, create_if_missing=True)
         print("=======================================")
         print("download_file_task done")
@@ -604,7 +659,7 @@ async def download_file_task(
         print("=======================================")
 
         with volume.batch_upload() as batch:
-            batch.put_file(full_path, full_path)
+            batch.put_file(downloaded_path, full_path)
 
         try:
             await progress_callback(
@@ -622,6 +677,8 @@ async def download_file_task(
             db_model_id,
             full_path,
             volume_name,
+            upload_type,
+            token=os.environ.get("HUGGINGFACE_TOKEN"),
         )
 
 
@@ -634,6 +691,7 @@ async def add_file(
     folder_path = body.folder_path
     filename = body.filename
     callback_url = body.callback_url
+    upload_type = body.upload_type
 
     volume = lookup_volume(volume_name, create_if_missing=True)
     full_path = os.path.join(folder_path, filename)
@@ -658,6 +716,7 @@ async def add_file(
         body.db_model_id,
         full_path,
         volume_name,
+        upload_type,
     )
 
     return {"full_path": full_path}
@@ -785,3 +844,41 @@ async def list_contents(request: Request, volume_name: str, path: str = "/"):
             raise HTTPException(status_code=500, detail="Internal server error.")
     return {"contents": contents}
 
+class ListModelsInput(BaseModel):
+    limit: int = 10
+    search: Optional[str] = None
+
+
+@router.get("/volume/list-models")
+async def list_models(request: Request, body: ListModelsInput):
+    limit = body.limit
+    search = body.search
+
+    api = HfApi()
+    models = api.list_models(limit=limit, search=search)
+
+    models_list = list(models)  # Convert generator to list
+
+    if models_list:
+        model = models_list[0]
+        print("=======================================")
+        print("Sample model details:")
+        print(f"Model ID: {model.id}")
+        print(f"Last modified: {model.last_modified}")
+        print(f"Tags: {model.tags}")
+        print("=======================================")
+        return models_list
+        # return {
+        #     "id": model.id,
+        #     "last_modified": model.last_modified,
+        #     "tags": model.tags,
+        # }
+    else:
+        return {"message": "No models found"}
+
+
+@router.get("/volume/get-model-info")
+async def get_model_info(request: Request, repo_id: str):
+    api = HfApi()
+    model_info = api.model_info(repo_id)
+    return model_info
