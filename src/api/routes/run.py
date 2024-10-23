@@ -110,9 +110,9 @@ async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_
     post_process_outputs(run.outputs, user_settings)
 
     # Convert the run to a dictionary and remove the run_log
-    run_dict = {k: v for k, v in vars(run).items() if k != "run_log"}
+    # run_dict = {k: v for k, v in vars(run).items() if k != "run_log"}
 
-    return run_dict
+    return run.to_dict()
 
 
 def get_comfy_deploy_runner(machine_id: str, gpu: str):
