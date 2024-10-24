@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
-comfydeploy_hash = "292f77f06b22e5e03921c755affe0042c1abc7b8"
+comfydeploy_hash = "7fdfba6b6e617a14d663ac78e6f27a517d2b3fe6"
 comfyui_hash = "8ce2a1052ca03183768da0aaa483024e58b8008c"
 
 def comfyui_cmd(
