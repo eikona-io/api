@@ -653,22 +653,21 @@ async def download_file_task(
                     ModelDownloadStatus.PROGRESS,
                 )
 
-                while True:
-                    try:
-                        downloaded_model_path = hf_hub_download(
-                            repo_id=repo_id,
-                            filename=filename,
-                            subfolder=folder_path,
-                            token=token,
-                        )
-                        print("downloaded_model_path: ", downloaded_model_path)
-                        return downloaded_model_path
-                    except Exception as e:
-                        print("error in hf_hub_download: ", e)
-                        await progress_callback(
-                            callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
-                        )
-                        raise e
+                try:
+                    downloaded_model_path = hf_hub_download(
+                        repo_id=repo_id,
+                        filename=filename,
+                        subfolder=folder_path,
+                        token=token,
+                    )
+                    print("downloaded_model_path: ", downloaded_model_path)
+                    return downloaded_model_path
+                except Exception as e:
+                    print("error in hf_hub_download: ", e)
+                    await progress_callback(
+                        callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                    )
+                    raise e
 
             except Exception as e:
                 await progress_callback(
