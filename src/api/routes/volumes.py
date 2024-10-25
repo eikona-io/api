@@ -556,8 +556,12 @@ async def download_file_task(
             match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
             return match.group(1) if match else None
 
-        async def download_url_file(download_url):
-            headers = {"Accept-Encoding": "identity"}
+        async def download_url_file(download_url, token):
+            headers = {
+                "Accept-Encoding": "identity",
+            }
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(download_url, headers=headers) as response:
@@ -677,7 +681,8 @@ async def download_file_task(
 
         try:
             if upload_type == "huggingface":
-                downloaded_path = await download_hf_model(folder_path)
+                # downloaded_path = await download_hf_model(folder_path)
+                downloaded_path = await download_url_file(download_url, token)
             elif upload_type == "download-url":
                 if "civitai.com" in download_url:
                     download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
