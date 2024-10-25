@@ -139,7 +139,7 @@ app.openapi = custom_openapi
 api_router = APIRouter()  # Remove the prefix here
 public_api_router = APIRouter()  # Remove the prefix here
 
-# app.webhooks.include_router(run.webhook_router)
+app.webhooks.include_router(run.webhook_router)
 
 # Include routers
 api_router.include_router(run.router)

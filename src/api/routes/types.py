@@ -97,7 +97,15 @@ class WorkflowRunOutputModel(BaseModel):
 
     class Config:
         from_attributes = True
-
+        
+        
+class WorkflowRunWebhookBody(BaseModel):
+    run_id: str
+    status: WorkflowRunStatus
+    live_status: Optional[str]
+    progress: float = Field(default=0)
+    outputs: List[WorkflowRunOutputModel] = []
+    
 class WorkflowRunModel(BaseModel):
     id: UUID
     workflow_version_id: Optional[UUID]

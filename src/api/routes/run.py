@@ -5,7 +5,7 @@ from pprint import pprint
 from urllib.parse import urljoin
 import uuid
 
-from api.sqlmodels import WorkflowRunWebhookBody, WorkflowRunWebhookResponse
+from api.sqlmodels import WorkflowRunWebhookResponse
 from .types import (
     CreateRunBatchResponse,
     CreateRunRequest,
@@ -18,6 +18,8 @@ from .types import (
     WorkflowRunOutputModel,
     WorkflowRunRequest,
     WorkflowRunVersionRequest,
+    WorkflowRunWebhookBody,
+    # WorkflowWebhookModel,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Body
 from fastapi.responses import StreamingResponse
@@ -74,7 +76,7 @@ webhook_router = APIRouter(tags=["Callbacks"])
     summary="Receive run status updates via webhook",
     description="This endpoint is called by the workflow runner to update the status of a run.",
 )
-async def run_update_webhook(
+async def run_update(
     body: WorkflowRunWebhookBody = Body(description="The updated run information"),
 ):
     # Implement the webhook update logic here

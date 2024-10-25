@@ -1,6 +1,6 @@
 from datetime import datetime
 import enum
-from typing import Optional, Dict
+from typing import List, Optional, Dict
 from pydantic import BaseModel
 from sqlalchemy import JSON, Column, MetaData
 from sqlmodel import SQLModel, Field
@@ -33,12 +33,12 @@ class WorkflowRunOutput(SQLModel, table=True):
     updated_at: datetime = Field()
 
 
-class WorkflowRunWebhookBody(BaseModel):
-    status: WorkflowRunStatus
-    live_status: str
-    progress: float
-    run_id: str
-    outputs: WorkflowRunOutput
+# class WorkflowRunWebhookBody(BaseModel):
+#     status: WorkflowRunStatus
+#     live_status: Optional[str]
+#     progress: float
+#     run_id: str
+#     outputs: List[WorkflowRunOutput]
 
 
 class WorkflowRunWebhookResponse(BaseModel):
