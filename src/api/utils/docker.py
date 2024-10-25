@@ -2,8 +2,8 @@ import json
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
-comfydeploy_hash = "fe116a46552ae26ea046b50c839e9421f6b67847"
-comfyui_hash = "b4626ab93ebac96d87d239432f49f8af44cd0744"
+comfydeploy_hash = "7fdfba6b6e617a14d663ac78e6f27a517d2b3fe6"
+comfyui_hash = "8ce2a1052ca03183768da0aaa483024e58b8008c"
 
 def comfyui_cmd(
     cpu: bool = False,
@@ -157,8 +157,8 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
             else:
                 docker_commands.append(extra_command['commands'])
     
-    if not docker_commands:
-        raise ValueError("No docker commands")
+    # if not docker_commands:
+    #     raise ValueError("No docker commands")
     
     enable_uv = False
     docker_commands = [[y.replace("python -m pip install", "uv pip install") if enable_uv else y for y in x] for x in docker_commands]

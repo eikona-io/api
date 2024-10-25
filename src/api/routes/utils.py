@@ -487,8 +487,10 @@ async def send_realtime_update(id: str, data: dict):
 async def fetch_with_timeout(url, options, timeout=20):
     try:
         async with aiohttp.ClientSession() as session:
+            # logging.info(options)
+            method = options.pop('method', 'GET')  # Extract method from options
             async with session.request(
-                options.get("method", "GET"), url, **options, timeout=timeout
+                method, url, **options, timeout=timeout
             ) as response:
                 return response
     except asyncio.TimeoutError:
