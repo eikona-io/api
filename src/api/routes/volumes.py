@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple, Union, Optional
 import logging
 import os
 import httpx
-from .utils import async_lru_cache, select
+from .utils import async_lru_cache, get_user_settings, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 from api.database import get_db
@@ -22,6 +22,7 @@ import grpclib
 from modal import Volume
 import modal
 from huggingface_hub import HfApi
+
 
 logger = logging.getLogger(__name__)
 
@@ -491,10 +492,12 @@ async def download_file_task(
     full_path,
     volume_name,
     upload_type,
+    hugging_face_token,
 ):
     app = modal.App("volume-operations")
 
     @app.function(
+        timeout=600,
         serialized=True,
         image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
     )
@@ -515,6 +518,7 @@ async def download_file_task(
         from modal import Volume
         import aiohttp
         from huggingface_hub import hf_hub_download, HfApi
+        from huggingface_hub.utils import enable_progress_bars
         import re
 
         print("download_file_task start")
@@ -603,123 +607,178 @@ async def download_file_task(
             try:
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-                # def custom_progress_callback(progress):
-                #     print(f"Download progress: {progress:.2f}%")
-                #     progress_callback(
-                #         callback_url,
-                #         db_model_id,
-                #         int(progress),
-                #         ModelDownloadStatus.PROGRESS,
-                #     )
+                await progress_callback(
+                    callback_url,
+                    db_model_id,
+                    20,
+                    ModelDownloadStatus.PROGRESS,
+                )
 
                 repo_id = extract_huggingface_repo_id(download_url)
 
+                # Extract folder_path and filename from download_url
+                from urllib.parse import urlparse, unquote
+
+                parsed_url = urlparse(download_url)
+                path_parts = unquote(parsed_url.path).split("/")
+
+                # The last non-empty part is the filename
+                filename = next((part for part in reversed(path_parts) if part), "")
+
+                # The folder path is the part after 'main/' and before the filename
+                main_index = path_parts.index("main") if "main" in path_parts else -1
+                if main_index != -1 and main_index + 1 < len(path_parts) - 1:
+                    folder_path = "/".join(path_parts[main_index + 1 : -1])
+                else:
+                    folder_path = ""
+
+                print("Extracted folder_path:", folder_path)
+                print("Extracted filename:", filename)
+
                 print("=======================================")
                 print("huggingface started")
+                print("download_url: ", download_url)
                 print("repo_id: ", repo_id)
                 print("folder_path: ", folder_path)
                 print("filename: ", filename)
                 print("full_path: ", full_path)
                 print("=======================================")
 
-                folder_path = folder_path.rstrip("/")
+                enable_progress_bars()
 
-                downloaded_model_path = hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    subfolder=folder_path,
-                    force_download=True,
-                    token=token,
+                await progress_callback(
+                    callback_url,
+                    db_model_id,
+                    50,
+                    ModelDownloadStatus.PROGRESS,
                 )
 
-                return downloaded_model_path
+                while True:
+                    try:
+                        downloaded_model_path = hf_hub_download(
+                            repo_id=repo_id,
+                            filename=filename,
+                            subfolder=folder_path,
+                            token=token,
+                        )
+                        print("downloaded_model_path: ", downloaded_model_path)
+                        return downloaded_model_path
+                    except Exception as e:
+                        print("error in hf_hub_download: ", e)
+                        await progress_callback(
+                            callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                        )
+                        raise e
+
             except Exception as e:
                 await progress_callback(
                     callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
                 )
                 raise e
 
-        if upload_type == "huggingface":
-            downloaded_path = await download_hf_model(folder_path)
-        elif upload_type == "download-url":
-            if "civitai.com" in download_url:
-                download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
-            downloaded_path = await download_url_file(download_url)
-        else:
-            raise ValueError(f"Unsupported upload_type: {upload_type}")
-
-        volume = Volume.lookup(volume_name, create_if_missing=True)
-        print("=======================================")
-        print("download_file_task done")
-        print("download_url: ", download_url)
-        print("folder_path: ", folder_path)
-        print("filename: ", filename)
-        print("callback_url: ", callback_url)
-        print("body.db_model_id: ", db_model_id)
-        print("=======================================")
-
-        with volume.batch_upload() as batch:
-            batch.put_file(downloaded_path, full_path)
-
         try:
+            if upload_type == "huggingface":
+                downloaded_path = await download_hf_model(folder_path)
+            elif upload_type == "download-url":
+                if "civitai.com" in download_url:
+                    download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
+                downloaded_path = await download_url_file(download_url)
+            else:
+                raise ValueError(f"Unsupported upload_type: {upload_type}")
+
+            volume = Volume.lookup(volume_name, create_if_missing=True)
+            print("=======================================")
+            print("download_file_task done")
+            print("download_url: ", download_url)
+            print("folder_path: ", folder_path)
+            print("filename: ", filename)
+            print("callback_url: ", callback_url)
+            print("body.db_model_id: ", db_model_id)
+            print("=======================================")
+
+            with volume.batch_upload() as batch:
+                batch.put_file(downloaded_path, full_path)
+
             await progress_callback(
                 callback_url, db_model_id, 100, ModelDownloadStatus.SUCCESS
             )
         except Exception as e:
-            print(f"Failed to send progress callback: {str(e)}")
+            print(f"Error in download_file_task: {str(e)}")
+            await progress_callback(
+                callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+            )
+            raise e
 
-    async with app.run.aio():
-        await download_file_task.remote.aio(
-            download_url,
-            folder_path,
-            filename,
-            callback_url,
-            db_model_id,
-            full_path,
-            volume_name,
-            upload_type,
-            token=os.environ.get("HUGGINGFACE_TOKEN"),
-        )
+    try:
+        async with app.run.aio():
+            await download_file_task.remote.aio(
+                download_url,
+                folder_path,
+                filename,
+                callback_url,
+                db_model_id,
+                full_path,
+                volume_name,
+                upload_type,
+                token=hugging_face_token,
+            )
+    except Exception as e:
+        print(f"Error in download_file_task outer function: {str(e)}")
+        raise e
 
 
 @router.post("/volume/add_file")
 async def add_file(
-    request: Request, body: AddFileInput, background_tasks: BackgroundTasks
+    request: Request,
+    body: AddFileInput,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
-    volume_name = body.volume_name
-    download_url = body.download_url
-    folder_path = body.folder_path
-    filename = body.filename
-    callback_url = body.callback_url
-    upload_type = body.upload_type
-
-    volume = lookup_volume(volume_name, create_if_missing=True)
-    full_path = os.path.join(folder_path, filename)
-
-    print("volume: ", volume)
-    print("full_path: ", full_path)
-
     try:
-        file_exists = does_file_exist(full_path, volume)
-        if file_exists:
-            raise HTTPException(status_code=400, detail="File already exists.")
-    except grpclib.exceptions.GRPCError as e:
-        print("e: ", str(e))
-        raise HTTPException(status_code=400, detail="Error: " + str(e))
+        volume_name = body.volume_name
+        download_url = body.download_url
+        folder_path = body.folder_path
+        filename = body.filename
+        callback_url = body.callback_url
+        upload_type = body.upload_type
+        user_settings = await get_user_settings(request, db)
+        hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
+        if user_settings is not None and user_settings.hugging_face_token:
+            hugging_face_token = (
+                user_settings.hugging_face_token.strip() or hugging_face_token
+            )
 
-    background_tasks.add_task(
-        download_file_task,
-        download_url,
-        folder_path,
-        filename,
-        callback_url,
-        body.db_model_id,
-        full_path,
-        volume_name,
-        upload_type,
-    )
+        volume = lookup_volume(volume_name, create_if_missing=True)
+        full_path = os.path.join(folder_path, filename)
 
-    return {"full_path": full_path}
+        print("volume: ", volume)
+        print("full_path: ", full_path)
+
+        try:
+            file_exists = does_file_exist(full_path, volume)
+            if file_exists:
+                raise HTTPException(status_code=400, detail="File already exists.")
+        except grpclib.exceptions.GRPCError as e:
+            print("e: ", str(e))
+            raise HTTPException(status_code=400, detail="Error: " + str(e))
+
+        background_tasks.add_task(
+            download_file_task,
+            download_url,
+            folder_path,
+            filename,
+            callback_url,
+            body.db_model_id,
+            full_path,
+            volume_name,
+            upload_type,
+            hugging_face_token,
+        )
+
+        return {"full_path": full_path}
+    except Exception as e:
+        print(f"Error in add_file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 # Helper functions
@@ -844,37 +903,155 @@ async def list_contents(request: Request, volume_name: str, path: str = "/"):
             raise HTTPException(status_code=500, detail="Internal server error.")
     return {"contents": contents}
 
+
+class StatusEnum(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    PROGRESS = "progress"
+
+
+class RequestModel(BaseModel):
+    model_id: str
+    status: StatusEnum
+    error_log: Optional[str] = None
+    filehash_sha256: Optional[str] = None
+    download_progress: Optional[float] = None
+
+
+@router.post("/volume/volume-upload")
+async def update_status(
+    request: Request, body: RequestModel, db: AsyncSession = Depends(get_db)
+):
+    import requests
+
+    try:
+        # Convert the Pydantic model to a dictionary
+        body_dict = body.dict()
+
+        # Convert Enum to string
+        body_dict["status"] = body_dict["status"].value
+
+        response = requests.post(
+            "http://127.0.0.1:3010/api/volume-upload", json=body_dict
+        )
+        response.raise_for_status()  # Raise an exception for HTTP errors
+
+        return {"message": "Status updated successfully"}
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error updating status: {str(e)}")
+    # try:
+    #     # Assuming you have a database connection and model table defined
+    #     # You'll need to replace these with your actual database operations
+    #     if status == StatusEnum.SUCCESS:
+    #         # Update model status to success
+    #         model_status_query = (
+    #             update(ModelDB)
+    #             .where(ModelDB.id == model_id)
+    #             .values(
+    #                 status="success",
+    #                 updated_at=datetime.now(),
+    #                 download_progress=100,
+    #                 filehash_sha256=filehash_sha256,
+    #             )
+    #         )
+    #         result = await db.execute(model_status_query)
+    #         pass
+    #     elif status == StatusEnum.PROGRESS:
+    #         # Update model download progress
+    #         model_status_query = (
+    #             update(ModelDB)
+    #             .where(ModelDB.id == model_id)
+    #             .values(
+    #                 updated_at=datetime.now(),
+    #                 download_progress=download_progress,
+    #             )
+    #         )
+    #         result = await db.execute(model_status_query)
+    #         print("download_progress: ", download_progress)
+    #         pass
+    #     elif status == StatusEnum.FAILED:
+    #         # Update model status to failed
+    #         model_status_query = (
+    #             update(ModelDB)
+    #             .where(ModelDB.id == model_id)
+    #             .values(
+    #                 status="failed",
+    #                 error_log=error_log,
+    #                 updated_at=datetime.now(),
+    #             )
+    #         )
+    #         result = await db.execute(model_status_query)
+    #         pass
+    #     else:
+    #         raise ValueError(f"Unknown status: {status}")
+
+    #     return {"message": "success"}
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=str(e))
+
+
 class ListModelsInput(BaseModel):
     limit: int = 10
     search: Optional[str] = None
 
 
 @router.get("/volume/list-models")
-async def list_models(request: Request, body: ListModelsInput):
-    limit = body.limit
-    search = body.search
-
+async def list_models(request: Request, limit: int = 10, search: Optional[str] = None):
     api = HfApi()
     models = api.list_models(limit=limit, search=search)
 
     models_list = list(models)  # Convert generator to list
 
-    if models_list:
-        model = models_list[0]
-        print("=======================================")
-        print("Sample model details:")
-        print(f"Model ID: {model.id}")
-        print(f"Last modified: {model.last_modified}")
-        print(f"Tags: {model.tags}")
-        print("=======================================")
-        return models_list
-        # return {
-        #     "id": model.id,
-        #     "last_modified": model.last_modified,
-        #     "tags": model.tags,
-        # }
-    else:
-        return {"message": "No models found"}
+    print("limit: ", limit)
+    print("search: ", search)
+
+    # Define banned keywords
+    banned_keywords = [".gitattributes", ".gitignore", "LICENSE.md", "README.md"]
+
+    # Fetch detailed model info for each model
+    detailed_models = []
+    for model in models_list:
+        try:
+            model_info = await get_model_info(request, model.id)
+            for sibling in model_info.siblings:
+                save_path, filename = (
+                    sibling.rfilename.split("/")
+                    if "/" in sibling.rfilename
+                    else ("", sibling.rfilename)
+                )
+                # Skip files with banned keywords
+                if any(keyword in filename for keyword in banned_keywords):
+                    continue
+
+                converted_model = {
+                    "type": model_info.pipeline_tag or "",
+                    "description": model_info.card_data.get("description", ""),
+                    "name": model.id,
+                    "base": "",
+                    "save_path": save_path,
+                    "filename": filename,
+                    "reference": f"https://huggingface.co/{model.id}/blob/main/{sibling.rfilename}",
+                    "url": f"https://huggingface.co/{model.id}/resolve/main/{sibling.rfilename}",
+                }
+                # Safely extract base model information
+                if model_info.tags:
+                    base_tag = next(
+                        (
+                            tag
+                            for tag in model_info.tags
+                            if tag.startswith("base_model:")
+                        ),
+                        None,
+                    )
+                    if base_tag:
+                        converted_model["base"] = base_tag.split(":")[-1]
+
+                detailed_models.append(converted_model)
+        except Exception as e:
+            print(f"Error fetching info for model {model.id}: {str(e)}")
+            continue
+
+    return {"models": detailed_models}
 
 
 @router.get("/volume/get-model-info")
