@@ -15,6 +15,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/gpu_event",
             "/api/machine-built",
             "/api/fal-webhook",
+            "/api/models",
         ]
         # print("AuthMiddleware initialized")  # Test print
 

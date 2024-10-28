@@ -200,6 +200,7 @@ class WorkflowRun(SerializableMixin, Base):
     webhook_intermediate_status = Column(Boolean, nullable=False, default=False)
 
     batch_id = Column(UUID(as_uuid=True))
+    model_id = Column(String)
 
     workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")

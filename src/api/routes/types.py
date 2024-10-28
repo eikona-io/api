@@ -344,10 +344,14 @@ class WorkflowRunVersionRequest(WorkflowRequestShare):
 
 class DeploymentRunRequest(WorkflowRequestShare):
     deployment_id: UUID
+    
+    
+class ModelRunRequest(WorkflowRequestShare):
+    model_id: str
 
 
 CreateRunRequest = Union[
-    WorkflowRunVersionRequest, WorkflowRunRequest, DeploymentRunRequest
+    WorkflowRunVersionRequest, WorkflowRunRequest, DeploymentRunRequest, ModelRunRequest
 ]
 
 

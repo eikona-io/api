@@ -2,15 +2,17 @@ import asyncio
 import datetime
 import os
 from pprint import pprint
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 import uuid
 
+from api.routes.models import AVAILABLE_MODELS
 from api.sqlmodels import WorkflowRunWebhookBody, WorkflowRunWebhookResponse
 from .types import (
     CreateRunBatchResponse,
     CreateRunRequest,
     CreateRunResponse,
     DeploymentRunRequest,
+    ModelRunRequest,
     RunStream,
     WorkflowRequestShare,
     WorkflowRunModel,
@@ -30,12 +32,16 @@ from .internal import insert_to_clickhouse, send_realtime_update, send_workflow_
 from .utils import (
     ensure_run_timeout,
     generate_temporary_token,
+    get_temporary_download_url,
     get_user_settings,
     post_process_output_data,
     post_process_outputs,
     select,
     is_exceed_spend_limit,
 )
+from botocore.config import Config
+import random
+import aioboto3
 from clickhouse_connect.driver.asyncclient import AsyncClient
 
 import datetime as dt
@@ -272,6 +278,103 @@ async def create_run_stream(
 #     return await _create_run(request, data, background_tasks, db, client)
 
 
+async def run_model(request: Request, data: ModelRunRequest, params: dict):
+    run_id = params.get("prompt_id")
+    model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
+    if not model:
+        raise HTTPException(status_code=404, detail=f"Model {data.model_id} not found")
+
+    ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
+
+    result = await ComfyDeployRunner().run.remote.aio(params)
+
+    async with get_db_context() as db:
+        user_settings = await get_user_settings(request, db)
+
+    bucket = os.getenv("SPACES_BUCKET_V2")
+    region = os.getenv("SPACES_REGION_V2")
+    access_key = os.getenv("SPACES_KEY_V2")
+    secret_key = os.getenv("SPACES_SECRET_V2")
+    public = True
+
+    if user_settings is not None:
+        if user_settings.output_visibility == "private":
+            public = False
+
+        if user_settings.custom_output_bucket:
+            bucket = user_settings.s3_bucket_name
+            region = user_settings.s3_region
+            access_key = user_settings.s3_access_key_id
+            secret_key = user_settings.s3_secret_access_key
+
+    for output in model.output:
+        if output.class_type == "ComfyDeployStdOutputImage":
+            # Generate the object key
+            file_name = f"{output.output_id}.jpeg"
+            object_key = f"outputs/runs/{run_id}/{file_name}"
+            encoded_object_key = quote(object_key)
+            download_url = f"{os.getenv('SPACES_ENDPOINT_V2')}/{encoded_object_key}"
+
+            async with aioboto3.Session().client(
+                "s3",
+                region_name=region,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                config=Config(signature_version="s3v4"),
+            ) as s3_client:
+                try:
+                    start_time = dt.datetime.now()
+                    file_content = result
+                    await s3_client.put_object(
+                        Bucket=bucket,
+                        Key=object_key,
+                        Body=file_content,
+                        ACL="public-read" if public else "private",
+                        ContentType="image/jpeg",
+                    )
+                    upload_duration = (dt.datetime.now() - start_time).total_seconds()
+
+                    file_url = (
+                        f"https://{bucket}.s3.{region}.amazonaws.com/{object_key}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error uploading file: {str(e)}")
+                    raise HTTPException(status_code=500, detail="Error uploading file")
+
+            output_data = {
+                "images": [
+                    {
+                        "url": download_url,
+                        "type": "output",
+                        "filename": file_name,
+                        "subfolder": "",
+                        "is_public": public,
+                        "upload_duration": upload_duration,
+                    }
+                ]
+            }
+
+            updated_at = dt.datetime.now(dt.UTC)
+
+            newOutput = WorkflowRunOutput(
+                id=uuid4(),  # Add this line to generate a new UUID for the primary key
+                created_at=updated_at,
+                updated_at=updated_at,
+                run_id=run_id,
+                data=output_data,
+                # node_meta=body.node_meta,
+            )
+            db.add(newOutput)
+            await db.commit()
+            await db.refresh(newOutput)
+            
+            output_dict = newOutput.to_dict()
+            post_process_output_data(output_dict["data"], user_settings)
+
+            return [output_dict]
+
+
 async def _create_run(
     request: Request,
     data: CreateRunRequest,
@@ -283,7 +386,7 @@ async def _create_run(
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
     # if exceed_spend_limit:
     #     raise HTTPException(status_code=400, detail="Spend limit reached")
-    
+
     if (
         data.batch_number is not None
         and data.batch_number > 1
@@ -296,6 +399,8 @@ async def _create_run(
 
     machine = None
     machine_id = None
+
+    workflow = None
 
     workflow_version_version = None
     workflow_version_id = None
@@ -369,16 +474,18 @@ async def _create_run(
                 status_code=404, detail="Machine not found for this deployment"
             )
 
-    if not workflow_api_raw:
-        raise HTTPException(status_code=404, detail="Workflow API not found")
+    is_model_run = isinstance(data, ModelRunRequest)
 
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
+    if not is_model_run:
+        if not workflow_api_raw:
+            raise HTTPException(status_code=404, detail="Workflow API not found")
+
+        if not machine:
+            raise HTTPException(status_code=404, detail="Machine not found")
 
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         prompt_id = uuid.uuid4()
         user_id = request.state.current_user["user_id"]
-
 
         # Create a new run
         new_run = WorkflowRun(
@@ -393,12 +500,13 @@ async def _create_run(
             origin=data.origin,
             # Machine
             machine_id=machine_id,
-            machine_type=machine.type,
-            gpu=machine.gpu,
+            machine_type=machine.type if machine else None,
+            gpu=machine.gpu if machine else None,
             # Webhook
             webhook=data.webhook,
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
+            model_id=data.model_id if data.model_id else None,
         )
 
         if is_native_run:
@@ -409,7 +517,7 @@ async def _create_run(
         await db.commit()
         await db.refresh(new_run)
 
-        print('data', data)
+        print("data", data)
         print("GPU EVENT ID", data.gpu_event_id)
 
         params = {
@@ -420,7 +528,9 @@ async def _create_run(
             "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
             + "/api/file-upload",
             "workflow": workflow,
-            "gpu_event_id": data.gpu_event_id if data.gpu_event_id is not None else None,
+            "gpu_event_id": data.gpu_event_id
+            if data.gpu_event_id is not None
+            else None,
         }
 
         # Get the count of runs for this workflow
@@ -435,7 +545,7 @@ async def _create_run(
             "version": workflow_version_version,
         }
         new_run_data["machine"] = {
-            "name": machine.name,
+            "name": machine.name if machine else None,
         }
         new_run_data["number"] = run_count
         background_tasks.add_task(
@@ -479,6 +589,18 @@ async def _create_run(
                 **params,
                 "cd_token": token,
             }
+
+        if is_model_run:
+            if data.execution_mode == "async":
+                raise HTTPException(
+                    status_code=400, detail="Async mode is not supported for model runs"
+                )
+            # if data.execution_mode == "async":
+            #     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
+            #     await ComfyDeployRunner().run.spawn.aio(params)
+            #     return {"run_id": str(new_run.id)}
+            if data.execution_mode == "sync":
+                return await run_model(request, data, params=params)
 
         if data.execution_mode == "async":
             match machine.type:

@@ -25,7 +25,8 @@ from api.routes import (
 	deployments,
 	runs,
     session,
-    files
+    files,
+    models,
 )
 from api.modal import builder
 from api.models import APIKey
@@ -156,6 +157,7 @@ api_router.include_router(session.router)
 api_router.include_router(session.beta_router)
 api_router.include_router(runs.router)
 api_router.include_router(files.router)
+api_router.include_router(models.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)
@@ -163,6 +165,7 @@ public_api_router.include_router(session.router)
 public_api_router.include_router(session.beta_router)
 public_api_router.include_router(deployments.router)
 public_api_router.include_router(files.router)
+public_api_router.include_router(models.router)
 # public_api_router.include_router(run.webhook_router)
 
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
@@ -174,6 +177,7 @@ async def scalar_html():
         openapi_url=app.openapi_url,
         title=app.title,
         scalar_proxy_url="https://proxy.scalar.com",
+        hide_models=True,
         servers=[
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
