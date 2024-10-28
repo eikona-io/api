@@ -42,8 +42,8 @@ class ModelOutput(BaseModel):
 class Model(BaseModel):
     id: str
     name: str
-    input: List[ModelInput]
-    output: List[ModelOutput]
+    inputs: List[ModelInput]    # Changed from input
+    outputs: List[ModelOutput]  # Changed from output
 
 
 # You might want to move this to a config or separate module
@@ -51,14 +51,14 @@ AVAILABLE_MODELS = [
     Model(
         id="flux-dev",
         name="Flux Dev",
-        input=[
+        inputs=[                # Changed from input
             ModelInput(
                 input_id="positive_prompt",
                 class_type="ComfyUIDeployExternalText",
                 required=True,
             ),
         ],
-        output=[
+        outputs=[              # Changed from output
             ModelOutput(
                 class_type="ComfyDeployStdOutputImage",
                 output_id="image",
@@ -68,14 +68,14 @@ AVAILABLE_MODELS = [
     Model(
         id="flux-schnell",
         name="Flux Schnell",
-        input=[
+        inputs=[                # Changed from input
             ModelInput(
                 input_id="positive_prompt",
                 class_type="ComfyUIDeployExternalText",
                 required=True,
             ),
         ],
-        output=[
+        outputs=[              # Changed from output
             ModelOutput(
                 class_type="ComfyDeployStdOutputImage",
                 output_id="image",

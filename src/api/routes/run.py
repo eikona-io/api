@@ -307,7 +307,7 @@ async def run_model(request: Request, data: ModelRunRequest, params: dict):
             access_key = user_settings.s3_access_key_id
             secret_key = user_settings.s3_secret_access_key
 
-    for output in model.output:
+    for output in model.outputs:
         if output.class_type == "ComfyDeployStdOutputImage":
             # Generate the object key
             file_name = f"{output.output_id}.jpeg"
