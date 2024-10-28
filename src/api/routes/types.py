@@ -483,6 +483,10 @@ class InputModel(BaseModel):
     enum_options: Optional[List[str]] = Field(None, description="Options for enum input type")
     step: Optional[Union[int, float]] = Field(None, description="Step for number slider input types")
 
+class OutputModel(BaseModel):
+    class_type: str
+    output_id: str
+
 class DeploymentModel(BaseModel):
     id: UUID
     user_id: str
@@ -500,6 +504,7 @@ class DeploymentModel(BaseModel):
     workflow: WorkflowWithName
     
     input_types: Optional[List[InputModel]] = None
+    output_types: Optional[List[OutputModel]] = None
 
     class Config:
         from_attributes = True
