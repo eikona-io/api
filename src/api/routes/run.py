@@ -506,7 +506,7 @@ async def _create_run(
             webhook=data.webhook,
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
-            model_id=data.model_id if data.model_id else None,
+            model_id=data.model_id if "model_id" in data else None,
         )
 
         if is_native_run:
