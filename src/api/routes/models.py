@@ -42,6 +42,7 @@ class ModelOutput(BaseModel):
 class Model(BaseModel):
     id: str
     name: str
+    preview_image: Optional[str] = None
     inputs: List[ModelInput]    # Changed from input
     outputs: List[ModelOutput]  # Changed from output
 
@@ -51,6 +52,7 @@ AVAILABLE_MODELS = [
     Model(
         id="flux-dev",
         name="Flux Dev",
+        preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
         inputs=[                # Changed from input
             ModelInput(
                 input_id="positive_prompt",
@@ -68,6 +70,7 @@ AVAILABLE_MODELS = [
     Model(
         id="flux-schnell",
         name="Flux Schnell",
+        preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
         inputs=[                # Changed from input
             ModelInput(
                 input_id="positive_prompt",
