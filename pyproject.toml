@@ -34,6 +34,7 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "aioboto3>=7.0.0",
     "upstash-redis>=1.2.0",
+    "huggingface-hub>=0.26.0",
 ]
 
 [build-system]

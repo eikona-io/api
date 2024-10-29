@@ -463,6 +463,7 @@ class UserSettings(SerializableMixin, Base):
     spend_limit = Column(Float, default=500)
     max_spend_limit = Column(Float, default=1000)
 
+    hugging_face_token = Column(String)
     # Optionally, add relationship to User model
     # user = relationship("User", back_populates="settings")
 
