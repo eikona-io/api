@@ -442,6 +442,26 @@ async def run_model(
 
             return [output_dict]
 
+async def run_model_async(
+    request: Request,
+    data: ModelRunRequest,
+    params: dict,
+    workflow_run,
+    background_tasks,
+    client: AsyncClient,
+):
+    run_id = params.get("prompt_id")
+    model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
+    if not model:
+        raise HTTPException(status_code=404, detail=f"Model {data.model_id} not found")
+
+    ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
+    result = await ComfyDeployRunner().run.remote.aio(params)
+    
+    return {
+        "run_id": str(result.object_id),
+    }
+
 
 async def _create_run(
     request: Request,
@@ -660,8 +680,17 @@ async def _create_run(
 
         if is_model_run:
             if data.execution_mode == "async":
-                raise HTTPException(
-                    status_code=400, detail="Async mode is not supported for model runs"
+                params = {
+                    **params,
+                    "auth_token": token,
+                }
+                return await run_model_async(
+                    request,
+                    data,
+                    params=params,
+                    workflow_run=new_run,
+                    background_tasks=background_tasks,
+                    client=client,
                 )
             # if data.execution_mode == "async":
             #     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
