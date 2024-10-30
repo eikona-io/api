@@ -34,7 +34,7 @@ volumes = {  # add Volumes to store serializable compilation artifacts, see sect
 
 COMMON_CLS_CONFIG = {
     "allow_concurrent_inputs": 10,
-    "container_idle_timeout": 2,
+    "container_idle_timeout": 300,
     "image": generate_modal_image(dependencies=COMFY_DEPENDENCIES),
     "gpu": "H100",
     "secrets": [modal.Secret.from_name("hf-models-download")],

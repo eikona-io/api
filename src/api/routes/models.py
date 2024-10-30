@@ -3,8 +3,15 @@ from api.utils.outputs import get_outputs_from_workflow
 from fastapi import APIRouter
 from typing import Any, List, Dict, Literal, Optional, Union
 
-from modal_apps.sd3_5_comfyui import ComfyDeployRunner as SD3_5_ComfyDeployRunner
-from modal_apps.flux_dev_comfyui import ComfyDeployRunner as FluxDevComfyDeployRunner
+from modal_apps.comfyui.sd3_5_comfyui import (
+    ComfyDeployRunner as SD3_5_ComfyDeployRunner,
+)
+from modal_apps.comfyui.flux_dev_comfyui import (
+    ComfyDeployRunner as FluxDevComfyDeployRunner,
+)
+from modal_apps.comfyui.flux_schnell_comfyui import (
+    ComfyDeployRunner as FluxSchnellComfyDeployRunner,
+)
 from pydantic import BaseModel
 
 router = APIRouter(tags=["Models"])
@@ -79,17 +86,16 @@ AVAILABLE_MODELS = [
         id="flux-schnell",
         name="Flux Schnell",
         preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
-        inputs=[  # Changed from input
-            ModelInput(
-                input_id="positive_prompt",
-                class_type="ComfyUIDeployExternalText",
-                required=True,
-            ),
+        inputs=[
+            ModelInput(**input, required=True)
+            for input in get_inputs_from_workflow_api(
+                FluxSchnellComfyDeployRunner.workflow_api_raw
+            )
         ],
-        outputs=[  # Changed from output
-            ModelOutput(
-                class_type="ComfyDeployStdOutputImage",
-                output_id="image",
+        outputs=[
+            ModelOutput(**output)
+            for output in get_outputs_from_workflow(
+                FluxSchnellComfyDeployRunner.workflow_api_raw
             )
         ],
     ),
