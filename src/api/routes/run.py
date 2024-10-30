@@ -574,6 +574,12 @@ async def _create_run(
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         prompt_id = uuid.uuid4()
         user_id = request.state.current_user["user_id"]
+        
+        # Check if this is a ModelRunRequest
+        model_id = None
+        if isinstance(data, ModelRunRequest):
+            model_id = data.model_id
+            print(f"Debug - Found ModelRunRequest with model_id: {model_id}")
 
         # Create a new run
         new_run = WorkflowRun(
@@ -594,12 +600,14 @@ async def _create_run(
             webhook=data.webhook,
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
-            model_id=data.model_id if "model_id" in data else None,
+            model_id=model_id,  # Use the extracted model_id
         )
 
         if is_native_run:
             new_run.queued_at = dt.datetime.now(dt.UTC)
             new_run.started_at = dt.datetime.now(dt.UTC)
+        
+        print(f"Debug - model_id being saved: {new_run.model_id}")  # Add this debug line
 
         db.add(new_run)
         await db.commit()
