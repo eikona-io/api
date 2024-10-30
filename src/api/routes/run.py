@@ -456,10 +456,10 @@ async def run_model_async(
         raise HTTPException(status_code=404, detail=f"Model {data.model_id} not found")
 
     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
-    result = await ComfyDeployRunner().run.remote.aio(params)
+    result = await ComfyDeployRunner().run.spawn.aio(params)
     
     return {
-        "run_id": str(result.object_id),
+        "run_id": run_id,
     }
 
 
