@@ -24,7 +24,7 @@ from .types import (
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Body
 from fastapi.responses import StreamingResponse
 import modal
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
@@ -278,7 +278,52 @@ async def create_run_stream(
 #     return await _create_run(request, data, background_tasks, db, client)
 
 
-async def run_model(request: Request, data: ModelRunRequest, params: dict):
+async def update_status(
+    run_id: str,
+    status: str,
+    background_tasks: BackgroundTasks,
+    workflow_run,
+    client: AsyncClient,
+):
+    async with get_db_context() as db:
+        updated_at = dt.datetime.now(dt.UTC)
+        update_data = {"status": status, "updated_at": updated_at}
+        update_stmt = (
+            update(WorkflowRun)
+            .where(WorkflowRun.id == run_id)
+            .values(**update_data)
+            .returning(WorkflowRun)
+        )
+        await db.execute(update_stmt)
+
+    progress_data = [
+        (
+            workflow_run.user_id,
+            workflow_run.org_id,
+            workflow_run.machine_id,
+            body.gpu_event_id,
+            workflow_run.workflow_id,
+            workflow_run.workflow_version_id,
+            workflow_run.run_id,
+            updated_at,
+            status,
+            -1,
+            "",
+        )
+    ]
+    background_tasks.add_task(
+        insert_to_clickhouse, client, "workflow_events", progress_data
+    )
+
+
+async def run_model(
+    request: Request,
+    data: ModelRunRequest,
+    params: dict,
+    workflow_run,
+    background_tasks,
+    client: AsyncClient,
+):
     run_id = params.get("prompt_id")
     model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
     if not model:
@@ -286,10 +331,31 @@ async def run_model(request: Request, data: ModelRunRequest, params: dict):
 
     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
 
+    if not model.is_comfyui:
+        update_status(run_id, "queued", background_tasks, client, workflow_run)
+
     result = await ComfyDeployRunner().run.remote.aio(params)
+
+    if not model.is_comfyui:
+        update_status(run_id, "uploading", background_tasks, client, workflow_run)
 
     async with get_db_context() as db:
         user_settings = await get_user_settings(request, db)
+
+    if model.is_comfyui:
+        output_query = (
+            select(WorkflowRunOutput)
+            .where(WorkflowRunOutput.run_id == run_id)
+            .order_by(WorkflowRunOutput.created_at.desc())
+        )
+
+        result = await db.execute(output_query)
+        outputs = result.scalars().all()
+
+        user_settings = await get_user_settings(request, db)
+        post_process_outputs(outputs, user_settings)
+
+        return [output.to_dict() for output in outputs]
 
     bucket = os.getenv("SPACES_BUCKET_V2")
     region = os.getenv("SPACES_REGION_V2")
@@ -368,9 +434,11 @@ async def run_model(request: Request, data: ModelRunRequest, params: dict):
             db.add(newOutput)
             await db.commit()
             await db.refresh(newOutput)
-            
+
             output_dict = newOutput.to_dict()
             post_process_output_data(output_dict["data"], user_settings)
+
+            update_status(run_id, "success", background_tasks, client, workflow_run)
 
             return [output_dict]
 
@@ -600,7 +668,18 @@ async def _create_run(
             #     await ComfyDeployRunner().run.spawn.aio(params)
             #     return {"run_id": str(new_run.id)}
             if data.execution_mode == "sync":
-                return await run_model(request, data, params=params)
+                params = {
+                    **params,
+                    "auth_token": token,
+                }
+                return await run_model(
+                    request,
+                    data,
+                    params=params,
+                    workflow_run=new_run,
+                    background_tasks=background_tasks,
+                    client=client,
+                )
 
         if data.execution_mode == "async":
             match machine.type:

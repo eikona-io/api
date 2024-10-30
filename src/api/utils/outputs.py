@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional
+import json
+from typing import Any, Dict, List, Optional, Union
 
 custom_output_nodes: Dict[str, Dict[str, str]] = {
     "ComfyDeployStdOutputImage": {"output_id": "string"},
@@ -7,10 +8,13 @@ custom_output_nodes: Dict[str, Dict[str, str]] = {
 
 
 def get_outputs_from_workflow(
-    workflow: Optional[Dict[str, Any]],
+    workflow: Optional[Union[str, Dict[str, Any]]],
 ) -> Optional[List[Dict[str, Any]]]:
     if not workflow:
         return None
+    
+    if isinstance(workflow, str):
+        workflow = json.loads(workflow)
 
     outputs = []
 

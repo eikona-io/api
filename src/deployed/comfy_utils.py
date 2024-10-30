@@ -203,6 +203,7 @@ def generate_modal_image(
             ]
         ],
     ),
+    link_models: bool = True,
     # comfyui_override: Optional[str] = Field(
     #     None,
     #     examples=[
@@ -252,9 +253,10 @@ def generate_modal_image(
                     commands,
                 )
 
-    dockerfile_image = dockerfile_image.run_commands(
-        "rm -rf /comfyui/models && ln -s  /private_models /comfyui/models",
-    )
+    if link_models:
+        dockerfile_image = dockerfile_image.run_commands(
+            "rm -rf /comfyui/models && ln -s  /private_models /comfyui/models",
+        )
 
     dockerfile_image = dockerfile_image.env({"XFORMERS_ENABLE_TRITON": "1"})
 

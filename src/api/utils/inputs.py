@@ -1,3 +1,4 @@
+import json
 from typing import Any, Dict, List, Optional, Union
 
 custom_input_nodes: Dict[str, Dict[str, str]] = {
@@ -66,10 +67,13 @@ input_types_list: List[InputsType] = list(custom_input_nodes.keys())
 
 
 def get_inputs_from_workflow_api(
-    workflow_api: Optional[Dict[str, Any]],
+    workflow_api: Optional[Union[str, Dict[str, Any]]],
 ) -> Optional[List[Dict[str, Any]]]:
     if not workflow_api:
         return None
+    
+    if isinstance(workflow_api, str):
+        workflow_api = json.loads(workflow_api)
 
     inputs = []
     for _, value in workflow_api.items():
@@ -95,4 +99,4 @@ def get_inputs_from_workflow_api(
             }
             inputs.append(input_data)
 
-    return inputs if inputs else None
+    return inputs if inputs else []
