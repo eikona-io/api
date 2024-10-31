@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from enum import Enum
 import re
 import grpclib
-from modal import Volume
+from modal import Volume, Secret
 import modal
 from huggingface_hub import HfApi
 
@@ -499,6 +499,7 @@ async def download_file_task(
     @app.function(
         timeout=600,
         serialized=True,
+        secrets=[Secret.from_name("civitai-api-key")],
         image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
     )
     async def download_file_task(
