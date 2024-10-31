@@ -535,12 +535,15 @@ async def download_file_task(
             model_id,
             progress,
             status: ModelDownloadStatus,
+            error_log: str = None,
         ):
             payload = {
                 "model_id": model_id,
                 "download_progress": progress,
                 "status": status.value,
             }
+            if error_log:
+                payload["error_log"] = error_log
             try:
                 async with aiohttp.ClientSession() as session:
                     await session.post(
@@ -604,7 +607,7 @@ async def download_file_task(
                 return full_path
             except Exception as e:
                 await progress_callback(
-                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                 )
                 raise e
 
@@ -670,13 +673,13 @@ async def download_file_task(
                 except Exception as e:
                     print("error in hf_hub_download: ", e)
                     await progress_callback(
-                        callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                        callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                     )
                     raise e
 
             except Exception as e:
                 await progress_callback(
-                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                 )
                 raise e
 
@@ -712,7 +715,7 @@ async def download_file_task(
         except Exception as e:
             print(f"Error in download_file_task: {str(e)}")
             await progress_callback(
-                callback_url, db_model_id, 0, ModelDownloadStatus.FAILED
+                callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
             )
             raise e
 
@@ -729,6 +732,25 @@ async def download_file_task(
                 upload_type,
                 token=hugging_face_token,
             )
+    except modal.exception.FunctionTimeoutError as e:
+        print(f"Modal function timed out: {str(e)}")
+        # Send timeout status to callback URL
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                callback_url,
+                json={
+                    "model_id": db_model_id,
+                    "download_progress": 0,
+                    "status": "failed",
+                    "error_log": "Download timed out after 900 seconds",
+                },
+                headers={
+                    "Content-Type": "application/json",
+                },
+            )
+        raise HTTPException(
+            status_code=408, detail="Download timed out after 900 seconds"
+        )
     except Exception as e:
         print(f"Error in download_file_task outer function: {str(e)}")
         raise e
