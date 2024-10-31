@@ -497,7 +497,7 @@ async def download_file_task(
     app = modal.App("volume-operations")
 
     @app.function(
-        timeout=600,
+        timeout=900,
         serialized=True,
         secrets=[Secret.from_name("civitai-api-key")],
         image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
