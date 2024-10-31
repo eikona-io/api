@@ -686,7 +686,7 @@ async def download_file_task(
             elif upload_type == "download-url":
                 if "civitai.com" in download_url:
                     download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
-                downloaded_path = await download_url_file(download_url)
+                downloaded_path = await download_url_file(download_url, None)
             else:
                 raise ValueError(f"Unsupported upload_type: {upload_type}")
 
