@@ -556,7 +556,7 @@ async def download_file_task(
             match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
             return match.group(1) if match else None
 
-        async def download_url_file(download_url, token):
+        async def download_url_file(download_url: str, token: Optional[str]):
             headers = {
                 "Accept-Encoding": "identity",
             }
