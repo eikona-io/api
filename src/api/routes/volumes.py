@@ -567,7 +567,9 @@ async def download_file_task(
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             try:
-                async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=900)
+                ) as session:
                     async with session.get(download_url, headers=headers) as response:
                         response.raise_for_status()
                         total_size = int(response.headers.get("Content-Length", 0))
