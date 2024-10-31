@@ -685,6 +685,8 @@ async def download_file_task(
                 # downloaded_path = await download_hf_model(folder_path)
                 downloaded_path = await download_url_file(download_url, token)
             elif upload_type == "download-url":
+                downloaded_path = await download_url_file(download_url, None)
+            elif upload_type == "civitai":
                 if "civitai.com" in download_url:
                     download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
                 downloaded_path = await download_url_file(download_url, None)
