@@ -8,6 +8,7 @@ from deployed.base_app import (
 )
 from deployed.comfy_utils import generate_modal_image, optimize_image
 import modal
+from modal_apps.comfyui.shared import SHARED_CLS_CONFIG
 
 app = modal.App("flux-dev")
 
@@ -33,16 +34,9 @@ volumes = {  # add Volumes to store serializable compilation artifacts, see sect
 }
 
 COMMON_CLS_CONFIG = {
-    # "allow_concurrent_inputs": 10,
-    "container_idle_timeout": 300,
-    "timeout": 60 * 60,  # leave plenty of time for compilation
     "image": generate_modal_image(dependencies=COMFY_DEPENDENCIES),
-    "gpu": "H100",
-    "secrets": [modal.Secret.from_name("hf-models-download")],
-    # "volumes": {
-    #     "/private_models": modal.Volume.lookup("models_org_2am4LjkQ5IaWGRYMHxGXfHdHcjA")
-    # },
     "volumes": volumes,
+    **SHARED_CLS_CONFIG
 }
 
 

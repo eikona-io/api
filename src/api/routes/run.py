@@ -301,7 +301,8 @@ async def update_status(
             workflow_run.user_id,
             workflow_run.org_id,
             workflow_run.machine_id,
-            body.gpu_event_id,
+            None,
+            # body.gpu_event_id,
             workflow_run.workflow_id,
             workflow_run.workflow_version_id,
             workflow_run.run_id,
@@ -331,31 +332,31 @@ async def run_model(
 
     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
 
-    if not model.is_comfyui:
-        update_status(run_id, "queued", background_tasks, client, workflow_run)
+    # if not model.is_comfyui:
+    #     update_status(run_id, "queued", background_tasks, client, workflow_run)
 
     result = await ComfyDeployRunner().run.remote.aio(params)
 
-    if not model.is_comfyui:
-        update_status(run_id, "uploading", background_tasks, client, workflow_run)
+    # if not model.is_comfyui:
+    #     update_status(run_id, "uploading", background_tasks, client, workflow_run)
 
     async with get_db_context() as db:
         user_settings = await get_user_settings(request, db)
 
-    if model.is_comfyui:
-        output_query = (
-            select(WorkflowRunOutput)
-            .where(WorkflowRunOutput.run_id == run_id)
-            .order_by(WorkflowRunOutput.created_at.desc())
-        )
+        # if model.is_comfyui:
+    output_query = (
+        select(WorkflowRunOutput)
+        .where(WorkflowRunOutput.run_id == run_id)
+        .order_by(WorkflowRunOutput.created_at.desc())
+    )
 
-        result = await db.execute(output_query)
-        outputs = result.scalars().all()
+    result = await db.execute(output_query)
+    outputs = result.scalars().all()
 
-        user_settings = await get_user_settings(request, db)
-        post_process_outputs(outputs, user_settings)
+    user_settings = await get_user_settings(request, db)
+    post_process_outputs(outputs, user_settings)
 
-        return [output.to_dict() for output in outputs]
+    return [output.to_dict() for output in outputs]
 
     bucket = os.getenv("SPACES_BUCKET_V2")
     region = os.getenv("SPACES_REGION_V2")
@@ -442,6 +443,7 @@ async def run_model(
 
             return [output_dict]
 
+
 async def run_model_async(
     request: Request,
     data: ModelRunRequest,
@@ -457,7 +459,7 @@ async def run_model_async(
 
     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
     result = await ComfyDeployRunner().run.spawn.aio(params)
-    
+
     return {
         "run_id": run_id,
     }
@@ -574,7 +576,7 @@ async def _create_run(
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         prompt_id = uuid.uuid4()
         user_id = request.state.current_user["user_id"]
-        
+
         # Check if this is a ModelRunRequest
         model_id = None
         if isinstance(data, ModelRunRequest):
@@ -606,8 +608,10 @@ async def _create_run(
         if is_native_run:
             new_run.queued_at = dt.datetime.now(dt.UTC)
             new_run.started_at = dt.datetime.now(dt.UTC)
-        
-        print(f"Debug - model_id being saved: {new_run.model_id}")  # Add this debug line
+
+        print(
+            f"Debug - model_id being saved: {new_run.model_id}"
+        )  # Add this debug line
 
         db.add(new_run)
         await db.commit()
