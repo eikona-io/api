@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple, Union, Optional
 import logging
 import os
 import httpx
-from .utils import async_lru_cache, select
+from .utils import async_lru_cache, get_user_settings, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 from api.database import get_db
@@ -19,7 +19,9 @@ from pydantic import BaseModel
 from enum import Enum
 import re
 import grpclib
-from modal import Volume
+from modal import Volume, Secret
+import modal
+from huggingface_hub import HfApi
 
 
 logger = logging.getLogger(__name__)
@@ -394,6 +396,7 @@ class AddFileInput(BaseModel):
     filename: str
     callback_url: str
     db_model_id: str
+    upload_type: str
 
 
 class ModelDownloadStatus(Enum):
@@ -409,148 +412,681 @@ DIRECTORY_TYPE = 2
 # New routes and helper functions
 
 
-MODAL_VOLUME_ENDPOINT = os.environ.get("MODAL_VOLUME_ENDPOINT")
-
-
 @router.post("/volume/rename_file")
 async def rename_file(request: Request, body: RenameFileBody):
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
+    src_path = body.src_path
+    new_filename = body.new_filename
+    overwrite = body.overwrite
+    volume_name = body.volume_name
+
+    print("rename_file", body)
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{MODAL_VOLUME_ENDPOINT}/rename_file",
-                headers={
-                    "Content-Type": "application/json",
-                },
-                json=body.dict(),
-            )
-
-        response.raise_for_status()
-        return JSONResponse(content=response.json())
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        volume = lookup_volume(volume_name)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # check src_path is a file
+    is_valid, error_message = validate_file_path(src_path, volume)
+    if not is_valid:
+        if "not found" in error_message:
+            raise HTTPException(status_code=404, detail=error_message)
+        else:
+            raise HTTPException(status_code=400, detail=error_message)
+
+    filename_valid = is_valid_filename(new_filename)
+    if not filename_valid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid filename{new_filename}, only allow characters, numerics, underscores, and hyphens.",
+        )
+
+    folder_path = os.path.dirname(src_path)
+    dst_path = os.path.join(folder_path, new_filename)
+
+    # Check if the destination file exists and if we can overwrite it
+    try:
+        contents = volume.listdir(dst_path)
+        if contents:
+            if not overwrite:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Destination file exists and overwrite is False.",
+                )
+    except Exception as _:
+        pass
+
+    volume.copy_files([src_path], dst_path)
+    volume.remove_file(src_path)
+
+    return {
+        "old_path": src_path,
+        "new_path": dst_path,
+    }
 
 
 @router.post("/volume/rm")
 async def remove_file(request: Request, body: RemoveFileInput):
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
+    try:
+        volume = lookup_volume(body.volume_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    is_valid, error_message = validate_file_path(body.path, volume)
+    if not is_valid:
+        if "not found" in error_message:
+            raise HTTPException(status_code=404, detail=error_message)
+        else:
+            raise HTTPException(status_code=400, detail=error_message)
+
+    volume.remove_file(body.path)
+    return {"deleted_path": body.path}
+
+
+async def download_file_task(
+    download_url,
+    folder_path,
+    filename,
+    callback_url,
+    db_model_id,
+    full_path,
+    volume_name,
+    upload_type,
+    hugging_face_token,
+):
+    app = modal.App("volume-operations")
+
+    @app.function(
+        timeout=1800,
+        serialized=True,
+        secrets=[Secret.from_name("civitai-api-key")],
+        image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
+    )
+    async def download_file_task(
+        download_url,
+        folder_path,
+        filename,
+        callback_url,
+        db_model_id,
+        full_path,
+        volume_name,
+        upload_type,
+        token,
+    ):
+        import time
+        import os
+        from enum import Enum
+        from modal import Volume
+        import aiohttp
+        from huggingface_hub import hf_hub_download, HfApi
+        from huggingface_hub.utils import enable_progress_bars
+        import re
+
+        print("download_file_task start")
+        print("callback_url", callback_url)
+
+        class ModelDownloadStatus(Enum):
+            PROGRESS = "progress"
+            SUCCESS = "success"
+            FAILED = "failed"
+
+        async def progress_callback(
+            callback_url,
+            model_id,
+            progress,
+            status: ModelDownloadStatus,
+            error_log: str = None,
+        ):
+            payload = {
+                "model_id": model_id,
+                "download_progress": progress,
+                "status": status.value,
+            }
+            if error_log:
+                payload["error_log"] = error_log
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        callback_url,
+                        json=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                        },
+                    )
+            except Exception as e:
+                print("error in progress callback: ", e)
+
+        def extract_huggingface_repo_id(url: str) -> str | None:
+            match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
+            return match.group(1) if match else None
+
+        async def download_url_file(download_url: str, token: Optional[str]):
+            headers = {
+                "Accept-Encoding": "identity",
+            }
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            try:
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=1800)
+                ) as session:
+                    async with session.get(download_url, headers=headers) as response:
+                        response.raise_for_status()
+                        total_size = int(response.headers.get("Content-Length", 0))
+                        downloaded_size = 0
+                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                        last_callback_time = time.time()
+
+                        with open(full_path, "wb") as file:
+                            async for data in response.content.iter_chunked(8192):
+                                if data:
+                                    file.write(data)
+                                    downloaded_size += len(data)
+                                    progress = (
+                                        int((downloaded_size / total_size) * 90)
+                                        if total_size
+                                        else 0
+                                    )
+                                    current_time = time.time()
+                                    if current_time - last_callback_time >= 5:
+                                        print("=======================================")
+                                        print("download url started")
+                                        print("folder_path: ", folder_path)
+                                        print("filename: ", filename)
+                                        print("full_path: ", full_path)
+                                        print("downloaded_size: ", downloaded_size)
+                                        print("total_size: ", total_size)
+                                        print("progress: ", progress)
+                                        print("=======================================")
+                                        await progress_callback(
+                                            callback_url,
+                                            db_model_id,
+                                            progress,
+                                            ModelDownloadStatus.PROGRESS,
+                                        )
+                                        last_callback_time = current_time
+
+                return full_path
+            except Exception as e:
+                await progress_callback(
+                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
+                )
+                raise e
+
+        async def download_hf_model(folder_path):
+            try:
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+                await progress_callback(
+                    callback_url,
+                    db_model_id,
+                    20,
+                    ModelDownloadStatus.PROGRESS,
+                )
+
+                repo_id = extract_huggingface_repo_id(download_url)
+
+                # Extract folder_path and filename from download_url
+                from urllib.parse import urlparse, unquote
+
+                parsed_url = urlparse(download_url)
+                path_parts = unquote(parsed_url.path).split("/")
+
+                # The last non-empty part is the filename
+                filename = next((part for part in reversed(path_parts) if part), "")
+
+                # The folder path is the part after 'main/' and before the filename
+                main_index = path_parts.index("main") if "main" in path_parts else -1
+                if main_index != -1 and main_index + 1 < len(path_parts) - 1:
+                    folder_path = "/".join(path_parts[main_index + 1 : -1])
+                else:
+                    folder_path = ""
+
+                print("Extracted folder_path:", folder_path)
+                print("Extracted filename:", filename)
+
+                print("=======================================")
+                print("huggingface started")
+                print("download_url: ", download_url)
+                print("repo_id: ", repo_id)
+                print("folder_path: ", folder_path)
+                print("filename: ", filename)
+                print("full_path: ", full_path)
+                print("=======================================")
+
+                enable_progress_bars()
+
+                await progress_callback(
+                    callback_url,
+                    db_model_id,
+                    50,
+                    ModelDownloadStatus.PROGRESS,
+                )
+
+                try:
+                    downloaded_model_path = hf_hub_download(
+                        repo_id=repo_id,
+                        filename=filename,
+                        subfolder=folder_path,
+                        token=token,
+                    )
+                    print("downloaded_model_path: ", downloaded_model_path)
+                    return downloaded_model_path
+                except Exception as e:
+                    print("error in hf_hub_download: ", e)
+                    await progress_callback(
+                        callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
+                    )
+                    raise e
+
+            except Exception as e:
+                await progress_callback(
+                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
+                )
+                raise e
+
+        try:
+            if upload_type == "huggingface":
+                # downloaded_path = await download_hf_model(folder_path)
+                downloaded_path = await download_url_file(download_url, token)
+            elif upload_type == "download-url":
+                downloaded_path = await download_url_file(download_url, None)
+            elif upload_type == "civitai":
+                if "civitai.com" in download_url:
+                    download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
+                downloaded_path = await download_url_file(download_url, None)
+            else:
+                raise ValueError(f"Unsupported upload_type: {upload_type}")
+
+            volume = Volume.lookup(volume_name, create_if_missing=True)
+            print("=======================================")
+            print("download_file_task done")
+            print("download_url: ", download_url)
+            print("folder_path: ", folder_path)
+            print("filename: ", filename)
+            print("callback_url: ", callback_url)
+            print("body.db_model_id: ", db_model_id)
+            print("=======================================")
+
+            with volume.batch_upload() as batch:
+                batch.put_file(downloaded_path, full_path)
+
+            await progress_callback(
+                callback_url, db_model_id, 100, ModelDownloadStatus.SUCCESS
+            )
+        except Exception as e:
+            print(f"Error in download_file_task: {str(e)}")
+            await progress_callback(
+                callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
+            )
+            raise e
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{MODAL_VOLUME_ENDPOINT}/rm",
+        async with app.run.aio():
+            await download_file_task.remote.aio(
+                download_url,
+                folder_path,
+                filename,
+                callback_url,
+                db_model_id,
+                full_path,
+                volume_name,
+                upload_type,
+                token=hugging_face_token,
+            )
+    except modal.exception.FunctionTimeoutError as e:
+        print(f"Modal function timed out: {str(e)}")
+        # Send timeout status to callback URL
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                callback_url,
+                json={
+                    "model_id": db_model_id,
+                    "download_progress": 0,
+                    "status": "failed",
+                    "error_log": "Download timed out after 900 seconds",
+                },
                 headers={
                     "Content-Type": "application/json",
                 },
-                json=body.dict(),
             )
-
-        response.raise_for_status()
-        return JSONResponse(content=response.json())
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        raise HTTPException(
+            status_code=408, detail="Download timed out after 900 seconds"
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in download_file_task outer function: {str(e)}")
+        raise e
 
 
 @router.post("/volume/add_file")
-async def add_file(request: Request, body: AddFileInput):
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
-
+async def add_file(
+    request: Request,
+    body: AddFileInput,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{MODAL_VOLUME_ENDPOINT}/add_file",
-                headers={
-                    "Content-Type": "application/json",
-                },
-                json=body.dict(),
+        volume_name = body.volume_name
+        download_url = body.download_url
+        folder_path = body.folder_path
+        filename = body.filename
+        callback_url = body.callback_url
+        upload_type = body.upload_type
+        user_settings = await get_user_settings(request, db)
+        hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
+        if user_settings is not None and user_settings.hugging_face_token:
+            hugging_face_token = (
+                user_settings.hugging_face_token.strip() or hugging_face_token
             )
 
-        response.raise_for_status()
+        volume = lookup_volume(volume_name, create_if_missing=True)
+        full_path = os.path.join(folder_path, filename)
 
-        # Start pulling the file
-        pulling_response = await pull_file(
-            body.volume_name, body.folder_path, body.filename
+        print("volume: ", volume)
+        print("full_path: ", full_path)
+
+        try:
+            file_exists = does_file_exist(full_path, volume)
+            if file_exists:
+                raise HTTPException(status_code=400, detail="File already exists.")
+        except grpclib.exceptions.GRPCError as e:
+            print("e: ", str(e))
+            raise HTTPException(status_code=400, detail="Error: " + str(e))
+
+        background_tasks.add_task(
+            download_file_task,
+            download_url,
+            folder_path,
+            filename,
+            callback_url,
+            body.db_model_id,
+            full_path,
+            volume_name,
+            upload_type,
+            hugging_face_token,
         )
 
-        if pulling_response.get("status") == "success":
-            return JSONResponse(
-                content={"status": "success", "message": "Model installed successfully"}
-            )
-        else:
-            return JSONResponse(
-                content={"status": "error", "message": "Failed to install model"}
-            )
-
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        return {"full_path": full_path}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in add_file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-async def pull_file(volume_name: str, folder_path: str, filename: str):
+# Helper functions
+def does_file_exist(path: str, volume: Volume) -> bool:
     try:
-        volume = Volume.from_name(volume_name)
-        file_path = os.path.join(folder_path, filename)
+        contents = volume.listdir(path)
+        if not contents:
+            return False
+        if len(contents) == 1 and contents[0].type == FILE_TYPE:
+            return True
+        return False
+    except grpclib.exceptions.GRPCError as e:
+        if e.status == grpclib.Status.NOT_FOUND:
+            return False
+        else:
+            raise e
 
-        # Implement the logic to pull the file here
-        # This is a placeholder and should be replaced with actual implementation
-        # For example, you might use volume.read() or other appropriate methods
 
-        # Simulating a successful pull
-        return {"status": "success"}
+def validate_file_path(path: str, volume: Volume):
+    try:
+        contents = volume.listdir(path)
+        if not contents:
+            return False, "No file found or the first item is not a file."
+        if len(contents) > 1:
+            return False, "directory supplied"
+        if contents[0].type == DIRECTORY_TYPE:
+            return False, "directory supplied"
+        if contents[0].type != FILE_TYPE:
+            return False, "not a file"
+        return True, None
+    except grpclib.exceptions.GRPCError as e:
+        if e.status == grpclib.Status.NOT_FOUND:
+            return False, f"path: {path} not found."
+        else:
+            return False, str(e)
+
+
+def is_valid_filename(filename):
+    pattern = r"^[\w\-\.]+$"
+    if re.match(pattern, filename):
+        return True
+    else:
+        return False
+
+
+def lookup_volume(volume_name: str, create_if_missing: bool = False):
+    try:
+        return Volume.lookup(volume_name, create_if_missing=create_if_missing)
     except Exception as e:
-        logger.error(f"Error pulling file: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        raise Exception(f"Can't find Volume: {e}")
 
 
 @router.get("/volume/ls_full")
 async def volume_full(
     request: Request, volume_name: str, create_if_missing: bool = False
 ):
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
-
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{MODAL_VOLUME_ENDPOINT}/ls_full?volume_name={volume_name}&create_if_missing={create_if_missing}",
-            )
-
-        response.raise_for_status()
-        return JSONResponse(content=response.json())
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        volume = lookup_volume(volume_name, create_if_missing=create_if_missing)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    contents = volume.listdir("/", recursive=True)
+    try:
+        transformed_contents = []
+        for content in contents:
+            entry_data = {
+                "path": content.path,
+                "type": "folder" if content.type == DIRECTORY_TYPE else "file",
+                # "mtime": content.mtime,
+                # "size": content.size if content.type == FILE_TYPE else None,
+                "contents": [] if content.type == DIRECTORY_TYPE else None,
+            }
+
+            # Simulate the nested structure that recursive_listdir would create
+            path_parts = content.path.split("/")
+            current_level = transformed_contents
+            for part in path_parts[:-1]:
+                found = False
+                for item in current_level:
+                    if item["path"] == part and item["type"] == "folder":
+                        current_level = item["contents"]
+                        found = True
+                        break
+                if not found:
+                    new_folder = {"path": part, "type": "folder", "contents": []}
+                    current_level.append(new_folder)
+                    current_level = new_folder["contents"]
+
+            current_level.append(entry_data)
+
+        return {"contents": transformed_contents}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while listing directory contents: {str(e)}",
+        )
 
 
 @router.get("/volume/ls")
 async def list_contents(request: Request, volume_name: str, path: str = "/"):
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
+    try:
+        volume = lookup_volume(volume_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{MODAL_VOLUME_ENDPOINT}/ls?volume_name={volume_name}&path={path}",
-            )
+        contents = volume.listdir(path)
+        mapped_contents = [
+            {
+                "path": entry.path,
+                "type": entry.type,
+                "mtime": entry.mtime,
+                "size": entry.size,
+            }
+            for entry in contents
+        ]
+        contents = mapped_contents
+    except grpclib.exceptions.GRPCError as e:
+        if e.status == grpclib.Status.NOT_FOUND:
+            raise HTTPException(status_code=404, detail="Path not found.")
+        else:
+            raise HTTPException(status_code=500, detail="Internal server error.")
+    return {"contents": contents}
 
-        response.raise_for_status()
-        return JSONResponse(content=response.json())
-    except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+class StatusEnum(str, Enum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    PROGRESS = "progress"
+
+
+class RequestModel(BaseModel):
+    model_id: str
+    status: StatusEnum
+    error_log: Optional[str] = None
+    filehash_sha256: Optional[str] = None
+    download_progress: Optional[float] = None
+
+
+@router.post("/volume/volume-upload")
+async def update_status(
+    request: Request, body: RequestModel, db: AsyncSession = Depends(get_db)
+):
+    import requests
+
+    try:
+        # Convert the Pydantic model to a dictionary
+        body_dict = body.dict()
+
+        # Convert Enum to string
+        body_dict["status"] = body_dict["status"].value
+
+        response = requests.post(
+            "http://127.0.0.1:3010/api/volume-upload", json=body_dict
+        )
+        response.raise_for_status()  # Raise an exception for HTTP errors
+
+        return {"message": "Status updated successfully"}
+    except requests.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error updating status: {str(e)}")
+    # try:
+    #     # Assuming you have a database connection and model table defined
+    #     # You'll need to replace these with your actual database operations
+    #     if status == StatusEnum.SUCCESS:
+    #         # Update model status to success
+    #         model_status_query = (
+    #             update(ModelDB)
+    #             .where(ModelDB.id == model_id)
+    #             .values(
+    #                 status="success",
+    #                 updated_at=datetime.now(),
+    #                 download_progress=100,
+    #                 filehash_sha256=filehash_sha256,
+    #             )
+    #         )
+    #         result = await db.execute(model_status_query)
+    #         pass
+    #     elif status == StatusEnum.PROGRESS:
+    #         # Update model download progress
+    #         model_status_query = (
+    #             update(ModelDB)
+    #             .where(ModelDB.id == model_id)
+    #             .values(
+    #                 updated_at=datetime.now(),
+    #                 download_progress=download_progress,
+    #             )
+    #         )
+    #         result = await db.execute(model_status_query)
+    #         print("download_progress: ", download_progress)
+    #         pass
+    #     elif status == StatusEnum.FAILED:
+    #         # Update model status to failed
+    #         model_status_query = (
+    #             update(ModelDB)
+    #             .where(ModelDB.id == model_id)
+    #             .values(
+    #                 status="failed",
+    #                 error_log=error_log,
+    #                 updated_at=datetime.now(),
+    #             )
+    #         )
+    #         result = await db.execute(model_status_query)
+    #         pass
+    #     else:
+    #         raise ValueError(f"Unknown status: {status}")
+
+    #     return {"message": "success"}
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail=str(e))
+
+
+class ListModelsInput(BaseModel):
+    limit: int = 10
+    search: Optional[str] = None
+
+
+@router.get("/volume/list-models")
+async def list_models(request: Request, limit: int = 10, search: Optional[str] = None):
+    api = HfApi()
+    models = api.list_models(limit=limit, search=search)
+
+    models_list = list(models)  # Convert generator to list
+
+    print("limit: ", limit)
+    print("search: ", search)
+
+    # Define banned keywords
+    banned_keywords = [".gitattributes", ".gitignore", "LICENSE.md", "README.md"]
+
+    # Fetch detailed model info for each model
+    detailed_models = []
+    for model in models_list:
+        try:
+            model_info = await get_model_info(request, model.id)
+            for sibling in model_info.siblings:
+                save_path, filename = (
+                    sibling.rfilename.split("/")
+                    if "/" in sibling.rfilename
+                    else ("", sibling.rfilename)
+                )
+                # Skip files with banned keywords
+                if any(keyword in filename for keyword in banned_keywords):
+                    continue
+
+                converted_model = {
+                    "type": model_info.pipeline_tag or "",
+                    "description": model_info.card_data.get("description", ""),
+                    "name": model.id,
+                    "base": "",
+                    "save_path": save_path,
+                    "filename": filename,
+                    "reference": f"https://huggingface.co/{model.id}/blob/main/{sibling.rfilename}",
+                    "url": f"https://huggingface.co/{model.id}/resolve/main/{sibling.rfilename}",
+                }
+                # Safely extract base model information
+                if model_info.tags:
+                    base_tag = next(
+                        (
+                            tag
+                            for tag in model_info.tags
+                            if tag.startswith("base_model:")
+                        ),
+                        None,
+                    )
+                    if base_tag:
+                        converted_model["base"] = base_tag.split(":")[-1]
+
+                detailed_models.append(converted_model)
+        except Exception as e:
+            print(f"Error fetching info for model {model.id}: {str(e)}")
+            continue
+
+    return {"models": detailed_models}
+
+
+@router.get("/volume/get-model-info")
+async def get_model_info(request: Request, repo_id: str):
+    api = HfApi()
+    model_info = api.model_info(repo_id)
+    return model_info
