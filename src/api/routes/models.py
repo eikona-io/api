@@ -48,6 +48,7 @@ class ModelInput(BaseModel):
     max_value: Optional[Any] = None
     display_name: Optional[str] = None
     description: Optional[str] = None
+    enum_values: Optional[List[str]] = None
 
 
 class ModelOutput(BaseModel):
@@ -73,22 +74,47 @@ class ModelWithMetadata(Model):
     fal_id: str
 
 
+image_size = ModelInput(
+    input_id="image_size",
+    class_type="ComfyUIDeployExternalEnum",
+    required=True,
+    default_value="square_hd",
+    enum_values=[
+        "square_hd",
+        "square",
+        "portrait_4_3",
+        "portrait_16_9",
+        "landscape_4_3",
+        "landscape_16_9",
+    ],
+)
+prompt = ModelInput(
+    input_id="prompt",
+    class_type="ComfyUIDeployExternalText",
+    required=True,
+    default_value='Extreme close-up of a single tiger eye, direct frontal view. Detailed iris and pupil. Sharp focus on eye texture and color. Natural lighting to capture authentic eye shine and depth. The word "FLUX" is painted over it in big, white brush strokes with visible texture.',
+    description="The prompt to generate an image with",
+)
+
+
 # You might want to move this to a config or separate module
 AVAILABLE_MODELS = [
+    ModelWithMetadata(
+        fal_id="fal-ai/flux/schnell",
+        id="flux-schnell",
+        is_comfyui=True,
+        name="Flux (Schnell)",
+        preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
+        inputs=[prompt, image_size],
+        outputs=[],
+    ),
     ModelWithMetadata(
         fal_id="fal-ai/flux/dev",
         id="flux-dev",
         is_comfyui=True,
         name="Flux (Dev)",
         preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
-        inputs=[
-            ModelInput(
-                input_id="prompt",
-                class_type="ComfyUIDeployExternalTextAny",
-                required=True,
-                description="The prompt to generate an image with",
-            )
-        ],
+        inputs=[prompt, image_size],
         outputs=[],
     ),
 ]
