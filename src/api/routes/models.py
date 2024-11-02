@@ -103,23 +103,43 @@ prompt = ModelInput(
     default_value='Extreme close-up of a single tiger eye, direct frontal view. Detailed iris and pupil. Sharp focus on eye texture and color. Natural lighting to capture authentic eye shine and depth. The word "SD3.5" is painted over it in big, white brush strokes with visible texture.',
     description="The prompt to generate an image with",
 )
+recraft_style = ModelInput(
+    input_id="recraft_style",
+    class_type="ComfyUIDeployExternalEnum",
+    required=True,
+    default_value="realistic_image",
+    enum_values=[
+        "any",
+        "realistic_image",
+        "digital_illustration",
+        "vector_illustration",
+        "realistic_image/b_and_w",
+        "realistic_image/hard_flash",
+        "realistic_image/hdr",
+        "realistic_image/natural_light",
+        "realistic_image/studio_portrait",
+        "realistic_image/enterprise",
+        "realistic_image/motion_blur",
+        "digital_illustration/pixel_art",
+    ],
+)
 
 
 # You might want to move this to a config or separate module
 AVAILABLE_MODELS = [
     ModelWithMetadata(
-        fal_id="fal-ai/flux/schnell",
-        id="flux-schnell",
-        name="Flux (Schnell)",
-        preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
+        fal_id="fal-ai/flux/dev",
+        id="flux-dev",
+        name="Flux (Dev)",
+        preview_image="https://fal.media/files/koala/LmLyc8U4EVekGyGFWan1M.png",
         inputs=[flux_prompt, image_size],
         outputs=[],
     ),
     ModelWithMetadata(
-        fal_id="fal-ai/flux/dev",
-        id="flux-dev",
-        name="Flux (Dev)",
-        preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
+        fal_id="fal-ai/flux/schnell",
+        id="flux-schnell",
+        name="Flux (Schnell)",
+        preview_image="https://fal.media/files/panda/UtTYMhOHimr0rEYq20dFP.png",
         inputs=[flux_prompt, image_size],
         outputs=[],
     ),
@@ -135,8 +155,16 @@ AVAILABLE_MODELS = [
         fal_id="fal-ai/stable-diffusion-v35-large",
         id="sd-v35-large",
         name="SD V3.5 (Large)",
-        preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
+        preview_image="https://fal.media/files/zebra/yr8dajXZ9LaIyTxpVlb3n.jpeg",
         inputs=[prompt, image_size],
+        outputs=[],
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/recraft-v3",
+        id="recraft-v3",
+        name="Recraft V3",
+        preview_image="https://fal.media/files/penguin/-qx-N4DHuAP9RA_CWAfSt_image.webp",
+        inputs=[prompt, image_size, recraft_style],
         outputs=[],
     ),
 ]
