@@ -342,7 +342,7 @@ async def run_model(
         model.fal_id,
         arguments={
             "seed": 6252023,
-            "image_size": "landscape_4_3",
+            # "image_size": "landscape_4_3",
             "num_images": 1,
             **params.get("inputs", {}),
         },
