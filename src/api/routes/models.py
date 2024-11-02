@@ -88,11 +88,19 @@ image_size = ModelInput(
         "landscape_16_9",
     ],
 )
-prompt = ModelInput(
+flux_prompt = ModelInput(
     input_id="prompt",
     class_type="ComfyUIDeployExternalText",
     required=True,
     default_value='Extreme close-up of a single tiger eye, direct frontal view. Detailed iris and pupil. Sharp focus on eye texture and color. Natural lighting to capture authentic eye shine and depth. The word "FLUX" is painted over it in big, white brush strokes with visible texture.',
+    description="The prompt to generate an image with",
+)
+
+prompt = ModelInput(
+    input_id="prompt",
+    class_type="ComfyUIDeployExternalText",
+    required=True,
+    default_value='Extreme close-up of a single tiger eye, direct frontal view. Detailed iris and pupil. Sharp focus on eye texture and color. Natural lighting to capture authentic eye shine and depth. The word "SD3.5" is painted over it in big, white brush strokes with visible texture.',
     description="The prompt to generate an image with",
 )
 
@@ -102,18 +110,32 @@ AVAILABLE_MODELS = [
     ModelWithMetadata(
         fal_id="fal-ai/flux/schnell",
         id="flux-schnell",
-        is_comfyui=True,
         name="Flux (Schnell)",
         preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
-        inputs=[prompt, image_size],
+        inputs=[flux_prompt, image_size],
         outputs=[],
     ),
     ModelWithMetadata(
         fal_id="fal-ai/flux/dev",
         id="flux-dev",
-        is_comfyui=True,
         name="Flux (Dev)",
         preview_image="https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/outputs/runs/b5afa7eb-a15f-4c45-a95c-d5ce89cb537f/image.jpeg",
+        inputs=[flux_prompt, image_size],
+        outputs=[],
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/stable-diffusion-v35-medium",
+        id="sd-v35-medium",
+        name="SD V3.5 (Medium)",
+        preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
+        inputs=[prompt, image_size],
+        outputs=[],
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/stable-diffusion-v35-large",
+        id="sd-v35-large",
+        name="SD V3.5 (Large)",
+        preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
         inputs=[prompt, image_size],
         outputs=[],
     ),
