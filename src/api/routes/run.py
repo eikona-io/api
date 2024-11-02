@@ -6,7 +6,7 @@ from urllib.parse import quote, urljoin
 import uuid
 
 from api.routes.models import AVAILABLE_MODELS
-from api.sqlmodels import WorkflowRunWebhookBody, WorkflowRunWebhookResponse
+from api.sqlmodels import WorkflowRunWebhookResponse
 from .types import (
     CreateRunBatchResponse,
     CreateRunRequest,
@@ -30,6 +30,7 @@ from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
+import fal_client
 from .internal import insert_to_clickhouse, send_realtime_update, send_workflow_update
 from .utils import (
     ensure_run_timeout,
@@ -332,12 +333,67 @@ async def run_model(
     if not model:
         raise HTTPException(status_code=404, detail=f"Model {data.model_id} not found")
 
-    ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
+    # def on_queue_update(update):
+    #     if isinstance(update, fal_client.InProgress):
+    #         for log in update.logs:
+    #             print(log["message"])
+
+    result = await fal_client.subscribe_async(
+        model.fal_id,
+        arguments={
+            "seed": 6252023,
+            "image_size": "landscape_4_3",
+            "num_images": 1,
+            **params.get("inputs", {}),
+        },
+        # on_queue_update=on_queue_update,
+    )
+
+    print(result)
+
+    async with get_db_context() as db:
+        output_data = {
+            "images": [
+                {
+                    "url": image.get(
+                        "url", ""
+                    ),  # Assuming result.images contains objects with a url attribute
+                    "type": "output",
+                    "filename": f"image_{idx}.jpeg",
+                    "subfolder": "",
+                    "is_public": True,  # You may want to make this configurable
+                    "upload_duration": 0,  # You may want to calculate this if needed
+                }
+                for idx, image in enumerate(result.get("images", []))
+            ]
+        }
+
+        updated_at = dt.datetime.now(dt.UTC)
+        newOutput = WorkflowRunOutput(
+            id=uuid4(),  # Add this line to generate a new UUID for the primary key
+            created_at=updated_at,
+            updated_at=updated_at,
+            run_id=run_id,
+            data=output_data,
+            # node_meta=body.node_meta,
+        )
+        db.add(newOutput)
+        await db.commit()
+        await db.refresh(newOutput)
+        output_dict = newOutput.to_dict()
+
+        return [output_dict]
+
+    print(result)
+
+    return []
+
+    # ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
 
     # if not model.is_comfyui:
     #     update_status(run_id, "queued", background_tasks, client, workflow_run)
 
-    result = await ComfyDeployRunner().run.remote.aio(params)
+    # result = await ComfyDeployRunner().run.remote.aio(params)
 
     # if not model.is_comfyui:
     #     update_status(run_id, "uploading", background_tasks, client, workflow_run)
@@ -346,19 +402,19 @@ async def run_model(
         user_settings = await get_user_settings(request, db)
 
         # if model.is_comfyui:
-    output_query = (
-        select(WorkflowRunOutput)
-        .where(WorkflowRunOutput.run_id == run_id)
-        .order_by(WorkflowRunOutput.created_at.desc())
-    )
+    # output_query = (
+    #     select(WorkflowRunOutput)
+    #     .where(WorkflowRunOutput.run_id == run_id)
+    #     .order_by(WorkflowRunOutput.created_at.desc())
+    # )
 
-    result = await db.execute(output_query)
-    outputs = result.scalars().all()
+    # result = await db.execute(output_query)
+    # outputs = result.scalars().all()
 
-    user_settings = await get_user_settings(request, db)
-    post_process_outputs(outputs, user_settings)
+    # user_settings = await get_user_settings(request, db)
+    # post_process_outputs(outputs, user_settings)
 
-    return [output.to_dict() for output in outputs]
+    # return [output.to_dict() for output in outputs]
 
     bucket = os.getenv("SPACES_BUCKET_V2")
     region = os.getenv("SPACES_REGION_V2")
