@@ -337,52 +337,53 @@ async def run_model(
     #     if isinstance(update, fal_client.InProgress):
     #         for log in update.logs:
     #             print(log["message"])
-
-    result = await fal_client.subscribe_async(
-        model.fal_id,
-        arguments={
-            "seed": 6252023,
-            # "image_size": "landscape_4_3",
-            "num_images": 1,
-            **params.get("inputs", {}),
-        },
-        # on_queue_update=on_queue_update,
-    )
-
-    print(result)
-
-    async with get_db_context() as db:
-        output_data = {
-            "images": [
-                {
-                    "url": image.get(
-                        "url", ""
-                    ),  # Assuming result.images contains objects with a url attribute
-                    "type": "output",
-                    "filename": f"image_{idx}.jpeg",
-                    "subfolder": "",
-                    "is_public": True,  # You may want to make this configurable
-                    "upload_duration": 0,  # You may want to calculate this if needed
-                }
-                for idx, image in enumerate(result.get("images", []))
-            ]
-        }
-
-        updated_at = dt.datetime.now(dt.UTC)
-        newOutput = WorkflowRunOutput(
-            id=uuid4(),  # Add this line to generate a new UUID for the primary key
-            created_at=updated_at,
-            updated_at=updated_at,
-            run_id=run_id,
-            data=output_data,
-            # node_meta=body.node_meta,
+    
+    if model.fal_id is not None:
+        result = await fal_client.subscribe_async(
+            model.fal_id,
+            arguments={
+                "seed": 6252023,
+                # "image_size": "landscape_4_3",
+                "num_images": 1,
+                **params.get("inputs", {}),
+            },
+            # on_queue_update=on_queue_update,
         )
-        db.add(newOutput)
-        await db.commit()
-        await db.refresh(newOutput)
-        output_dict = newOutput.to_dict()
 
-        return [output_dict]
+        print(result)
+
+        async with get_db_context() as db:
+            output_data = {
+                "images": [
+                    {
+                        "url": image.get(
+                            "url", ""
+                        ),  # Assuming result.images contains objects with a url attribute
+                        "type": "output",
+                        "filename": f"image_{idx}.jpeg",
+                        "subfolder": "",
+                        "is_public": True,  # You may want to make this configurable
+                        "upload_duration": 0,  # You may want to calculate this if needed
+                    }
+                    for idx, image in enumerate(result.get("images", []))
+                ]
+            }
+
+            updated_at = dt.datetime.now(dt.UTC)
+            newOutput = WorkflowRunOutput(
+                id=uuid4(),  # Add this line to generate a new UUID for the primary key
+                created_at=updated_at,
+                updated_at=updated_at,
+                run_id=run_id,
+                data=output_data,
+                # node_meta=body.node_meta,
+            )
+            db.add(newOutput)
+            await db.commit()
+            await db.refresh(newOutput)
+            output_dict = newOutput.to_dict()
+
+            return [output_dict]
 
     print(result)
 

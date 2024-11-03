@@ -71,7 +71,7 @@ class Model(BaseModel):
 
 
 class ModelWithMetadata(Model):
-    fal_id: str
+    fal_id: Optional[str] = None
 
 
 image_size = ModelInput(
