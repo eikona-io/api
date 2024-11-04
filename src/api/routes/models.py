@@ -89,6 +89,12 @@ image_size = ModelInput(
         "landscape_16_9",
     ],
 )
+seed = ModelInput(
+    input_id="seed",
+    class_type="ComfyUIDeployExternalNumberInt",
+    required=True,
+    default_value=None,
+)
 flux_prompt = ModelInput(
     input_id="prompt",
     class_type="ComfyUIDeployExternalText",
@@ -133,7 +139,7 @@ AVAILABLE_MODELS = [
         id="flux-dev",
         name="Flux (Dev)",
         preview_image="https://fal.media/files/koala/LmLyc8U4EVekGyGFWan1M.png",
-        inputs=[flux_prompt, image_size],
+        inputs=[flux_prompt, image_size, seed],
         outputs=[],
         cost_per_megapixel=0.025,
     ),
