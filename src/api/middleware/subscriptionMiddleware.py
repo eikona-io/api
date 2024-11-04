@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 PRICING_TIERS = {
     "free": {
         "allowed_endpoints": [],
-        "blocked_endpoints": [],
+        "blocked_endpoints": [
+            "/api/volume/add_file",
+            "/api/volume/rm",
+            "/api/volume/rename_file",
+            "/api/volume/list-models",
+            "/api/volume/get-model-info",
+        ],
         "max_requests_per_day": 100,
     },
     "pro": {
