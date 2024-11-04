@@ -557,6 +557,8 @@ class GPUEventModel(BaseModel):
     session_id: Optional[UUID] = None
     modal_function_id: Optional[str] = None
     tunnel_url: Optional[str] = None
+    cost_item_title: Optional[str] = None
+    cost: Optional[float] = None
 
     class Config:
         from_attributes = True

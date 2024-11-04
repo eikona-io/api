@@ -72,6 +72,7 @@ class Model(BaseModel):
 
 class ModelWithMetadata(Model):
     fal_id: Optional[str] = None
+    cost_per_megapixel: Optional[float] = None
 
 
 image_size = ModelInput(
@@ -112,7 +113,7 @@ recraft_style = ModelInput(
         "any",
         "realistic_image",
         "digital_illustration",
-        "vector_illustration",
+        # "vector_illustration",
         "realistic_image/b_and_w",
         "realistic_image/hard_flash",
         "realistic_image/hdr",
@@ -134,6 +135,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/koala/LmLyc8U4EVekGyGFWan1M.png",
         inputs=[flux_prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.025,
     ),
     ModelWithMetadata(
         fal_id="fal-ai/flux/schnell",
@@ -142,6 +144,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/panda/UtTYMhOHimr0rEYq20dFP.png",
         inputs=[flux_prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.003
     ),
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-medium",
@@ -150,6 +153,7 @@ AVAILABLE_MODELS = [
         preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
         inputs=[prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.02
     ),
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-large",
@@ -158,6 +162,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/zebra/yr8dajXZ9LaIyTxpVlb3n.jpeg",
         inputs=[prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.065
     ),
     ModelWithMetadata(
         fal_id="fal-ai/recraft-v3",
@@ -166,6 +171,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/penguin/-qx-N4DHuAP9RA_CWAfSt_image.webp",
         inputs=[prompt, image_size, recraft_style],
         outputs=[],
+        cost_per_megapixel=0.04
     ),
 ]
 

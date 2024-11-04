@@ -51,6 +51,7 @@ import datetime as dt
 
 # from sqlalchemy import select
 from api.models import (
+    GPUEvent,
     WorkflowRun,
     Deployment,
     Machine,
@@ -339,6 +340,7 @@ async def run_model(
     #             print(log["message"])
     
     if model.fal_id is not None:
+        start_time = dt.datetime.now(dt.UTC)
         result = await fal_client.subscribe_async(
             model.fal_id,
             arguments={
@@ -349,8 +351,20 @@ async def run_model(
             },
             # on_queue_update=on_queue_update,
         )
+        end_time = dt.datetime.now(dt.UTC)
+        
+        if (model.cost_per_megapixel is not None):
+            total_cost = 0
+            for image in result.get("images", []):
+                # Calculate megapixels from width and height
+                width = image.get("width", 0)
+                height = image.get("height", 0)
+                megapixels = (width * height) / 1_000_000
+                total_cost += megapixels * model.cost_per_megapixel
+            cost = total_cost
 
         print(result)
+        print(cost)
 
         async with get_db_context() as db:
             output_data = {
@@ -382,6 +396,22 @@ async def run_model(
             await db.commit()
             await db.refresh(newOutput)
             output_dict = newOutput.to_dict()
+            
+            if (cost is not None):
+                gpu_event = GPUEvent(
+                    id=uuid4(),
+                    user_id=workflow_run.user_id,
+                    org_id=workflow_run.org_id,
+                    cost=cost,
+                    cost_item_title=model.name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    updated_at=updated_at,
+                    gpu_provider="fal",
+                )
+                db.add(gpu_event)
+                await db.commit()
+                await db.refresh(gpu_event)
 
             return [output_dict]
 
