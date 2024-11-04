@@ -95,6 +95,12 @@ seed = ModelInput(
     required=True,
     default_value=None,
 )
+colors = ModelInput(
+    input_id="colors",
+    class_type="ComfyUIDeployExternalColor",
+    required=False,
+    default_value=None,
+)
 flux_prompt = ModelInput(
     input_id="prompt",
     class_type="ComfyUIDeployExternalText",
@@ -175,7 +181,7 @@ AVAILABLE_MODELS = [
         id="recraft-v3",
         name="Recraft V3",
         preview_image="https://fal.media/files/penguin/-qx-N4DHuAP9RA_CWAfSt_image.webp",
-        inputs=[prompt, image_size, recraft_style],
+        inputs=[prompt, image_size, recraft_style, colors],
         outputs=[],
         cost_per_megapixel=0.04
     ),
