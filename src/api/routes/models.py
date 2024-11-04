@@ -161,7 +161,7 @@ AVAILABLE_MODELS = [
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-medium",
         id="sd-v35-medium",
-        name="SD V3.5 (Medium)",
+        name="Stable Diffusion V3.5 (Medium)",
         preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
         inputs=[prompt, image_size],
         outputs=[],
@@ -170,7 +170,7 @@ AVAILABLE_MODELS = [
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-large",
         id="sd-v35-large",
-        name="SD V3.5 (Large)",
+        name="Stable Diffusion V3.5 (Large)",
         preview_image="https://fal.media/files/zebra/yr8dajXZ9LaIyTxpVlb3n.jpeg",
         inputs=[prompt, image_size],
         outputs=[],
