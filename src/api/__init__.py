@@ -1,4 +1,5 @@
 from typing import Optional
+from api.middleware.subscriptionMiddleware import SubscriptionMiddleware
 from sqlalchemy import select
 
 import modal
@@ -206,6 +207,7 @@ async def scalar_html_internal():
 # Add CORS middleware
 app.add_middleware(AuthMiddleware)
 app.add_middleware(SpendLimitMiddleware)
+app.add_middleware(SubscriptionMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
