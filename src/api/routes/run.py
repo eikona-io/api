@@ -353,22 +353,28 @@ async def run_model(
         )
         end_time = dt.datetime.now(dt.UTC)
         
+        is_image = result.get("images", [])
+        is_video = result.get("video", [])
         if (model.cost_per_megapixel is not None):
             total_cost = 0
-            for image in result.get("images", []):
-                # Calculate megapixels from width and height
-                width = image.get("width", 0)
-                height = image.get("height", 0)
-                megapixels = (width * height) / 1_000_000
-                total_cost += megapixels * model.cost_per_megapixel
-            cost = total_cost
+            if is_image:
+                for image in result.get("images", []):
+                    # Calculate megapixels from width and height
+                    width = image.get("width", 0)
+                    height = image.get("height", 0)
+                    megapixels = (width * height) / 1_000_000
+                    total_cost += megapixels * model.cost_per_megapixel
+                cost = total_cost
+            elif is_video:
+                cost = model.cost_per_megapixel
 
         print(result)
         print(cost)
 
         async with get_db_context() as db:
-            output_data = {
-                "images": [
+            output_data = {}
+            if is_image:
+                output_data["images"] = [
                     {
                         "url": image.get(
                             "url", ""
@@ -381,7 +387,18 @@ async def run_model(
                     }
                     for idx, image in enumerate(result.get("images", []))
                 ]
-            }
+            elif is_video:
+                print("video", result)
+                output_data["video"] = [
+                    {
+                        "url": result.get("video", {}).get("url", ""),
+                        "type": "output",
+                        "filename": "output.mp4",
+                        "subfolder": "",
+                        "is_public": True,
+                        "upload_duration": 0,
+                    }
+                ]
 
             updated_at = dt.datetime.now(dt.UTC)
             newOutput = WorkflowRunOutput(

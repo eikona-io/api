@@ -139,6 +139,20 @@ recraft_style = ModelInput(
     ],
 )
 
+aspect_ratio = ModelInput(
+    input_id="aspect_ratio",
+    class_type="ComfyUIDeployExternalEnum",
+    required=True,
+    default_value="16:9",
+    enum_values=[
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "21:9",
+        "9:21",
+    ],
+)
 
 # You might want to move this to a config or separate module
 AVAILABLE_MODELS = [
@@ -187,6 +201,15 @@ AVAILABLE_MODELS = [
         outputs=[],
         cost_per_megapixel=0.04
     ),
+    ModelWithMetadata(
+        fal_id="fal-ai/luma-dream-machine",
+        id="luma-dream-machine",
+        name="Luma Dream Machine",
+        preview_image="https://v2.fal.media/files/807e842c734f4127a36de9262a2d292c_output.mp4",
+        inputs=[prompt, aspect_ratio],
+        outputs=[],
+        cost_per_megapixel=0.5
+    )
 ]
 
 # AVAILABLE_MODELS = list(get_all_workflow_configs().values())
