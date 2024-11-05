@@ -192,7 +192,7 @@ AVAILABLE_MODELS = [
 # AVAILABLE_MODELS = list(get_all_workflow_configs().values())
 
 
-@router.get("/models", response_model=List[Model])
+@router.get("/models", response_model=List[ModelWithMetadata])
 async def public_models():
     """Return a list of available public models with their input/output specifications"""
     return AVAILABLE_MODELS
