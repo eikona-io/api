@@ -91,7 +91,9 @@ image_size = ModelInput(
 )
 seed = ModelInput(
     input_id="seed",
-    class_type="ComfyUIDeployExternalNumberInt",
+    class_type="ComfyUIDeployExternalSeed",
+    min_value=0,
+    max_value=2147483647,
     required=True,
     default_value=None,
 )
