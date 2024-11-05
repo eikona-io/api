@@ -97,6 +97,24 @@ seed = ModelInput(
     required=True,
     default_value=None,
 )
+num_inference_steps = ModelInput(
+    display_name="Num Inference Steps",
+    input_id="num_inference_steps",
+    class_type="ComfyUIDeployExternalNumberSliderInt",
+    required=False,
+    default_value=28,
+    min_value=1,
+    max_value=50,
+)
+guidance_scale = ModelInput(
+    display_name="Guidance scale (CFG)",
+    input_id="guidance_scale",
+    class_type="ComfyUIDeployExternalNumberSlider",
+    required=False,
+    default_value=3.5,
+    min_value=1,
+    max_value=20,
+)
 colors = ModelInput(
     input_id="colors",
     class_type="ComfyUIDeployExternalColor",
@@ -161,7 +179,7 @@ AVAILABLE_MODELS = [
         id="flux-dev",
         name="Flux (Dev)",
         preview_image="https://fal.media/files/koala/LmLyc8U4EVekGyGFWan1M.png",
-        inputs=[flux_prompt, image_size, seed],
+        inputs=[flux_prompt, image_size, seed, num_inference_steps, guidance_scale],
         outputs=[],
         cost_per_megapixel=0.025,
     ),
