@@ -72,6 +72,7 @@ class Model(BaseModel):
 
 class ModelWithMetadata(Model):
     fal_id: Optional[str] = None
+    cost_per_megapixel: Optional[float] = None
 
 
 image_size = ModelInput(
@@ -87,6 +88,38 @@ image_size = ModelInput(
         "landscape_4_3",
         "landscape_16_9",
     ],
+)
+seed = ModelInput(
+    input_id="seed",
+    class_type="ComfyUIDeployExternalSeed",
+    min_value=0,
+    max_value=2147483647,
+    required=True,
+    default_value=None,
+)
+num_inference_steps = ModelInput(
+    display_name="Num Inference Steps",
+    input_id="num_inference_steps",
+    class_type="ComfyUIDeployExternalNumberSliderInt",
+    required=False,
+    default_value=28,
+    min_value=1,
+    max_value=50,
+)
+guidance_scale = ModelInput(
+    display_name="Guidance scale (CFG)",
+    input_id="guidance_scale",
+    class_type="ComfyUIDeployExternalNumberSlider",
+    required=False,
+    default_value=3.5,
+    min_value=1,
+    max_value=20,
+)
+colors = ModelInput(
+    input_id="colors",
+    class_type="ComfyUIDeployExternalColor",
+    required=False,
+    default_value=None,
 )
 flux_prompt = ModelInput(
     input_id="prompt",
@@ -112,7 +145,7 @@ recraft_style = ModelInput(
         "any",
         "realistic_image",
         "digital_illustration",
-        "vector_illustration",
+        # "vector_illustration",
         "realistic_image/b_and_w",
         "realistic_image/hard_flash",
         "realistic_image/hdr",
@@ -124,6 +157,20 @@ recraft_style = ModelInput(
     ],
 )
 
+aspect_ratio = ModelInput(
+    input_id="aspect_ratio",
+    class_type="ComfyUIDeployExternalEnum",
+    required=True,
+    default_value="16:9",
+    enum_values=[
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "21:9",
+        "9:21",
+    ],
+)
 
 # You might want to move this to a config or separate module
 AVAILABLE_MODELS = [
@@ -132,8 +179,9 @@ AVAILABLE_MODELS = [
         id="flux-dev",
         name="Flux (Dev)",
         preview_image="https://fal.media/files/koala/LmLyc8U4EVekGyGFWan1M.png",
-        inputs=[flux_prompt, image_size],
+        inputs=[flux_prompt, image_size, seed, num_inference_steps, guidance_scale],
         outputs=[],
+        cost_per_megapixel=0.025,
     ),
     ModelWithMetadata(
         fal_id="fal-ai/flux/schnell",
@@ -142,37 +190,50 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/panda/UtTYMhOHimr0rEYq20dFP.png",
         inputs=[flux_prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.003
     ),
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-medium",
         id="sd-v35-medium",
-        name="SD V3.5 (Medium)",
+        name="Stable Diffusion V3.5 (Medium)",
         preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
         inputs=[prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.02
     ),
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-large",
         id="sd-v35-large",
-        name="SD V3.5 (Large)",
+        name="Stable Diffusion V3.5 (Large)",
         preview_image="https://fal.media/files/zebra/yr8dajXZ9LaIyTxpVlb3n.jpeg",
         inputs=[prompt, image_size],
         outputs=[],
+        cost_per_megapixel=0.065
     ),
     ModelWithMetadata(
         fal_id="fal-ai/recraft-v3",
         id="recraft-v3",
         name="Recraft V3",
         preview_image="https://fal.media/files/penguin/-qx-N4DHuAP9RA_CWAfSt_image.webp",
-        inputs=[prompt, image_size, recraft_style],
+        inputs=[prompt, image_size, recraft_style, colors],
         outputs=[],
+        cost_per_megapixel=0.04
     ),
+    ModelWithMetadata(
+        fal_id="fal-ai/luma-dream-machine",
+        id="luma-dream-machine",
+        name="Luma Dream Machine",
+        preview_image="https://v2.fal.media/files/807e842c734f4127a36de9262a2d292c_output.mp4",
+        inputs=[prompt, aspect_ratio],
+        outputs=[],
+        cost_per_megapixel=0.5
+    )
 ]
 
 # AVAILABLE_MODELS = list(get_all_workflow_configs().values())
 
 
-@router.get("/models", response_model=List[Model])
+@router.get("/models", response_model=List[ModelWithMetadata])
 async def public_models():
     """Return a list of available public models with their input/output specifications"""
     return AVAILABLE_MODELS

@@ -582,7 +582,7 @@ class GPUEvent(SerializableMixin, Base):
         Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
-    gpu_provider = Column(Enum("runpod", "modal", name="gpu_provider"), nullable=False)
+    gpu_provider = Column(Enum("runpod", "modal", "fal", name="gpu_provider"), nullable=False)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -592,6 +592,9 @@ class GPUEvent(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+    
+    cost_item_title = Column(String)
+    cost = Column(Float, default=0)
     
     session_timeout = Column(Integer)
     session_id = Column(String)
