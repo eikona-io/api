@@ -50,11 +50,11 @@ async def get_runs(
     # filter workflow version
     workflow_version_id: Optional[List[str]] = Query(None),
     # filter queued duration
-    min_queued_duration: Optional[str] = 0,
+    min_queued_duration: Optional[str] = "0",
     # filter run duration
-    min_run_duration: Optional[str] = 0,
+    min_run_duration: Optional[str] = "0",
     # filter total upload duration
-    min_total_upload_duration: Optional[str] = 0,
+    min_total_upload_duration: Optional[str] = "0",
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -272,11 +272,11 @@ async def get_runs_time_line(
     # filter workflow version
     workflow_version_id: Optional[List[str]] = Query(None),
     # filter queued duration
-    min_queued_duration: Optional[str] = 0,
+    min_queued_duration: Optional[str] = "0",
     # filter run duration
-    min_run_duration: Optional[str] = 0,
+    min_run_duration: Optional[str] = "0",
     # filter total upload duration
-    min_total_upload_duration: Optional[str] = 0,
+    min_total_upload_duration: Optional[str] = "0",
     db: AsyncSession = Depends(get_db),
 ):
     try:
