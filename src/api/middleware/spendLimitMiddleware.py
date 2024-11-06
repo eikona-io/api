@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 class SpendLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
-        redis_url = os.getenv("UPSTASH_REDIS_REST_URL")
-        redis_token = os.getenv("UPSTASH_REDIS_REST_TOKEN")
+        redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
+        redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
         self.redis = Redis(url=redis_url, token=redis_token)
 
     async def dispatch(self, request: Request, call_next):
@@ -57,6 +57,11 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
     async def check_limit_for_entity(self, entity_id: str, entity_type: str):
         redis_key = f"plan:{entity_id}"
         raw_value = self.redis.get(redis_key)
+        
+        
+        if not raw_value:
+            raise HTTPException(status_code=403, detail="No plan data found for this entity. Please update your spend limit settings")
+        
         plan_data = json.loads(raw_value)
         value = PlanInfo.model_validate(plan_data)
 
