@@ -41,8 +41,8 @@ PRICING_TIERS = {
 class SubscriptionMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
-        redis_url = os.getenv("UPSTASH_REDIS_REST_URL")
-        redis_token = os.getenv("UPSTASH_REDIS_REST_TOKEN")
+        redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
+        redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
         self.redis = Redis(url=redis_url, token=redis_token)
         self.disable_stripe = os.getenv("DISABLE_STRIPE", "false").lower() == "true"
 
