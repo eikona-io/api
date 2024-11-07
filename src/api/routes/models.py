@@ -194,6 +194,19 @@ aspect_ratio = ModelInput(
         "9:21",
     ],
 )
+image_url = ModelInput(
+    input_id="image_url",
+    class_type="ComfyUIDeployExternalImage",
+    required=True,
+    default_value=None,
+)
+
+input_image_urls = ModelInput(
+    input_id="input_image_urls",
+    class_type="ComfyUIDeployExternalImageBatch",
+    required=True,
+    default_value=None,
+)
 
 # You might want to move this to a config or separate module
 AVAILABLE_MODELS = [
@@ -216,6 +229,26 @@ AVAILABLE_MODELS = [
         outputs=[],
         tags=["flux", "image"],
         cost_per_megapixel=0.003
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/omnigen-v1",
+        id="omnigen-v1",
+        name="Omnigen V1",
+        preview_image="https://fal.media/files/elephant/YINEd790XmHDu-YGsG3gJ.jpeg",
+        inputs=[prompt, input_image_urls, image_size, seed, guidance_scale, num_inference_steps],
+        outputs=[],
+        tags=["omnigen", "image"],
+        cost_per_megapixel=0.1,
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/flux-pro/v1.1-ultra",
+        id="flux-pro-v1.1-ultra",
+        name="Flux V1.1 (Pro) Ultra",
+        preview_image="https://fal.media/files/kangaroo/qur7RE3oRed27VmCcSZB6_03c743bc8ab544f28978eb700df1afab.jpg",
+        inputs=[flux_prompt, seed, aspect_ratio, raw],
+        outputs=[],
+        tags=["flux", "image"],
+        cost_per_megapixel=0.06,
     ),
     ModelWithMetadata(
         fal_id="fal-ai/stable-diffusion-v35-medium",
@@ -247,35 +280,55 @@ AVAILABLE_MODELS = [
         tags=["recraft", "image"],
         cost_per_megapixel=0.04,
     ),
+    # ModelWithMetadata(
+    #     fal_id="fal-ai/luma-dream-machine",
+    #     id="luma-dream-machine",
+    #     name="Luma Dream Machine",
+    #     preview_image="https://v2.fal.media/files/807e842c734f4127a36de9262a2d292c_output.mp4",
+    #     inputs=[prompt, aspect_ratio],
+    #     outputs=[],
+    #     tags=["luma", "video"],
+    #     cost_per_megapixel=0.5
+    # ),
+    # ModelWithMetadata(
+    #     fal_id="fal-ai/haiper-video-v2",
+    #     id="haiper-video-v2",
+    #     name="Haiper 2.0 Video",
+    #     preview_image="https://fal.media/files/koala/ki_nVspVCkT8JpgrjKdqC_output.mp4",
+    #     inputs=[prompt, duration, prompt_enhancer, seed],
+    #     outputs=[],
+    #     tags=["haiper", "video"],
+    #     cost_per_megapixel=0.04,
+    # ),
     ModelWithMetadata(
-        fal_id="fal-ai/luma-dream-machine",
-        id="luma-dream-machine",
-        name="Luma Dream Machine",
-        preview_image="https://v2.fal.media/files/807e842c734f4127a36de9262a2d292c_output.mp4",
-        inputs=[prompt, aspect_ratio],
-        outputs=[],
-        tags=["luma", "video"],
-        cost_per_megapixel=0.5
-    ),
-    ModelWithMetadata(
-        fal_id="fal-ai/flux-pro/v1.1-ultra",
-        id="flux-pro-v1.1-ultra",
-        name="Flux V1.1 (Pro) Ultra",
-        preview_image="https://fal.media/files/kangaroo/qur7RE3oRed27VmCcSZB6_03c743bc8ab544f28978eb700df1afab.jpg",
-        inputs=[flux_prompt, seed, aspect_ratio, raw],
+        fal_id="fal-ai/flux/dev/image-to-image",
+        id="flux-dev-image-to-image",
+        name="Flux (Dev) Image to Image",
+        preview_image="https://fal.media/files/rabbit/mYYiweNeGvoYb1jZX3erl.png",
+        inputs=[flux_prompt, image_url, image_size, seed, num_inference_steps, guidance_scale],
         outputs=[],
         tags=["flux", "image"],
-        cost_per_megapixel=0.06,
+        cost_per_megapixel=0.03,
     ),
+    # ModelWithMetadata(
+    #     fal_id="fal-ai/aura-flow",
+    #     id="aura-flow",
+    #     name="AuraFlow",
+    #     preview_image="https://fal.media/files/kangaroo/HPWc0iotMy0wLxp7SbGtE_1a7fdbd386a94da1960bf2c41af14050.png",
+    #     inputs=[prompt, seed, guidance_scale, num_inference_steps],
+    #     outputs=[],
+    #     tags=["aura", "image"],
+    #     cost_per_megapixel=0.02,
+    # ),
     ModelWithMetadata(
-        fal_id="fal-ai/haiper-video-v2",
-        id="haiper-video-v2",
-        name="Haiper 2.0 Video",
-        preview_image="https://fal.media/files/koala/ki_nVspVCkT8JpgrjKdqC_output.mp4",
-        inputs=[prompt, duration, prompt_enhancer, seed],
+        fal_id="fal-ai/minimax-video/image-to-video",
+        id="minimax-video-image-to-video",
+        name="MiniMax (Hailuo AI) Video [Image to Video]",
+        preview_image="https://fal.media/files/penguin/eD9AqUrqCzFkQXSd_xXG2_output.mp4",
+        inputs=[prompt, image_url],
         outputs=[],
-        tags=["haiper", "video"],
-        cost_per_megapixel=0.04,
+        tags=["minimax", "video"],
+        cost_per_megapixel=0.5,
     ),
 ]
 
