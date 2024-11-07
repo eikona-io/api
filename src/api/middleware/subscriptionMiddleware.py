@@ -21,19 +21,16 @@ PRICING_TIERS = {
             "/api/volume/list-models",
             "/api/volume/get-model-info",
         ],
-        "max_requests_per_day": 100,
     },
     "pro": {
         "allowed_endpoints": [],
         "blocked_endpoints": [],
-        "max_requests_per_day": 1000,
     },
     "enterprise": {
         "allowed_endpoints": [
             "*"  # Enterprise tier has access to all endpoints
         ],
         "blocked_endpoints": [],
-        "max_requests_per_day": float("inf"),
     },
 }
 
@@ -89,9 +86,6 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 detail=f"This endpoint is not available in your current {tier} tier. Please upgrade your subscription.",
             )
 
-        # Check rate limits
-        # await self.check_rate_limits(entity_id, tier)
-
     def is_endpoint_allowed(self, path: str, tier: str) -> bool:
         tier_config = PRICING_TIERS.get(tier, PRICING_TIERS["free"])
         allowed_endpoints = tier_config["allowed_endpoints"]
@@ -137,20 +131,3 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 return True
 
         return False
-
-    async def check_rate_limits(self, entity_id: str, tier: str):
-        rate_limit_key = f"rate_limit:{entity_id}:daily"
-        current_count = self.redis.get(rate_limit_key) or 0
-
-        max_requests = PRICING_TIERS[tier]["max_requests_per_day"]
-
-        if int(current_count) >= max_requests:
-            raise HTTPException(
-                status_code=429, detail=f"Daily request limit exceeded for {tier} tier"
-            )
-
-        # Increment request count
-        self.redis.incr(rate_limit_key)
-        # Set expiry for 24 hours if not already set
-        if not self.redis.ttl(rate_limit_key):
-            self.redis.expire(rate_limit_key, 24 * 60 * 60)
