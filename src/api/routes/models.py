@@ -63,6 +63,7 @@ class Model(BaseModel):
     preview_image: Optional[str] = None
     inputs: List[ModelInput]  # Changed from input
     outputs: List[ModelOutput]  # Changed from output
+    tags: List[str] = []
 
 
 # class WorkflowConfigWithMetaData(WorkflowConfig):
@@ -128,6 +129,28 @@ flux_prompt = ModelInput(
     default_value='Extreme close-up of a single tiger eye, direct frontal view. Detailed iris and pupil. Sharp focus on eye texture and color. Natural lighting to capture authentic eye shine and depth. The word "FLUX" is painted over it in big, white brush strokes with visible texture.',
     description="The prompt to generate an image with",
 )
+raw = ModelInput(
+    input_id="raw",
+    class_type="ComfyUIDeployExternalBoolean",
+    required=True,
+    default_value=False,
+)
+duration = ModelInput(
+    input_id="duration",
+    class_type="ComfyUIDeployExternalEnum",
+    required=True,
+    default_value="4",
+    enum_values=[
+        "4",
+        "6",
+    ],
+)
+prompt_enhancer = ModelInput(
+    input_id="prompt_enhancer",
+    class_type="ComfyUIDeployExternalBoolean",
+    required=True,
+    default_value=True,
+)
 
 prompt = ModelInput(
     input_id="prompt",
@@ -181,6 +204,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/koala/LmLyc8U4EVekGyGFWan1M.png",
         inputs=[flux_prompt, image_size, seed, num_inference_steps, guidance_scale],
         outputs=[],
+        tags=["flux", "image"],
         cost_per_megapixel=0.025,
     ),
     ModelWithMetadata(
@@ -190,6 +214,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/panda/UtTYMhOHimr0rEYq20dFP.png",
         inputs=[flux_prompt, image_size],
         outputs=[],
+        tags=["flux", "image"],
         cost_per_megapixel=0.003
     ),
     ModelWithMetadata(
@@ -199,6 +224,7 @@ AVAILABLE_MODELS = [
         preview_image="https://comfy-deploy-output.s3.amazonaws.com/outputs/runs/36febfce-3cb6-4220-9447-33003e58d381/ComfyUI_00001_.png",
         inputs=[prompt, image_size],
         outputs=[],
+        tags=["sd3.5", "image"],
         cost_per_megapixel=0.02
     ),
     ModelWithMetadata(
@@ -208,6 +234,7 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/zebra/yr8dajXZ9LaIyTxpVlb3n.jpeg",
         inputs=[prompt, image_size],
         outputs=[],
+        tags=["sd3.5", "image"],
         cost_per_megapixel=0.065
     ),
     ModelWithMetadata(
@@ -217,7 +244,8 @@ AVAILABLE_MODELS = [
         preview_image="https://fal.media/files/penguin/-qx-N4DHuAP9RA_CWAfSt_image.webp",
         inputs=[prompt, image_size, recraft_style, colors],
         outputs=[],
-        cost_per_megapixel=0.04
+        tags=["recraft", "image"],
+        cost_per_megapixel=0.04,
     ),
     ModelWithMetadata(
         fal_id="fal-ai/luma-dream-machine",
@@ -226,8 +254,29 @@ AVAILABLE_MODELS = [
         preview_image="https://v2.fal.media/files/807e842c734f4127a36de9262a2d292c_output.mp4",
         inputs=[prompt, aspect_ratio],
         outputs=[],
+        tags=["luma", "video"],
         cost_per_megapixel=0.5
-    )
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/flux-pro/v1.1-ultra",
+        id="flux-pro-v1.1-ultra",
+        name="Flux V1.1 (Pro) Ultra",
+        preview_image="https://fal.media/files/kangaroo/qur7RE3oRed27VmCcSZB6_03c743bc8ab544f28978eb700df1afab.jpg",
+        inputs=[flux_prompt, seed, aspect_ratio, raw],
+        outputs=[],
+        tags=["flux", "image"],
+        cost_per_megapixel=0.06,
+    ),
+    ModelWithMetadata(
+        fal_id="fal-ai/haiper-video-v2",
+        id="haiper-video-v2",
+        name="Haiper 2.0 Video",
+        preview_image="https://fal.media/files/koala/ki_nVspVCkT8JpgrjKdqC_output.mp4",
+        inputs=[prompt, duration, prompt_enhancer, seed],
+        outputs=[],
+        tags=["haiper", "video"],
+        cost_per_megapixel=0.04,
+    ),
 ]
 
 # AVAILABLE_MODELS = list(get_all_workflow_configs().values())
