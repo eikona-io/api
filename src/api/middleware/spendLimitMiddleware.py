@@ -60,7 +60,10 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
         
         
         if not raw_value:
-            raise HTTPException(status_code=403, detail="No plan data found for this entity. Please update your spend limit settings")
+            # Create default plan data with $5 spend limit
+            default_plan = PlanInfo(spend_limit=5.0)
+            self.redis.set(redis_key, json.dumps(default_plan.model_dump()))
+            raw_value = self.redis.get(redis_key)
         
         plan_data = json.loads(raw_value)
         value = PlanInfo.model_validate(plan_data)
