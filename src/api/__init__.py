@@ -163,7 +163,7 @@ api_router.include_router(models.router)
 # This is for the docs generation
 public_api_router.include_router(run.router)
 public_api_router.include_router(session.router)
-public_api_router.include_router(session.beta_router)
+# public_api_router.include_router(session.beta_router)
 public_api_router.include_router(deployments.router)
 public_api_router.include_router(files.router)
 public_api_router.include_router(models.router)
