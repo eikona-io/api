@@ -398,7 +398,7 @@ def comfyui_cmd(
         if not os.path.exists(temp_directory):
             os.makedirs(temp_directory)
 
-    cmd = f"python main.py --dont-print-server --enable-cors-header --listen --port 8188 --input-directory {input_directory}"
+    cmd = f"python main.py --dont-print-server --enable-cors-header --listen --port 8188 --input-directory {input_directory} --preview-method auto"
     if mountIO:
         cmd += (
             f" --output-directory {output_directory} --temp-directory {temp_directory}"
