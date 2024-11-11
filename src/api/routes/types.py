@@ -594,8 +594,8 @@ class SubscriptionStatusType(BaseModel):
     last_invoice_timestamp: datetime
     
 class PlanInfo(BaseModel):
-    plan: str
-    status: str
-    expires_at: int
+    plan: str = "free"
+    status: str = "active"
+    expires_at: int = -1
     spent: Optional[float] = None
     spend_limit: float = Field(default=500.0)
