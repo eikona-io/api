@@ -1,6 +1,9 @@
 from collections import deque
 from typing import Optional, Dict, List, Any
 from uuid import uuid4
+
+from api.database import get_db_context
+from sqlalchemy import update
 from database import get_clickhouse_client
 from models import Machine
 from routes.utils import select
@@ -890,27 +893,62 @@ async def build_logic(item: Item):
         await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
         return
 
-    print("callback_url", item.callback_url)
-    async with aiohttp.ClientSession() as session:
-        await session.post(
-            item.callback_url,
-            headers={
-                "Content-Type": "application/json",
-                "bypass-tunnel-reminder": "true",
-            },
-            data=json.dumps(
-                {
-                    "machine_id": item.machine_id,
-                    "endpoint": url,
-                    "app_id": app_id,
-                    "build_log": json.dumps(machine_logs),
-                    "import_failed_logs": json.dumps(import_failed_logs)
-                    if not item.skip_static_assets
-                    else None,
-                    # "static_fe_assets": static_fe_assets,
-                }
-            ).encode("utf-8"),
-        )
+    # Now instead of sending a post request to the callback url, we update the machine table
+    # TODO: Support always ons gpus
+    # print("callback_url", item.callback_url)
+    # async with aiohttp.ClientSession() as session:
+    #     await session.post(
+    #         item.callback_url,
+    #         headers={
+    #             "Content-Type": "application/json",
+    #             "bypass-tunnel-reminder": "true",
+    #         },
+    #         data=json.dumps(
+    #             {
+    #                 "machine_id": item.machine_id,
+    #                 "endpoint": url,
+    #                 "app_id": app_id,
+    #                 "build_log": json.dumps(machine_logs),
+    #                 "import_failed_logs": json.dumps(import_failed_logs)
+    #                 if not item.skip_static_assets
+    #                 else None,
+    #                 # "static_fe_assets": static_fe_assets,
+    #             }
+    #         ).encode("utf-8"),
+    #     )
+    if url is not None:
+        async with get_db_context() as db:
+            update_stmt = (
+                update(Machine)
+                .where(Machine.id == item.machine_id)
+                .values(
+                    status="ready",
+                    endpoint=url,
+                    build_log=json.dumps(machine_logs),
+                    modal_app_id=app_id,
+                    import_failed_logs=json.dumps(import_failed_logs) if not item.skip_static_assets else None,
+                )
+                .returning(Machine)
+            )
+            result = await db.execute(update_stmt)
+            await db.commit()
+            machine = result.scalar_one()
+            await db.refresh(machine)
+    else:
+        async with get_db_context() as db:
+            update_stmt = (
+                update(Machine)
+                .where(Machine.id == item.machine_id)
+                .values(
+                    status="error",
+                    build_log=json.dumps(machine_logs),
+                )
+                .returning(Machine)
+            )
+            result = await db.execute(update_stmt)
+            await db.commit()
+            machine = result.scalar_one()
+            await db.refresh(machine)
 
     await send_json_to_ws(
         item.machine_id,
