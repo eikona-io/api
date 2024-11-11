@@ -1,5 +1,5 @@
 FROM python:3.12-slim-bullseye
-COPY --from=ghcr.io/astral-sh/uv:0.3.1 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /bin/uv
 
 FROM python:3.12-slim-bullseye
 
