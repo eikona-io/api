@@ -85,6 +85,9 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 status_code=403,
                 detail=f"This endpoint is not available in your current {tier} tier. Please upgrade your subscription.",
             )
+            
+        if request.state is not None and request.state.current_user is not None:
+            request.state.current_user["plan"] = tier
 
     def is_endpoint_allowed(self, path: str, tier: str) -> bool:
         tier_config = PRICING_TIERS.get(tier, PRICING_TIERS["free"])

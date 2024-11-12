@@ -261,15 +261,31 @@ async def get_user_settings(request: Request, db: AsyncSession):
     user_settings = await db.execute(user_query)
     user_settings = user_settings.scalar_one_or_none()
     user_settings = cast(Optional[UserSettings], user_settings)
-    
+
     if user_settings is None:
-        org_id = request.state.current_user["org_id"] if "org_id" in request.state.current_user else None
+        print("Creating user settings")
+        org_id = (
+            request.state.current_user["org_id"]
+            if "org_id" in request.state.current_user
+            else None
+        )
+
+        plan = (
+            request.state.current_user["plan"]
+            if "plan" in request.state.current_user
+            else "free"
+        )
+        
         user_settings = UserSettings(
             user_id=request.state.current_user["user_id"],
             org_id=org_id,
+            api_version="v2",
+            spend_limit=5 if plan == "free" else 500
+            # max_spend_limit=5 if plan == "free" else 1000,
         )
-        db.add(user_settings)
-        await db.commit()
+        # db.add(user_settings)
+        # await db.commit()
+        # await db.refresh(user_settings)
 
     return user_settings
 
@@ -498,7 +514,7 @@ async def fetch_with_timeout(url, options, timeout=20):
     try:
         async with aiohttp.ClientSession() as session:
             # logging.info(options)
-            method = options.pop('method', 'GET')  # Extract method from options
+            method = options.pop("method", "GET")  # Extract method from options
             async with session.request(
                 method, url, **options, timeout=timeout
             ) as response:
@@ -604,12 +620,14 @@ async def get_total_gpu_compute(usage_details: List[Dict[str, Any]]) -> Decimal:
         machine_cost = pricing_lookup_table[gpu] * usage_in_sec
         total_compute_cost += machine_cost
 
-        individual_costs.append({
-            "machine_name": machine_name,
-            "gpu": gpu,
-            "usage_in_sec": usage_in_sec,
-            "cost": machine_cost
-        })
+        individual_costs.append(
+            {
+                "machine_name": machine_name,
+                "gpu": gpu,
+                "usage_in_sec": usage_in_sec,
+                "cost": machine_cost,
+            }
+        )
 
     # Print debug information
     # for cost_detail in individual_costs:
@@ -643,10 +661,14 @@ async def is_exceed_spend_limit(request: Request, db: AsyncSession):
 
     total_compute_cost = await get_total_gpu_compute(usage_details)
     print("total_compute_cost", total_compute_cost)
-    
-    user_spend_limit = Decimal(user_settings.spend_limit if user_settings.spend_limit is not None else spend_limit)
-    
+
+    user_spend_limit = Decimal(
+        user_settings.spend_limit
+        if user_settings.spend_limit is not None
+        else spend_limit
+    )
+
     if total_compute_cost > user_spend_limit:
         return True
-    
+
     return False
