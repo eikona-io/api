@@ -465,8 +465,8 @@ class UserSettings(SerializableMixin, Base):
         Enum("v1", "v2", name="api_version"), default="v2"
     )
     
-    spend_limit = Column(Float, default=500)
-    max_spend_limit = Column(Float, default=1000)
+    spend_limit = Column(Float, default=5)
+    max_spend_limit = Column(Float, default=5)
 
     hugging_face_token = Column(String)
     workflow_limit = Column(Float)
