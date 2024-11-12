@@ -461,10 +461,16 @@ class UserSettings(SerializableMixin, Base):
         nullable=False,
     )
     
+    api_version = Column(
+        Enum("v1", "v2", name="api_version"), default="v2"
+    )
+    
     spend_limit = Column(Float, default=500)
     max_spend_limit = Column(Float, default=1000)
 
     hugging_face_token = Column(String)
+    workflow_limit = Column(Float)
+    machine_limit = Column(Float)
     # Optionally, add relationship to User model
     # user = relationship("User", back_populates="settings")
 

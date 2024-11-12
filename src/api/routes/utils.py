@@ -261,6 +261,16 @@ async def get_user_settings(request: Request, db: AsyncSession):
     user_settings = await db.execute(user_query)
     user_settings = user_settings.scalar_one_or_none()
     user_settings = cast(Optional[UserSettings], user_settings)
+    
+    if user_settings is None:
+        org_id = request.state.current_user["org_id"] if "org_id" in request.state.current_user else None
+        user_settings = UserSettings(
+            user_id=request.state.current_user["user_id"],
+            org_id=org_id,
+        )
+        db.add(user_settings)
+        await db.commit()
+
     return user_settings
 
 
