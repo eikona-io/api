@@ -26,6 +26,14 @@ PRICING_TIERS = {
         "allowed_endpoints": [],
         "blocked_endpoints": [],
     },
+    "creator": {
+        "allowed_endpoints": ["*"],
+        "blocked_endpoints": [],
+    },
+    "business": {
+        "allowed_endpoints": ["*"],
+        "blocked_endpoints": [],
+    },
     "enterprise": {
         "allowed_endpoints": [
             "*"  # Enterprise tier has access to all endpoints
