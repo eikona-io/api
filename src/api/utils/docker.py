@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
-comfydeploy_hash = "603223741ac89fda7096898fc8a3bb6b00ae5ee2"
+comfydeploy_hash = "1a017ee6a3b547775360b42f27fae34eae088224"
 comfyui_hash = "8ce2a1052ca03183768da0aaa483024e58b8008c"
 
 def extract_hash(dependency_string):
