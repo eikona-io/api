@@ -1100,7 +1100,7 @@ def comfyui_api():
     container_idle_timeout=config["idle_timeout"],
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
-    secrets=modal_secrets + [modal.Secret.from_name("aws-s3-js-assets-user")],
+    secrets=modal_secrets,
     # _allow_background_volume_commits=True,
 )
 class ComfyDeployRunner:
