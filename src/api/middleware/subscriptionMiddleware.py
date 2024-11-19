@@ -3,7 +3,7 @@ import logging
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from upstash_redis import Redis
+from upstash_redis.asyncio import Redis
 import os
 from api.database import AsyncSessionLocal
 from .auth import get_current_user
@@ -76,7 +76,7 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         # Get subscription tier from Redis
         entity_id = org_id if org_id else user_id
         redis_key = f"plan:{entity_id}"
-        plan_data = self.redis.get(redis_key)
+        plan_data = await self.redis.get(redis_key)
 
         if not plan_data:
             tier = "free"  # Default to free tier

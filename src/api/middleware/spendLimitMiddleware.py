@@ -4,7 +4,7 @@ from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from api.routes.types import PlanInfo
-from upstash_redis import Redis
+from upstash_redis.asyncio import Redis
 import os
 from api.database import AsyncSessionLocal
 from .auth import get_current_user
@@ -56,21 +56,21 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
 
     async def check_limit_for_entity(self, entity_id: str, entity_type: str):
         redis_key = f"plan:{entity_id}"
-        raw_value = self.redis.get(redis_key)
+        raw_value = await self.redis.get(redis_key)
         
         
         if not raw_value:
             # Create default plan data with $5 spend limit
             default_plan = PlanInfo(spend_limit=5.0)
-            self.redis.set(redis_key, json.dumps(default_plan.model_dump()))
-            raw_value = self.redis.get(redis_key)
+            raw_value = json.dumps(default_plan.model_dump())
+            await self.redis.set(redis_key, raw_value)
         
         plan_data = json.loads(raw_value)
         value = PlanInfo.model_validate(plan_data)
 
         if "spend_limit" not in plan_data:
             updated_data = value.model_dump()
-            self.redis.set(redis_key, json.dumps(updated_data))
+            await self.redis.set(redis_key, json.dumps(updated_data))
             logger.info(f"Updated Redis with default spend_limit for {entity_type} {entity_id}")
 
         if value.spent is not None and value.spent > value.spend_limit:
