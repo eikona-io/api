@@ -725,10 +725,26 @@ async def _create_run(
 
         print("data", data)
         print("GPU EVENT ID", data.gpu_event_id)
+        
+        # backward compatibility for old comfyui custom nodes
+        # Clone workflow_api_raw to modify inputs without affecting original
+        workflow_api = json.loads(json.dumps(workflow_api_raw))
+        
+        if inputs and workflow_api:
+            for key in inputs:
+                for node in workflow_api.values():
+                    if node.get("inputs", {}).get("input_id") == key:
+                        node["inputs"]["input_id"] = inputs[key]
+                        # Fix for external text default value
+                        if node.get("class_type") == "ComfyUIDeployExternalText":
+                            node["inputs"]["default_value"] = inputs[key]
+          
+        # print("workflow_api", workflow_api)
 
         params = {
             "prompt_id": str(new_run.id),
             "workflow_api_raw": workflow_api_raw,
+            "workflow_api": workflow_api,
             "inputs": inputs,
             "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
             "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
