@@ -1,4 +1,5 @@
 from collections import deque
+from pprint import pprint
 from typing import Optional, Dict, List, Any
 from uuid import uuid4
 
@@ -132,7 +133,7 @@ class GPUType(str, Enum):
     L4 = "L4"
 
 
-class Item(BaseModel):
+class BuildMachineItem(BaseModel):
     machine_id: str
     name: str
     auth_token: str
@@ -332,7 +333,7 @@ async def websocket_endpoint_live_logs(websocket: WebSocket, machine_id: str):
 
 @router.post("/create")
 async def create_machine(
-    item: Item,
+    item: BuildMachineItem,
     background_tasks: BackgroundTasks,
 ):
     if item.machine_id in machine_id_status and machine_id_status[item.machine_id]:
@@ -497,7 +498,7 @@ async def insert_to_clickhouse(table: str, data: list):
     await client.insert(table=table, data=data)
 
 
-async def build_logic(item: Item):
+async def build_logic(item: BuildMachineItem):
     # Deploy to modal
     with tempfile.TemporaryDirectory() as temp_dir:
         folder_path = temp_dir
@@ -543,7 +544,7 @@ async def build_logic(item: Item):
         config = {
             "name": item.name,
             "deploy_test": "False",
-            "gpu": item.gpu,
+            "gpu": item.gpu.value,
             "public_model_volume": public_model_volume_name,
             "private_model_volume": item.model_volume_name,
             "pip": list(pip_modules),
@@ -584,8 +585,17 @@ async def build_logic(item: Item):
         if item.docker_commands != None:
             config["docker_commands"] = item.docker_commands
 
+        # with open(f"{folder_path}/config.py", "w") as f:
+        #     f.write("config = " + json.dumps(config))
+        
         with open(f"{folder_path}/config.py", "w") as f:
-            f.write("config = " + json.dumps(config))
+            f.write("config = {\n")
+            for key, value in config.items():
+                if isinstance(value, str):
+                    f.write(f"    '{key}': '{value}',\n")
+                else:
+                    f.write(f"    '{key}': {value},\n")
+            f.write("}")
 
         if item.snapshot != None:
             with open(f"{folder_path}/data/snapshot.json", "w") as f:
@@ -924,6 +934,7 @@ async def build_logic(item: Item):
                 .values(
                     status="ready",
                     endpoint=url,
+                    machine_version=BUILDER_VERSION,
                     build_log=json.dumps(machine_logs),
                     modal_app_id=app_id,
                     import_failed_logs=json.dumps(import_failed_logs) if not item.skip_static_assets else None,

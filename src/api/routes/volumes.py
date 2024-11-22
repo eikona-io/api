@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Volumes"])
 
+async def retrieve_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
+    volumes = await get_model_volumes(request, db)
+    if len(volumes) == 0:
+        volumes = [await add_model_volume(request, db)]
+    return volumes
+
 
 async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
     user_volume_query = (

@@ -118,10 +118,12 @@ class DockerCommandResponse(BaseModel):
     
 def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
     deps = data.dependencies
-    docker_commands = None
+    docker_commands = []
     steps = data.docker_command_steps
+    comfy_ui_override = None
     
     if steps:
+        print("steps",steps)
         steps = DockerSteps(**steps) if isinstance(steps, dict) else steps
         comfy_ui_index = next((i for i, step in enumerate(steps.steps) if step.type == "custom-node" and step.data.name == "comfyui"), -1)
         comfy_ui_override = None
@@ -130,7 +132,9 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
         docker_commands = generate_docker_commands_from_docker_steps(steps)
     elif deps:
         docker_commands = generate_docker_commands(DependencyGraph(**deps))
-    
+        
+    print("log_docker_commands",steps,docker_commands)
+        
     if not deps and data.snapshot:
         snapshot = data.snapshot
         deps = DependencyGraph(
@@ -194,7 +198,7 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
         ["RUN pip freeze"],
     ] + docker_commands
     
-    if not any(step.type == "custom-node" and step.data.url.lower().startswith("https://github.com/bennykok/comfyui-deploy") for step in steps.steps):
+    if 'steps' not in steps or not any(step.type == "custom-node" and step.data.url.lower().startswith("https://github.com/bennykok/comfyui-deploy") for step in steps.steps):
         docker_commands.append([
             "WORKDIR /comfyui/custom_nodes",
             "RUN git clone https://github.com/bennykok/comfyui-deploy --recursive",

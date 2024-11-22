@@ -68,7 +68,7 @@ else:
 compile_with_gpu = config["install_custom_node_with_gpu"] == "True"
 final_gpu_param = config["gpu"] if config["gpu"] != "CPU" else None
 gpu_param = final_gpu_param if compile_with_gpu else None
-deps = config["deps"]
+# deps = config["deps"]
 docker_commands = config["docker_commands"]
 
 base_docker_image = config["base_docker_image"]

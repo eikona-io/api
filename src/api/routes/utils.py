@@ -81,6 +81,12 @@ def generate_temporary_token(
     return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
 
 
+def generate_persistent_token(user_id: str, org_id: Optional[str] = None) -> str:
+    return jwt.encode(
+        {"user_id": user_id, "org_id": org_id}, JWT_SECRET, algorithm=ALGORITHM
+    )
+
+
 Base = declarative_base()
 
 T = TypeVar("T")
@@ -275,12 +281,12 @@ async def get_user_settings(request: Request, db: AsyncSession):
             if "plan" in request.state.current_user
             else "free"
         )
-        
+
         user_settings = UserSettings(
             user_id=request.state.current_user["user_id"],
             org_id=org_id,
             api_version="v2",
-            spend_limit=5 if plan == "free" else 500
+            spend_limit=5 if plan == "free" else 500,
             # max_spend_limit=5 if plan == "free" else 1000,
         )
         # db.add(user_settings)
