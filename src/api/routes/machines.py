@@ -260,11 +260,12 @@ async def update_serverless_machine(
     for key, value in update_machine.model_dump().items():
         if hasattr(machine, key) and value is not None:
             if key in fields_to_trigger_rebuild:
-                rebuild = True
+                existing_value = getattr(machine, key)
+                if existing_value != value:
+                    rebuild = True
             setattr(machine, key, value)
-
-    await db.commit()
-    await db.refresh(machine)
+            
+    machine.updated_at = func.now()
 
     if rebuild:
         volumes = await retrieve_model_volumes(request, db)
@@ -300,6 +301,10 @@ async def update_serverless_machine(
         machine.status = "building"
         background_tasks.add_task(build_logic, params)
 
+
+    await db.commit()
+    await db.refresh(machine)
+    
     return JSONResponse(content=machine.to_dict())
 
 
@@ -407,6 +412,8 @@ async def update_custom_machine(
     for key, value in machine.model_dump().items():
         if hasattr(machine, key) and value is not None:
             setattr(machine, key, value)
+            
+    machine.updated_at = func.now()
 
     await db.commit()
     await db.refresh(machine)
