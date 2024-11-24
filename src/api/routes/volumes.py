@@ -22,13 +22,16 @@ import grpclib
 from modal import Volume, Secret
 import modal
 from huggingface_hub import HfApi
-
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Volumes"])
 
-async def retrieve_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
+
+async def retrieve_model_volumes(
+    request: Request, db: AsyncSession
+) -> List[Dict[str, str]]:
     volumes = await get_model_volumes(request, db)
     if len(volumes) == 0:
         volumes = [await add_model_volume(request, db)]
@@ -521,11 +524,11 @@ async def download_file_task(
     ):
         import time
         import os
+        import asyncio
         from enum import Enum
         from modal import Volume
         import aiohttp
-        from huggingface_hub import hf_hub_download, HfApi
-        from huggingface_hub.utils import enable_progress_bars
+        from huggingface_hub import hf_hub_download
         import re
 
         print("download_file_task start")
@@ -536,7 +539,21 @@ async def download_file_task(
             SUCCESS = "success"
             FAILED = "failed"
 
-        async def progress_callback(
+        async def _send_progress(payload, callback_url):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    await session.post(
+                        callback_url,
+                        json=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                        },
+                    )
+            except Exception:
+                # Suppress exceptions to prevent blocking the download
+                pass
+
+        def progress_callback(
             callback_url,
             model_id,
             progress,
@@ -550,17 +567,7 @@ async def download_file_task(
             }
             if error_log:
                 payload["error_log"] = error_log
-            try:
-                async with aiohttp.ClientSession() as session:
-                    await session.post(
-                        callback_url,
-                        json=payload,
-                        headers={
-                            "Content-Type": "application/json",
-                        },
-                    )
-            except Exception as e:
-                print("error in progress callback: ", e)
+            asyncio.create_task(_send_progress(payload, callback_url))
 
         def extract_huggingface_repo_id(url: str) -> str | None:
             match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
@@ -604,7 +611,7 @@ async def download_file_task(
                                         print("total_size: ", total_size)
                                         print("progress: ", progress)
                                         print("=======================================")
-                                        await progress_callback(
+                                        progress_callback(
                                             callback_url,
                                             db_model_id,
                                             progress,
@@ -614,16 +621,16 @@ async def download_file_task(
 
                 return full_path
             except Exception as e:
-                await progress_callback(
+                progress_callback(
                     callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                 )
                 raise e
 
-        async def download_hf_model(folder_path):
+        async def download_hf_model(folder_path, token):
             try:
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-                await progress_callback(
+                progress_callback(
                     callback_url,
                     db_model_id,
                     20,
@@ -660,9 +667,7 @@ async def download_file_task(
                 print("full_path: ", full_path)
                 print("=======================================")
 
-                enable_progress_bars()
-
-                await progress_callback(
+                progress_callback(
                     callback_url,
                     db_model_id,
                     50,
@@ -680,20 +685,20 @@ async def download_file_task(
                     return downloaded_model_path
                 except Exception as e:
                     print("error in hf_hub_download: ", e)
-                    await progress_callback(
+                    progress_callback(
                         callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                     )
                     raise e
 
             except Exception as e:
-                await progress_callback(
+                progress_callback(
                     callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                 )
                 raise e
 
         try:
             if upload_type == "huggingface":
-                # downloaded_path = await download_hf_model(folder_path)
+                # downloaded_path = await download_hf_model(folder_path, token)
                 downloaded_path = await download_url_file(download_url, token)
             elif upload_type == "download-url":
                 downloaded_path = await download_url_file(download_url, None)
@@ -717,18 +722,18 @@ async def download_file_task(
             with volume.batch_upload() as batch:
                 batch.put_file(downloaded_path, full_path)
 
-            await progress_callback(
+            progress_callback(
                 callback_url, db_model_id, 100, ModelDownloadStatus.SUCCESS
             )
         except Exception as e:
             print(f"Error in download_file_task: {str(e)}")
-            await progress_callback(
+            progress_callback(
                 callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
             )
             raise e
 
     try:
-        async with app.run.aio():
+        async with app.run.aio(interactive=True):
             await download_file_task.remote.aio(
                 download_url,
                 folder_path,
@@ -740,8 +745,8 @@ async def download_file_task(
                 upload_type,
                 token=hugging_face_token,
             )
-    except modal.exception.FunctionTimeoutError as e:
-        print(f"Modal function timed out: {str(e)}")
+    except modal.exception.FunctionTimeoutError:
+        print(f"Modal function timed out.")
         # Send timeout status to callback URL
         async with aiohttp.ClientSession() as session:
             await session.post(
