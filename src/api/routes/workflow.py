@@ -65,7 +65,9 @@ async def get_all_runs(
         .outerjoin(
             WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
         )
+        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
         .where(WorkflowRun.workflow_id == workflow_id)
+        .where(Workflow.deleted == False)
         .apply_org_check(request)
         .order_by(WorkflowRun.created_at.desc())
         .paginate(limit, offset)
@@ -120,7 +122,9 @@ async def get_versions(
 
     query = (
         select(WorkflowVersion)
+        .join(Workflow, WorkflowVersion.workflow_id == Workflow.id)
         .where(WorkflowVersion.workflow_id == workflow_id)
+        .where(Workflow.deleted == False)
         .order_by(WorkflowVersion.created_at.desc())
         .paginate(limit, offset)
     )
@@ -180,6 +184,7 @@ async def get_workflow(
     FROM comfyui_deploy.workflows w
     LEFT JOIN recent_versions rv ON w.id = rv.workflow_id
     WHERE w.id = :workflow_id
+    AND w.deleted = false
     AND (
         (CAST(:org_id AS TEXT) IS NOT NULL AND w.org_id = CAST(:org_id AS TEXT))
         OR (CAST(:org_id AS TEXT) IS NULL AND w.org_id IS NULL AND w.user_id = CAST(:user_id AS TEXT))
@@ -227,6 +232,7 @@ async def get_workflow_version(
         .join(Workflow, Workflow.id == WorkflowVersion.workflow_id)
         .where(WorkflowVersion.workflow_id == workflow_id)
         .where(WorkflowVersion.version == version)
+        .where(Workflow.deleted == False)
         .apply_org_check_by_type(Workflow, request)
     )
     workflow_version = workflow_version.scalar_one_or_none()
@@ -260,9 +266,11 @@ async def get_workflows_gallery(
     FROM
         comfyui_deploy.workflow_runs AS run
         INNER JOIN comfyui_deploy.workflow_run_outputs AS output ON run.id = output.run_id
+        INNER JOIN comfyui_deploy.workflows AS workflow ON run.workflow_id = workflow.id
     WHERE
         run.workflow_id = :workflow_id
         AND run.status = 'success'
+        AND workflow.deleted = false
         AND (output.data ?| ARRAY['images', 'gifs', 'mesh'])
         AND (
             (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
@@ -314,7 +322,9 @@ async def get_deployments(
             joinedload(Deployment.machine).load_only(Machine.name, Machine.id),
             joinedload(Deployment.version),
         )
+        .join(Workflow, Workflow.id == Deployment.workflow_id)
         .where(Deployment.workflow_id == workflow_id)
+        .where(Workflow.deleted == False)
         .apply_org_check(request)
         .order_by(Deployment.environment.desc())
     )

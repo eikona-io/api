@@ -83,6 +83,7 @@ class Workflow(SerializableMixin, Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
     pinned = Column(Boolean, nullable=False, default=False)
+    deleted = Column(Boolean, nullable=False, default=False)
 
     user = relationship("User", back_populates="workflows")
     versions = relationship("WorkflowVersion", back_populates="workflow_rel")

@@ -52,7 +52,7 @@ async def get_workflows(
     filtered_workflows AS (
         SELECT id
         FROM comfyui_deploy.workflows
-        WHERE ((CAST(:org_id AS TEXT) IS NOT NULL AND org_id = CAST(:org_id AS TEXT))
+        WHERE deleted = false AND ((CAST(:org_id AS TEXT) IS NOT NULL AND org_id = CAST(:org_id AS TEXT))
             OR (CAST(:org_id AS TEXT) IS NULL AND org_id IS NULL AND user_id = CAST(:user_id AS TEXT)))
             AND (CAST(:search AS TEXT) IS NULL OR lower(name) LIKE '%' || (SELECT term FROM search_param) || '%')
     ),
