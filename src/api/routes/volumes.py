@@ -503,7 +503,7 @@ async def download_file_task(
     app = modal.App("volume-operations")
 
     @app.function(
-        timeout=1800,
+        timeout=3600,
         serialized=True,
         secrets=[Secret.from_name("civitai-api-key")],
         image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
@@ -574,7 +574,7 @@ async def download_file_task(
                 headers["Authorization"] = f"Bearer {token}"
             try:
                 async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=1800)
+                    timeout=aiohttp.ClientTimeout(total=3600)
                 ) as session:
                     async with session.get(download_url, headers=headers) as response:
                         response.raise_for_status()
