@@ -553,7 +553,7 @@ async def download_file_task(
                 # Suppress exceptions to prevent blocking the download
                 pass
 
-        def progress_callback(
+        async def progress_callback(
             callback_url,
             model_id,
             progress,
@@ -567,7 +567,7 @@ async def download_file_task(
             }
             if error_log:
                 payload["error_log"] = error_log
-            asyncio.create_task(_send_progress(payload, callback_url))
+            await _send_progress(payload, callback_url)
 
         def extract_huggingface_repo_id(url: str) -> str | None:
             match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
@@ -611,17 +611,17 @@ async def download_file_task(
                                         print("total_size: ", total_size)
                                         print("progress: ", progress)
                                         print("=======================================")
-                                        progress_callback(
+                                        asyncio.create_task(progress_callback(
                                             callback_url,
                                             db_model_id,
                                             progress,
                                             ModelDownloadStatus.PROGRESS,
-                                        )
+                                        ))
                                         last_callback_time = current_time
 
                 return full_path
             except Exception as e:
-                progress_callback(
+                await progress_callback(
                     callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                 )
                 raise e
@@ -630,7 +630,7 @@ async def download_file_task(
             try:
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
-                progress_callback(
+                await progress_callback(
                     callback_url,
                     db_model_id,
                     20,
@@ -667,7 +667,7 @@ async def download_file_task(
                 print("full_path: ", full_path)
                 print("=======================================")
 
-                progress_callback(
+                await progress_callback(
                     callback_url,
                     db_model_id,
                     50,
@@ -685,13 +685,13 @@ async def download_file_task(
                     return downloaded_model_path
                 except Exception as e:
                     print("error in hf_hub_download: ", e)
-                    progress_callback(
+                    await progress_callback(
                         callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                     )
                     raise e
 
             except Exception as e:
-                progress_callback(
+                await progress_callback(
                     callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
                 )
                 raise e
@@ -722,12 +722,12 @@ async def download_file_task(
             with volume.batch_upload() as batch:
                 batch.put_file(downloaded_path, full_path)
 
-            progress_callback(
+            await progress_callback(
                 callback_url, db_model_id, 100, ModelDownloadStatus.SUCCESS
             )
         except Exception as e:
             print(f"Error in download_file_task: {str(e)}")
-            progress_callback(
+            await progress_callback(
                 callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
             )
             raise e
