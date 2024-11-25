@@ -733,7 +733,7 @@ async def download_file_task(
             raise e
 
     try:
-        async with app.run.aio(interactive=True):
+        async with app.run.aio():
             await download_file_task.remote.aio(
                 download_url,
                 folder_path,
