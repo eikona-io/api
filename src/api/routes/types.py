@@ -596,6 +596,6 @@ class SubscriptionStatusType(BaseModel):
 class PlanInfo(BaseModel):
     plan: str = "free"
     status: str = "active"
-    expires_at: int = -1
+    expires_at: Optional[int] = -1
     spent: Optional[float] = None
     spend_limit: float = Field(default=500.0)
