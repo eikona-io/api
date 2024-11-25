@@ -11,7 +11,7 @@ from fastapi import Depends
 from api.database import get_db
 from api.models import Model as ModelDB, UserVolume
 from datetime import datetime, timedelta
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import update
 from .types import VolFolder, VolFile
 from sqlalchemy.exc import MultipleResultsFound
@@ -22,7 +22,9 @@ import grpclib
 from modal import Volume, Secret
 import modal
 from huggingface_hub import HfApi
-
+import aiohttp
+from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -396,11 +398,11 @@ class RemoveFileInput(BaseModel):
 
 
 class AddFileInput(BaseModel):
-    volume_name: str
+    # volume_name: str
     download_url: str
     folder_path: str
     filename: str
-    callback_url: str
+    # callback_url: str
     db_model_id: str
     upload_type: str
 
@@ -489,295 +491,25 @@ async def remove_file(request: Request, body: RemoveFileInput):
     return {"deleted_path": body.path}
 
 
-async def download_file_task(
-    download_url,
-    folder_path,
-    filename,
-    callback_url,
-    db_model_id,
-    full_path,
-    volume_name,
-    upload_type,
-    hugging_face_token,
-):
-    app = modal.App("volume-operations")
-
-    @app.function(
-        timeout=1800,
-        serialized=True,
-        secrets=[Secret.from_name("civitai-api-key")],
-        image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
-    )
-    async def download_file_task(
-        download_url,
-        folder_path,
-        filename,
-        callback_url,
-        db_model_id,
-        full_path,
-        volume_name,
-        upload_type,
-        token,
-    ):
-        import time
-        import os
-        from enum import Enum
-        from modal import Volume
-        import aiohttp
-        from huggingface_hub import hf_hub_download, HfApi
-        from huggingface_hub.utils import enable_progress_bars
-        import re
-
-        print("download_file_task start")
-        print("callback_url", callback_url)
-
-        class ModelDownloadStatus(Enum):
-            PROGRESS = "progress"
-            SUCCESS = "success"
-            FAILED = "failed"
-
-        async def progress_callback(
-            callback_url,
-            model_id,
-            progress,
-            status: ModelDownloadStatus,
-            error_log: str = None,
-        ):
-            payload = {
-                "model_id": model_id,
-                "download_progress": progress,
-                "status": status.value,
-            }
-            if error_log:
-                payload["error_log"] = error_log
-            try:
-                async with aiohttp.ClientSession() as session:
-                    await session.post(
-                        callback_url,
-                        json=payload,
-                        headers={
-                            "Content-Type": "application/json",
-                        },
-                    )
-            except Exception as e:
-                print("error in progress callback: ", e)
-
-        def extract_huggingface_repo_id(url: str) -> str | None:
-            match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
-            return match.group(1) if match else None
-
-        async def download_url_file(download_url: str, token: Optional[str]):
-            headers = {
-                "Accept-Encoding": "identity",
-            }
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-            try:
-                async with aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=1800)
-                ) as session:
-                    async with session.get(download_url, headers=headers) as response:
-                        response.raise_for_status()
-                        total_size = int(response.headers.get("Content-Length", 0))
-                        downloaded_size = 0
-                        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                        last_callback_time = time.time()
-
-                        with open(full_path, "wb") as file:
-                            async for data in response.content.iter_chunked(8192):
-                                if data:
-                                    file.write(data)
-                                    downloaded_size += len(data)
-                                    progress = (
-                                        int((downloaded_size / total_size) * 90)
-                                        if total_size
-                                        else 0
-                                    )
-                                    current_time = time.time()
-                                    if current_time - last_callback_time >= 5:
-                                        print("=======================================")
-                                        print("download url started")
-                                        print("folder_path: ", folder_path)
-                                        print("filename: ", filename)
-                                        print("full_path: ", full_path)
-                                        print("downloaded_size: ", downloaded_size)
-                                        print("total_size: ", total_size)
-                                        print("progress: ", progress)
-                                        print("=======================================")
-                                        await progress_callback(
-                                            callback_url,
-                                            db_model_id,
-                                            progress,
-                                            ModelDownloadStatus.PROGRESS,
-                                        )
-                                        last_callback_time = current_time
-
-                return full_path
-            except Exception as e:
-                await progress_callback(
-                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
-                )
-                raise e
-
-        async def download_hf_model(folder_path):
-            try:
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-                await progress_callback(
-                    callback_url,
-                    db_model_id,
-                    20,
-                    ModelDownloadStatus.PROGRESS,
-                )
-
-                repo_id = extract_huggingface_repo_id(download_url)
-
-                # Extract folder_path and filename from download_url
-                from urllib.parse import urlparse, unquote
-
-                parsed_url = urlparse(download_url)
-                path_parts = unquote(parsed_url.path).split("/")
-
-                # The last non-empty part is the filename
-                filename = next((part for part in reversed(path_parts) if part), "")
-
-                # The folder path is the part after 'main/' and before the filename
-                main_index = path_parts.index("main") if "main" in path_parts else -1
-                if main_index != -1 and main_index + 1 < len(path_parts) - 1:
-                    folder_path = "/".join(path_parts[main_index + 1 : -1])
-                else:
-                    folder_path = ""
-
-                print("Extracted folder_path:", folder_path)
-                print("Extracted filename:", filename)
-
-                print("=======================================")
-                print("huggingface started")
-                print("download_url: ", download_url)
-                print("repo_id: ", repo_id)
-                print("folder_path: ", folder_path)
-                print("filename: ", filename)
-                print("full_path: ", full_path)
-                print("=======================================")
-
-                enable_progress_bars()
-
-                await progress_callback(
-                    callback_url,
-                    db_model_id,
-                    50,
-                    ModelDownloadStatus.PROGRESS,
-                )
-
-                try:
-                    downloaded_model_path = hf_hub_download(
-                        repo_id=repo_id,
-                        filename=filename,
-                        subfolder=folder_path,
-                        token=token,
-                    )
-                    print("downloaded_model_path: ", downloaded_model_path)
-                    return downloaded_model_path
-                except Exception as e:
-                    print("error in hf_hub_download: ", e)
-                    await progress_callback(
-                        callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
-                    )
-                    raise e
-
-            except Exception as e:
-                await progress_callback(
-                    callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
-                )
-                raise e
-
-        try:
-            if upload_type == "huggingface":
-                # downloaded_path = await download_hf_model(folder_path)
-                downloaded_path = await download_url_file(download_url, token)
-            elif upload_type == "download-url":
-                downloaded_path = await download_url_file(download_url, None)
-            elif upload_type == "civitai":
-                if "civitai.com" in download_url:
-                    download_url += f"{'&' if '?' in download_url else '?'}token={os.environ['CIVITAI_KEY']}"
-                downloaded_path = await download_url_file(download_url, None)
-            else:
-                raise ValueError(f"Unsupported upload_type: {upload_type}")
-
-            volume = Volume.lookup(volume_name, create_if_missing=True)
-            print("=======================================")
-            print("download_file_task done")
-            print("download_url: ", download_url)
-            print("folder_path: ", folder_path)
-            print("filename: ", filename)
-            print("callback_url: ", callback_url)
-            print("body.db_model_id: ", db_model_id)
-            print("=======================================")
-
-            with volume.batch_upload() as batch:
-                batch.put_file(downloaded_path, full_path)
-
-            await progress_callback(
-                callback_url, db_model_id, 100, ModelDownloadStatus.SUCCESS
-            )
-        except Exception as e:
-            print(f"Error in download_file_task: {str(e)}")
-            await progress_callback(
-                callback_url, db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
-            )
-            raise e
-
-    try:
-        async with app.run.aio():
-            await download_file_task.remote.aio(
-                download_url,
-                folder_path,
-                filename,
-                callback_url,
-                db_model_id,
-                full_path,
-                volume_name,
-                upload_type,
-                token=hugging_face_token,
-            )
-    except modal.exception.FunctionTimeoutError as e:
-        print(f"Modal function timed out: {str(e)}")
-        # Send timeout status to callback URL
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                callback_url,
-                json={
-                    "model_id": db_model_id,
-                    "download_progress": 0,
-                    "status": "failed",
-                    "error_log": "Download timed out after 900 seconds",
-                },
-                headers={
-                    "Content-Type": "application/json",
-                },
-            )
-        raise HTTPException(
-            status_code=408, detail="Download timed out after 900 seconds"
-        )
-    except Exception as e:
-        print(f"Error in download_file_task outer function: {str(e)}")
-        raise e
-
-
 @router.post("/volume/add_file")
 async def add_file(
     request: Request,
     body: AddFileInput,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        volume_name = body.volume_name
+        current_user = request.state.current_user
+        user_id = current_user["user_id"]
+        org_id = current_user["org_id"] if "org_id" in current_user else None
+        
+        volumes = await retrieve_model_volumes(request, db)
+        volume_name = volumes[0]["volume_name"]
+        volume_id = volumes[0]["id"]
         download_url = body.download_url
         folder_path = body.folder_path
         filename = body.filename
-        callback_url = body.callback_url
         upload_type = body.upload_type
+
         user_settings = await get_user_settings(request, db)
         hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
         if user_settings is not None and user_settings.hugging_face_token:
@@ -798,21 +530,100 @@ async def add_file(
         except grpclib.exceptions.GRPCError as e:
             print("e: ", str(e))
             raise HTTPException(status_code=400, detail="Error: " + str(e))
+        
+        # # Insert the model record first
+        # new_model = ModelDB(
+        #     user_id=user_id,
+        #     org_id=org_id,
+        #     user_volume_id=volume_id,
+        #     upload_type=upload_type,
+        #     model_name=filename,
+        #     user_url=download_url,
+        #     model_type="custom",
+        #     folder_path=folder_path,
+        # )
+        # db.add(new_model)
+        # await db.commit()
+        # await db.refresh(new_model)
 
-        background_tasks.add_task(
-            download_file_task,
-            download_url,
-            folder_path,
-            filename,
-            callback_url,
-            body.db_model_id,
-            full_path,
-            volume_name,
-            upload_type,
-            hugging_face_token,
+        async def event_generator():
+            try:
+                async with modal_downloader_app.run.aio():
+                    async for event in modal_download_file_task.remote_gen.aio(
+                        download_url,
+                        folder_path,
+                        filename,
+                        # new_model.id,
+                        body.db_model_id,
+                        full_path,
+                        volume_name,
+                        upload_type,
+                        hugging_face_token,
+                    ):
+                        # Update database with the event status
+                        if event.get("status") == "progress":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == body.db_model_id)
+                                .values(
+                                    updated_at=datetime.now(),
+                                    download_progress=event.get("download_progress", 0),
+                                )
+                            )
+                        elif event.get("status") == "success":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == body.db_model_id)
+                                .values(
+                                    status="success",
+                                    updated_at=datetime.now(),
+                                    download_progress=100,
+                                )
+                            )
+                        elif event.get("status") == "failed":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == body.db_model_id)
+                                .values(
+                                    status="failed",
+                                    error_log=event.get("error_log"),
+                                    updated_at=datetime.now(),
+                                )
+                            )
+                        
+                        await db.execute(model_status_query)
+                        await db.commit()
+                        
+                        # Yield the event as a JSON string
+                        yield json.dumps(event) + "\n"
+            except Exception as e:
+                error_event = {
+                    "status": "failed",
+                    "error_log": str(e),
+                    "model_id": body.db_model_id,
+                    "download_progress": 0
+                }
+                yield json.dumps(error_event) + "\n"
+                
+                # Update database with error status
+                model_status_query = (
+                    update(ModelDB)
+                    .where(ModelDB.id == body.db_model_id)
+                    .values(
+                        status="failed",
+                        error_log=str(e),
+                        updated_at=datetime.now(),
+                    )
+                )
+                await db.execute(model_status_query)
+                await db.commit()
+                raise e
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream"
         )
 
-        return {"full_path": full_path}
     except Exception as e:
         print(f"Error in add_file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

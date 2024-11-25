@@ -488,8 +488,7 @@ async def fal_webhook(request: Request, data: Any = Body(...)):
                 status_code=response.status,
                 headers=dict(response.headers),
             )
-
-
+            
 @router.get("/file-upload", include_in_schema=False)
 async def get_file_upload_url(
     request: Request,
