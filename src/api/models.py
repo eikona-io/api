@@ -471,6 +471,7 @@ class UserSettings(SerializableMixin, Base):
     hugging_face_token = Column(String)
     workflow_limit = Column(Float)
     machine_limit = Column(Float)
+    always_on_machine_limit = Column(Integer)
     # Optionally, add relationship to User model
     # user = relationship("User", back_populates="settings")
 
