@@ -1,11 +1,13 @@
 import json
+import logging
 from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 custom_output_nodes: Dict[str, Dict[str, str]] = {
     "ComfyDeployStdOutputImage": {"output_id": "string"},
     "ComfyDeployStdOutputAny": {"output_id": "string"},
 }
-
 
 def get_outputs_from_workflow(
     workflow: Optional[Union[str, Dict[str, Any]]],
@@ -17,7 +19,11 @@ def get_outputs_from_workflow(
         workflow = json.loads(workflow)
 
     outputs = []
-
+    
+    if not isinstance(workflow, dict):
+        logger.warning(f"Workflow is not a dictionary: {workflow}")
+        return []
+    
     # Iterate through nodes in the workflow
     for node in workflow.get("nodes", []):
         node_type = node.get("type")
