@@ -62,5 +62,5 @@ async def get_deployments(
 
         return deployments_data
     except Exception as e:
-        logger.error(f"Error getting deployments: {e}")
+        logger.error(f"Error getting deployments: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
