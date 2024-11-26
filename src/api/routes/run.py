@@ -99,7 +99,7 @@ async def run_update(
     },
 )
 @router.get("/run", response_model=WorkflowRunModel, include_in_schema=False)
-async def get_run(request: Request, run_id: str, db: AsyncSession = Depends(get_db)):
+async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get_db)):
     query = (
         select(WorkflowRunWithExtra)
         .options(joinedload(WorkflowRun.outputs))
