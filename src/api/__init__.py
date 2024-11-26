@@ -46,7 +46,10 @@ from api.middleware.authMiddleware import AuthMiddleware
 from api.middleware.spendLimitMiddleware import SpendLimitMiddleware
 
 load_dotenv()
-logfire.configure()
+logfire.configure(
+    service_name='comfydeploy-api',
+    # send_to_logfire=False
+)
 logger = logfire
 logging.basicConfig(level=logging.INFO)
 
