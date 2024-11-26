@@ -99,6 +99,7 @@ async def get_session(
     return {
         "session_id": session_id,
         "url": gpuEvent.tunnel_url,
+        "gpu_event_id": str(gpuEvent.id),
     }
     # with logfire.span("spawn-run"):
     #     result = ComfyDeployRunner().run.spawn(params)

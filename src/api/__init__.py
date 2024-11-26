@@ -77,10 +77,6 @@ app = FastAPI(
 )
 
 # add_pagination(app)
-logfire.instrument_fastapi(app)
-logfire.instrument_sqlalchemy(
-    engine=engine.sync_engine,
-)
 
 app.openapi_schema = None  # Clear any existing schema
 
@@ -210,9 +206,9 @@ async def scalar_html_internal():
 # logging.getLogger('sqlalchemy').setLevel(logging.ERROR)
 
 # Add CORS middleware
-app.add_middleware(AuthMiddleware)
 app.add_middleware(SpendLimitMiddleware)
 app.add_middleware(SubscriptionMiddleware)
+app.add_middleware(AuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -222,12 +218,17 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+logfire.instrument_fastapi(app)
+logfire.instrument_sqlalchemy(
+    engine=engine.sync_engine,
+)
+
 if __name__ == "__main__":
     reload = os.getenv("ENV", "production").lower() == "development"
     port = int(os.getenv("PORT", 8000))
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
-    print("hiii",project_root)
+    # print("hiii",project_root)
     uvicorn.run(
         "api:app",
         host="0.0.0.0",

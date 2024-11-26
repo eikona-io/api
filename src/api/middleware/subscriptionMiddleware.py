@@ -64,8 +64,8 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
             )
 
     async def check_subscription_access(self, request: Request):
-        async with AsyncSessionLocal() as db:
-            request.state.current_user = await get_current_user(request, db)
+        # async with AsyncSessionLocal() as db:
+        #     request.state.current_user = await get_current_user(request, db)
 
         if not request.state.current_user:
             return

@@ -2,7 +2,7 @@ import json
 import logging
 from api.utils.inputs import get_inputs_from_workflow_api
 from api.utils.outputs import get_outputs_from_workflow
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Any, Dict, List, Optional, Union
 from .types import DeploymentModel, DeploymentEnvironment
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,34 +29,38 @@ async def get_deployments(
     environment: Optional[DeploymentEnvironment] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Deployment).options(
-        joinedload(Deployment.workflow).load_only(Workflow.name),
-        joinedload(Deployment.version),
-    )
+    try:
+        query = select(Deployment).options(
+            joinedload(Deployment.workflow).load_only(Workflow.name),
+            joinedload(Deployment.version),
+        )
 
-    if environment is not None:
-        query = query.where(Deployment.environment == environment)
+        if environment is not None:
+            query = query.where(Deployment.environment == environment)
 
-    query = query.apply_org_check(request)
+        query = query.apply_org_check(request)
 
-    result = await db.execute(query)
-    deployments = result.scalars().all()
+        result = await db.execute(query)
+        deployments = result.scalars().all()
 
-    deployments_data = []
-    for deployment in deployments:
-        deployment_dict = deployment.to_dict()
-        workflow_api = deployment.version.workflow_api if deployment.version else None
-        inputs = get_inputs_from_workflow_api(workflow_api)
-        
-        workflow = deployment.version.workflow if deployment.version else None
-        outputs = get_outputs_from_workflow(workflow)
-        
-        if inputs:
-            deployment_dict["input_types"] = inputs
+        deployments_data = []
+        for deployment in deployments:
+            deployment_dict = deployment.to_dict()
+            workflow_api = deployment.version.workflow_api if deployment.version else None
+            inputs = get_inputs_from_workflow_api(workflow_api)
+            
+            workflow = deployment.version.workflow if deployment.version else None
+            outputs = get_outputs_from_workflow(workflow)
+            
+            if inputs:
+                deployment_dict["input_types"] = inputs
 
-        if outputs:
-            deployment_dict["output_types"] = outputs
+            if outputs:
+                deployment_dict["output_types"] = outputs
 
-        deployments_data.append(deployment_dict)
+            deployments_data.append(deployment_dict)
 
-    return deployments_data
+        return deployments_data
+    except Exception as e:
+        logger.error(f"Error getting deployments: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
