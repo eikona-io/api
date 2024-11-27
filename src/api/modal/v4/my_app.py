@@ -541,6 +541,7 @@ class Input(BaseModel):
     workflow_api_raw: dict
     status_endpoint: str
     file_upload_endpoint: str
+    workflow: Optional[dict] = None
     gpu_event_id: str | None = None
 
 

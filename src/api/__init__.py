@@ -45,6 +45,25 @@ from pprint import pprint
 from api.middleware.authMiddleware import AuthMiddleware
 from api.middleware.spendLimitMiddleware import SpendLimitMiddleware
 
+from opentelemetry.context import get_current
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.propagators.textmap import TextMapPropagator
+
+
+class NullPropagator(TextMapPropagator):
+    def extract(self, *args, **kwargs):
+        return get_current()
+
+    def inject(self, *args, **kwargs):
+        pass
+
+    @property
+    def fields(self):
+        return set()
+
+
+set_global_textmap(NullPropagator())
+
 load_dotenv()
 logfire.configure(
     service_name='comfydeploy-api',
