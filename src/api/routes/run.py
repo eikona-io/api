@@ -338,7 +338,7 @@ async def run_model(
     #     if isinstance(update, fal_client.InProgress):
     #         for log in update.logs:
     #             print(log["message"])
-    
+
     if model.fal_id is not None:
         start_time = dt.datetime.now(dt.UTC)
         result = await fal_client.subscribe_async(
@@ -352,10 +352,10 @@ async def run_model(
             # on_queue_update=on_queue_update,
         )
         end_time = dt.datetime.now(dt.UTC)
-        
+
         is_image = result.get("images", [])
         is_video = result.get("video", [])
-        if (model.cost_per_megapixel is not None):
+        if model.cost_per_megapixel is not None:
             total_cost = 0
             if is_image:
                 for image in result.get("images", []):
@@ -413,8 +413,8 @@ async def run_model(
             await db.commit()
             await db.refresh(newOutput)
             output_dict = newOutput.to_dict()
-            
-            if (cost is not None):
+
+            if cost is not None:
                 gpu_event = GPUEvent(
                     id=uuid4(),
                     user_id=workflow_run.user_id,
@@ -656,6 +656,22 @@ async def _create_run(
         workflow_version_version = workflow_version.version
         workflow = workflow_version.workflow
 
+    if workflow_id is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    # To account for the new soft delete workflow
+    test_workflow = await db.execute(
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .where(Workflow.deleted == False)
+        .apply_org_check(request)
+    )
+    test_workflow = test_workflow.scalar_one_or_none()
+    test_workflow = cast(Optional[Workflow], test_workflow)
+
+    if not test_workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
     if machine_id is not None:
         # Get the machine associated with the deployment
         machine_query = (
@@ -680,6 +696,10 @@ async def _create_run(
             raise HTTPException(status_code=404, detail="Machine not found")
 
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
+        # Make it an empty so it will not get stuck
+        if inputs is None:
+            inputs = {}
+        
         prompt_id = uuid.uuid4()
         user_id = request.state.current_user["user_id"]
 
@@ -725,11 +745,11 @@ async def _create_run(
 
         print("data", data)
         print("GPU EVENT ID", data.gpu_event_id)
-        
+
         # backward compatibility for old comfyui custom nodes
         # Clone workflow_api_raw to modify inputs without affecting original
         workflow_api = json.loads(json.dumps(workflow_api_raw))
-        
+
         if inputs and workflow_api:
             for key in inputs:
                 for node in workflow_api.values():
@@ -738,7 +758,7 @@ async def _create_run(
                         # Fix for external text default value
                         if node.get("class_type") == "ComfyUIDeployExternalText":
                             node["inputs"]["default_value"] = inputs[key]
-          
+
         # print("workflow_api", workflow_api)
 
         params = {
