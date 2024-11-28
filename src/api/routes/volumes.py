@@ -494,17 +494,17 @@ async def remove_file(request: Request, body: RemoveFileInput):
     return {"deleted_path": body.path}
 
 
-@router.post("/volume/add_file")
-async def add_file(
+async def handle_file_download(
     request: Request,
-    body: AddFileInput,
-    db: AsyncSession = Depends(get_db),
-):
-    download_url = body.download_url
-    folder_path = body.folder_path
-    filename = body.filename
-    upload_type = body.upload_type
-    
+    db: AsyncSession,
+    download_url: str,
+    folder_path: str,
+    filename: str,
+    upload_type: str,
+    db_model_id: str,
+    background_tasks: BackgroundTasks,
+) -> StreamingResponse:
+    """Helper function to handle file downloads with progress tracking"""
     try:
         current_user = request.state.current_user
         user_id = current_user["user_id"]
@@ -512,7 +512,6 @@ async def add_file(
         
         volumes = await retrieve_model_volumes(request, db)
         volume_name = volumes[0]["volume_name"]
-        volume_id = volumes[0]["id"]
         
         user_settings = await get_user_settings(request, db)
         hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
@@ -524,9 +523,6 @@ async def add_file(
         volume = lookup_volume(volume_name, create_if_missing=True)
         full_path = os.path.join(folder_path, filename)
 
-        print("volume: ", volume)
-        print("full_path: ", full_path)
-
         try:
             file_exists = does_file_exist(full_path, volume)
             if file_exists:
@@ -534,23 +530,7 @@ async def add_file(
         except grpclib.exceptions.GRPCError as e:
             print("e: ", str(e))
             raise HTTPException(status_code=400, detail="Error: " + str(e))
-        
-        # # Insert the model record first
-        # new_model = ModelDB(
-        #     user_id=user_id,
-        #     org_id=org_id,
-        #     user_volume_id=volume_id,
-        #     upload_type=upload_type,
-        #     model_name=filename,
-        #     user_url=download_url,
-        #     model_type="custom",
-        #     folder_path=folder_path,
-        # )
-        # db.add(new_model)
-        # await db.commit()
-        # await db.refresh(new_model)
-        
-        # modal_downloader_app = modal.App.lookup("volume-operations")
+
         modal_download_file_task = modal.Function.lookup("volume-operations", "modal_download_file_task")
 
         async def event_generator():
@@ -559,8 +539,7 @@ async def add_file(
                     download_url,
                     folder_path,
                     filename,
-                    # new_model.id,
-                    body.db_model_id,
+                    db_model_id,
                     full_path,
                     volume_name,
                     upload_type,
@@ -570,7 +549,7 @@ async def add_file(
                     if event.get("status") == "progress":
                         model_status_query = (
                             update(ModelDB)
-                            .where(ModelDB.id == body.db_model_id)
+                            .where(ModelDB.id == db_model_id)
                             .values(
                                 updated_at=datetime.now(),
                                 download_progress=event.get("download_progress", 0),
@@ -579,7 +558,7 @@ async def add_file(
                     elif event.get("status") == "success":
                         model_status_query = (
                             update(ModelDB)
-                            .where(ModelDB.id == body.db_model_id)
+                            .where(ModelDB.id == db_model_id)
                             .values(
                                 status="success",
                                 updated_at=datetime.now(),
@@ -589,7 +568,7 @@ async def add_file(
                     elif event.get("status") == "failed":
                         model_status_query = (
                             update(ModelDB)
-                            .where(ModelDB.id == body.db_model_id)
+                            .where(ModelDB.id == db_model_id)
                             .values(
                                 status="failed",
                                 error_log=event.get("error_log"),
@@ -600,21 +579,19 @@ async def add_file(
                     await db.execute(model_status_query)
                     await db.commit()
                     
-                    # Yield the event as a JSON string
-                    yield json.dumps(event) + "\n"
+                    # yield json.dumps(event) + "\n"
             except Exception as e:
                 error_event = {
                     "status": "failed",
                     "error_log": str(e),
-                    "model_id": body.db_model_id,
+                    "model_id": db_model_id,
                     "download_progress": 0
                 }
-                yield json.dumps(error_event) + "\n"
+                # yield json.dumps(error_event) + "\n"
                 
-                # Update database with error status
                 model_status_query = (
                     update(ModelDB)
-                    .where(ModelDB.id == body.db_model_id)
+                    .where(ModelDB.id == db_model_id)
                     .values(
                         status="failed",
                         error_log=str(e),
@@ -625,22 +602,84 @@ async def add_file(
                 await db.commit()
                 raise e
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream"
-        )
+        background_tasks.add_task(event_generator)
+        
+        return JSONResponse(content={"message": "success"})
 
     except Exception as e:
-        print(f"Error in add_file: {str(e)}")
+        print(f"Error in file download: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-# @router.post("/volume/file/{file_id}/retry")
-# async def retry_download(request: Request, file_id: str):
+@router.post("/volume/add_file")
+async def add_file(
+    request: Request,
+    body: AddFileInput,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    return await handle_file_download(
+        request=request,
+        db=db,
+        download_url=body.download_url,
+        folder_path=body.folder_path,
+        filename=body.filename,
+        upload_type=body.upload_type,
+        db_model_id=body.db_model_id,
+        background_tasks=background_tasks,
+    )
+
+
+@router.post("/volume/file/{file_id}/retry")
+async def retry_download(
+    request: Request, 
+    file_id: str, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    # Query to get the existing model record
+    query = select(ModelDB).where(
+        ModelDB.id == file_id,
+        ModelDB.deleted == False,
+        ModelDB.status == "failed"  # Only allow retrying failed downloads
+    ).apply_org_check(request)
     
+    result = await db.execute(query)
+    model = result.scalar_one_or_none()
     
+    if not model:
+        raise HTTPException(
+            status_code=404,
+            detail="Model not found or not eligible for retry"
+        )
+        
+    # Use the helper function for the download
+    res = await handle_file_download(
+        request=request,
+        db=db,
+        download_url=model.user_url,
+        folder_path=model.folder_path,
+        filename=model.model_name,
+        upload_type=model.upload_type,
+        db_model_id=str(model.id),
+        background_tasks=background_tasks,
+    )
     
-#     pass
+    # Reset the model status for retry
+    model_status_query = (
+        update(ModelDB)
+        .where(ModelDB.id == file_id)
+        .values(
+            status="started",
+            error_log=None,
+            updated_at=datetime.now(),
+            download_progress=0
+        )
+    )
+    await db.execute(model_status_query)
+    await db.commit()
+    
+    return res
 
 # Helper functions
 def does_file_exist(path: str, volume: Volume) -> bool:

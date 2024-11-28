@@ -1,8 +1,38 @@
 from typing import Optional
 import modal
 import logging
+import time
+import os
+from enum import Enum
+from modal import Volume
+import aiohttp
+import re
+import asyncio
 
 modal_downloader_app = modal.App("volume-operations")
+
+
+class ModelDownloadStatus(Enum):
+    PROGRESS = "progress"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+def create_status_payload(
+    model_id,
+    progress,
+    status: ModelDownloadStatus,
+    error_log: str = None,
+):
+    payload = {
+        "model_id": model_id,
+        "download_progress": progress,
+        "status": status.value,
+    }
+    if error_log:
+        payload["error_log"] = error_log
+    return payload
+
 
 @modal_downloader_app.function(
     timeout=3600,
@@ -19,48 +49,19 @@ async def modal_download_file_task(
     upload_type,
     token,
 ):
-    import time
-    import os
-    from enum import Enum
-    from modal import Volume
-    import aiohttp
-    from huggingface_hub import hf_hub_download
-    import re
-    import asyncio
-
     print("download_file_task start")
 
-    class ModelDownloadStatus(Enum):
-        PROGRESS = "progress"
-        SUCCESS = "success"
-        FAILED = "failed"
-
-    def create_status_payload(
-        model_id,
-        progress,
-        status: ModelDownloadStatus,
-        error_log: str = None,
-    ):
-        payload = {
-            "model_id": model_id,
-            "download_progress": progress,
-            "status": status.value,
-        }
-        if error_log:
-            payload["error_log"] = error_log
-        return payload
-
-    def extract_huggingface_repo_id(url: str) -> str | None:
-        match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
-        return match.group(1) if match else None
+    print(f"download_url: {download_url}")
+    print(f"folder_path: {folder_path}")
+    print(f"filename: {filename}")
+    print(f"db_model_id: {db_model_id}")
+    print(f"full_path: {full_path}")
+    print(f"volume_name: {volume_name}")
+    print(f"upload_type: {upload_type}")
 
     async def download_url_file(download_url: str, token: Optional[str]):
         # Create a shared state for progress tracking
-        progress_state = {
-            "downloaded_size": 0,
-            "total_size": 0,
-            "should_stop": False
-        }
+        progress_state = {"downloaded_size": 0, "total_size": 0, "should_stop": False}
 
         async def report_progress():
             last_update_time = time.time()
@@ -68,11 +69,19 @@ async def modal_download_file_task(
                 current_time = time.time()
                 if current_time - last_update_time >= 5:
                     progress = (
-                        int((progress_state["downloaded_size"] / progress_state["total_size"]) * 90)
+                        int(
+                            (
+                                progress_state["downloaded_size"]
+                                / progress_state["total_size"]
+                            )
+                            * 90
+                        )
                         if progress_state["total_size"]
                         else 0
                     )
-                    logging.info(f"Download progress: {progress}% ({progress_state['downloaded_size']}/{progress_state['total_size']} bytes)")
+                    logging.info(
+                        f"Download progress: {progress}% ({progress_state['downloaded_size']}/{progress_state['total_size']} bytes)"
+                    )
                     progress_state["last_status"] = create_status_payload(
                         db_model_id,
                         progress,
@@ -93,7 +102,9 @@ async def modal_download_file_task(
             ) as session:
                 async with session.get(download_url, headers=headers) as response:
                     response.raise_for_status()
-                    progress_state["total_size"] = int(response.headers.get("Content-Length", 0))
+                    progress_state["total_size"] = int(
+                        response.headers.get("Content-Length", 0)
+                    )
                     os.makedirs(os.path.dirname(full_path), exist_ok=True)
 
                     # Start progress reporting task
@@ -139,16 +150,12 @@ async def modal_download_file_task(
             raise ValueError(f"Unsupported upload_type: {upload_type}")
 
         volume = Volume.lookup(volume_name, create_if_missing=True)
-        
+
         with volume.batch_upload() as batch:
             batch.put_file(downloaded_path, full_path)
 
-        yield create_status_payload(
-            db_model_id, 100, ModelDownloadStatus.SUCCESS
-        )
+        yield create_status_payload(db_model_id, 100, ModelDownloadStatus.SUCCESS)
     except Exception as e:
         print(f"Error in download_file_task: {str(e)}")
-        yield create_status_payload(
-            db_model_id, 0, ModelDownloadStatus.FAILED, str(e)
-        )
+        yield create_status_payload(db_model_id, 0, ModelDownloadStatus.FAILED, str(e))
         raise e
