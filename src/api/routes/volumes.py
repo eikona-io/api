@@ -22,8 +22,8 @@ import grpclib
 from modal import Volume, Secret
 import modal
 from huggingface_hub import HfApi
-import aiohttp
-from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
+# import aiohttp
+# from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
 import json
 
 logger = logging.getLogger(__name__)
@@ -500,6 +500,11 @@ async def add_file(
     body: AddFileInput,
     db: AsyncSession = Depends(get_db),
 ):
+    download_url = body.download_url
+    folder_path = body.folder_path
+    filename = body.filename
+    upload_type = body.upload_type
+    
     try:
         current_user = request.state.current_user
         user_id = current_user["user_id"]
@@ -508,11 +513,7 @@ async def add_file(
         volumes = await retrieve_model_volumes(request, db)
         volume_name = volumes[0]["volume_name"]
         volume_id = volumes[0]["id"]
-        download_url = body.download_url
-        folder_path = body.folder_path
-        filename = body.filename
-        upload_type = body.upload_type
-
+        
         user_settings = await get_user_settings(request, db)
         hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
         if user_settings is not None and user_settings.hugging_face_token:
@@ -548,57 +549,59 @@ async def add_file(
         # db.add(new_model)
         # await db.commit()
         # await db.refresh(new_model)
+        
+        # modal_downloader_app = modal.App.lookup("volume-operations")
+        modal_download_file_task = modal.Function.lookup("volume-operations", "modal_download_file_task")
 
         async def event_generator():
             try:
-                async with modal_downloader_app.run.aio():
-                    async for event in modal_download_file_task.remote_gen.aio(
-                        download_url,
-                        folder_path,
-                        filename,
-                        # new_model.id,
-                        body.db_model_id,
-                        full_path,
-                        volume_name,
-                        upload_type,
-                        hugging_face_token,
-                    ):
-                        # Update database with the event status
-                        if event.get("status") == "progress":
-                            model_status_query = (
-                                update(ModelDB)
-                                .where(ModelDB.id == body.db_model_id)
-                                .values(
-                                    updated_at=datetime.now(),
-                                    download_progress=event.get("download_progress", 0),
-                                )
+                async for event in modal_download_file_task.remote_gen.aio(
+                    download_url,
+                    folder_path,
+                    filename,
+                    # new_model.id,
+                    body.db_model_id,
+                    full_path,
+                    volume_name,
+                    upload_type,
+                    hugging_face_token,
+                ):
+                    # Update database with the event status
+                    if event.get("status") == "progress":
+                        model_status_query = (
+                            update(ModelDB)
+                            .where(ModelDB.id == body.db_model_id)
+                            .values(
+                                updated_at=datetime.now(),
+                                download_progress=event.get("download_progress", 0),
                             )
-                        elif event.get("status") == "success":
-                            model_status_query = (
-                                update(ModelDB)
-                                .where(ModelDB.id == body.db_model_id)
-                                .values(
-                                    status="success",
-                                    updated_at=datetime.now(),
-                                    download_progress=100,
-                                )
+                        )
+                    elif event.get("status") == "success":
+                        model_status_query = (
+                            update(ModelDB)
+                            .where(ModelDB.id == body.db_model_id)
+                            .values(
+                                status="success",
+                                updated_at=datetime.now(),
+                                download_progress=100,
                             )
-                        elif event.get("status") == "failed":
-                            model_status_query = (
-                                update(ModelDB)
-                                .where(ModelDB.id == body.db_model_id)
-                                .values(
-                                    status="failed",
-                                    error_log=event.get("error_log"),
-                                    updated_at=datetime.now(),
-                                )
+                        )
+                    elif event.get("status") == "failed":
+                        model_status_query = (
+                            update(ModelDB)
+                            .where(ModelDB.id == body.db_model_id)
+                            .values(
+                                status="failed",
+                                error_log=event.get("error_log"),
+                                updated_at=datetime.now(),
                             )
-                        
-                        await db.execute(model_status_query)
-                        await db.commit()
-                        
-                        # Yield the event as a JSON string
-                        yield json.dumps(event) + "\n"
+                        )
+                    
+                    await db.execute(model_status_query)
+                    await db.commit()
+                    
+                    # Yield the event as a JSON string
+                    yield json.dumps(event) + "\n"
             except Exception as e:
                 error_event = {
                     "status": "failed",
@@ -631,6 +634,13 @@ async def add_file(
         print(f"Error in add_file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
+
+# @router.post("/volume/file/{file_id}/retry")
+# async def retry_download(request: Request, file_id: str):
+    
+    
+    
+#     pass
 
 # Helper functions
 def does_file_exist(path: str, volume: Volume) -> bool:
