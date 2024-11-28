@@ -244,7 +244,7 @@ async def get_downloading_models(request: Request, db: AsyncSession):
             ModelDB.deleted == False,
             ModelDB.download_progress != 100,
             ModelDB.status != "failed",
-            ModelDB.created_at > datetime.now() - timedelta(hours=1),
+            ModelDB.created_at > datetime.now() - timedelta(hours=24),
         )
     )
     result = await db.execute(model_query)
