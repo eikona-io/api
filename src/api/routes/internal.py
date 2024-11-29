@@ -55,23 +55,25 @@ router = APIRouter()
 
 async def send_webhook(workflow_run, updatedAt: datetime, run_id: str):
     # try:
-    url = workflow_run['webhook']
+    url = workflow_run["webhook"]
     extra_headers = {}  # You may want to define this based on your requirements
-    
+
     payload = {
-        "status": workflow_run['status'],
-        "live_status": workflow_run['live_status'],
-        "progress": workflow_run['progress'],
-        "run_id": workflow_run['id'],
-        "outputs": workflow_run['outputs'] if 'outputs' in workflow_run else []  # Assuming 'data' contains the outputs
+        "status": workflow_run["status"],
+        "live_status": workflow_run["live_status"],
+        "progress": workflow_run["progress"],
+        "run_id": workflow_run["id"],
+        "outputs": workflow_run["outputs"]
+        if "outputs" in workflow_run
+        else [],  # Assuming 'data' contains the outputs
     }
-    
+
     logging.info("Webhook going to be sent to: " + url)
 
     headers = {"Content-Type": "application/json", **extra_headers}
 
     options = {"method": "POST", "headers": headers, "json": payload}
-    
+
     response = await retry_fetch(url, options)
     if response.ok:
         logging.info("Webhook sent successfully")
@@ -88,7 +90,6 @@ async def send_webhook(workflow_run, updatedAt: datetime, run_id: str):
     #     logging.info("Webhook failed with error: " + str(error))
     #     raise error
     #     return {"status": "error", "message": str(error)}
-
 
 
 class UpdateRunBody(BaseModel):
@@ -236,7 +237,7 @@ async def update_run(
                 workflow_run.workflow_version_id,
                 body.run_id,
                 updated_at,
-                "executing", # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
+                "executing",  # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
                 body.progress,
                 body.live_status,
             )
@@ -246,7 +247,10 @@ async def update_run(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
 
-        if workflow_run.webhook is not None and workflow_run.webhook_intermediate_status:
+        if (
+            workflow_run.webhook is not None
+            and workflow_run.webhook_intermediate_status
+        ):
             asyncio.create_task(
                 send_webhook(workflow_run.to_dict(), updated_at, workflow_run.id)
             )
@@ -325,7 +329,9 @@ async def update_run(
                 json.dumps(body.output_data),
             )
         ]
-        background_tasks.add_task(insert_to_clickhouse, client, "workflow_events", output_data)
+        background_tasks.add_task(
+            insert_to_clickhouse, client, "workflow_events", output_data
+        )
 
     elif body.status is not None:
         # Get existing run
@@ -376,7 +382,6 @@ async def update_run(
         # Add modal_function_call_id if it's provided and the existing value is empty
         if body.modal_function_call_id:
             update_values["modal_function_call_id"] = body.modal_function_call_id
-
 
         update_stmt = (
             update(WorkflowRun)
@@ -435,19 +440,37 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
     headers = dict(request.headers)
     # Remove host header as it will be set by aiohttp
     headers.pop("host", None)
-
+    
     async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers['Accept-Encoding'] = 'gzip, deflate'
+        if 'content-encoding' in headers:
+            del headers['content-encoding']
+            
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
-            if response.status >= 400:
-                raise HTTPException(
-                    status_code=response.status, detail=content.decode()
-                )
             return Response(
                 content=content,
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
             )
+
+    # async with aiohttp.ClientSession(
+    #     headers=headers,
+    #     # Explicitly configure compression
+    #     compress=True,
+    #     # Enable auto decompression
+    #     auto_decompress=True,
+    # ) as session:
+    #     async with session.post(new_url, json=data) as response:
+    #         content = await response.text()
+    #         if response.status >= 400:
+    #             raise HTTPException(status_code=response.status, detail=content)
+    #         return Response(
+    #             content=content,
+    #             status_code=response.status,
+    #             headers=dict(response.headers),
+    #         )
 
 
 @router.post("/machine-built", include_in_schema=False)
@@ -461,12 +484,17 @@ async def machine_built(request: Request, data: Any = Body(...)):
     headers.pop("host", None)
 
     async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers['Accept-Encoding'] = 'gzip, deflate'
+        if 'content-encoding' in headers:
+            del headers['content-encoding']
+            
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
             )
 
 
@@ -481,14 +509,20 @@ async def fal_webhook(request: Request, data: Any = Body(...)):
     headers.pop("host", None)
 
     async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers['Accept-Encoding'] = 'gzip, deflate'
+        if 'content-encoding' in headers:
+            del headers['content-encoding']
+            
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
             )
-            
+
+
 @router.get("/file-upload", include_in_schema=False)
 async def get_file_upload_url(
     request: Request,

@@ -613,7 +613,7 @@ async def build_logic(item: BuildMachineItem):
         # process = subprocess.Popen(f"modal deploy {folder_path}/app.py", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
         final_env = {
             **os.environ,
-            "COLUMNS": "10000",
+            "COLUMNS": "5000",
         }
         if to_modal_deps_version[version_to_file]:
             final_env["MODAL_IMAGE_BUILDER_VERSION"] = to_modal_deps_version[
