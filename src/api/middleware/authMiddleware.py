@@ -55,4 +55,4 @@ class AuthMiddleware(BaseHTTPMiddleware):
         async with AsyncSessionLocal() as db:
             request.state.current_user = await get_current_user(request, db)
         # print("User authenticated and added to request state")  # Test print
-        logger.info("Added current_user to request state")
+        # logger.info("Added current_user to request state")
