@@ -1,5 +1,6 @@
 import inspect
 from sqlalchemy import (
+    BigInteger,
     Column,
     String,
     Enum,
@@ -549,6 +550,8 @@ class Model(SerializableMixin, Base):
         default="checkpoint",
     )
     error_log = Column(String)
+    
+    size = Column(BigInteger)
 
     deleted = Column(Boolean, nullable=False, default=False)
     created_at = Column(

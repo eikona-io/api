@@ -13,6 +13,7 @@ from api.models import Model as ModelDB, UserVolume
 from datetime import datetime, timedelta
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert
 from .types import VolFolder, VolFile
 from sqlalchemy.exc import MultipleResultsFound
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ import grpclib
 from modal import Volume, Secret
 import modal
 from huggingface_hub import HfApi
+
 # import aiohttp
 # from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
 import json
@@ -56,34 +58,20 @@ async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str
 async def get_volume_list(request: Request, volume_name: str) -> VolFSStructure:
     if not volume_name:
         raise ValueError("Volume name is not provided")
-    endpoint = f"{os.environ.get('CURRENT_API_URL')}/api/volume/ls_full?volume_name={volume_name}&create_if_missing=true"
 
-    # Get the auth token from the request
-    auth_token = request.headers.get("Authorization")
-    if not auth_token:
-        raise HTTPException(status_code=401, detail="Authorization token is missing")
-
-    headers = {"Cache-Control": "no-cache", "Authorization": auth_token}
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        try:
-            response = await client.get(endpoint, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            return VolFSStructure(**data)
-        except httpx.ReadTimeout:
-            logger.error(f"Timeout error while fetching volume list for {volume_name}")
-            raise HTTPException(status_code=504, detail="Request timed out")
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"HTTP error {e.response.status_code} while fetching volume list for {volume_name}"
-            )
-            raise HTTPException(status_code=e.response.status_code, detail=str(e))
-        except Exception as e:
-            logger.error(
-                f"Unexpected error while fetching volume list for {volume_name}: {str(e)}"
-            )
-            raise HTTPException(status_code=500, detail="Internal server error")
+    try:
+        response = await volume_full(request, volume_name, create_if_missing=True)
+        return VolFSStructure(**response)
+    except HTTPException as e:
+        logger.error(
+            f"HTTP error {e.status_code} while fetching volume list for {volume_name}"
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            f"Unexpected error while fetching volume list for {volume_name}: {str(e)}"
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def add_model_volume(request: Request, db: AsyncSession) -> Dict[str, Any]:
@@ -121,6 +109,7 @@ async def upsert_model_to_db(
     model_name = model_data.get("name")
     folder_path = model_data.get("path")
     category = model_data.get("category")
+    size = model_data.get("size")
 
     new_model = ModelDB(
         user_id=user_id,
@@ -132,6 +121,7 @@ async def upsert_model_to_db(
         status="success",
         download_progress=100,
         upload_type="other",
+        size=size,
         model_type="custom"
         if category
         not in [
@@ -151,7 +141,13 @@ async def upsert_model_to_db(
         ]
         else category,
     )
-    db.add(new_model)
+    query = insert(ModelDB).values(new_model.to_dict())
+    update_dict = {c.name: c for c in query.excluded if not c.primary_key}
+    query = query.on_conflict_do_update(
+        index_elements=["id"], set_=update_dict
+    )
+    # logger.info(f"model_name: {model_name}, size: {new_model.size}")
+    await db.execute(query)
     await db.commit()
 
 
@@ -169,12 +165,15 @@ async def process_volume_contents(contents, db, user_volume_id, request):
                     "path": "/".join(item.path.split("/")[:-1]),
                     "category": item.path.split("/")[0],
                     "user_volume_id": user_volume_id,
+                    "size": item.size,
                 },
                 request,
             )
 
 
-async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSStructure:
+async def refresh_db_files_from_volume(
+    request: Request, db: AsyncSession
+) -> VolFSStructure:
     private_volumes = await get_model_volumes(request, db)
 
     if not private_volumes:
@@ -193,7 +192,8 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
 
         # Create a set of existing model names for faster lookup
         existing_model_names = {
-            model.folder_path + "/" + model.model_name for model in existing_models
+            model.folder_path + "/" + model.model_name: model
+            for model in existing_models
         }
 
         # Filter out existing models from volume_structure
@@ -206,11 +206,15 @@ async def get_private_volume_list(request: Request, db: AsyncSession) -> VolFSSt
                     if filtered_item.contents:
                         filtered_contents.append(filtered_item)
                 elif isinstance(item, VolFile):
-                    logger.info(f"existing_model_names {existing_model_names}")
-                    logger.info(
-                        f"item.path, {item.path}, {item.path not in existing_model_names}"
-                    )
-                    if item.path not in existing_model_names:
+                    # logger.info(f"existing_model_names {existing_model_names}")
+                    # logger.info(
+                    #     f"item.path, {item.path}, {item.path not in existing_model_names}"
+                    # )
+                    # If the size is None, probably is old file, we should add it to the list
+                    if (
+                        item.path not in existing_model_names
+                        or existing_model_names[item.path].size is None
+                    ):
                         filtered_contents.append(item)
             return filtered_contents
 
@@ -314,7 +318,9 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
             current_folder = create_or_get_folder(part, current_folder)
 
         file_path = os.path.join(model.folder_path, model.model_name)
-        current_folder.contents.append(VolFile(path=file_path, type="file"))
+        current_folder.contents.append(
+            VolFile(path=file_path, type="file", size=model.size)
+        )
 
     return structure
 
@@ -339,7 +345,7 @@ async def private_models(
 ):
     try:
         if disable_cache:
-            await get_private_volume_list(request, db)
+            await refresh_db_files_from_volume(request, db)
             data, models = await get_private_volume_from_db(request, db)
         else:
             data, models = await get_private_volume_from_db(request, db)
@@ -509,10 +515,10 @@ async def handle_file_download(
         current_user = request.state.current_user
         user_id = current_user["user_id"]
         org_id = current_user["org_id"] if "org_id" in current_user else None
-        
+
         volumes = await retrieve_model_volumes(request, db)
         volume_name = volumes[0]["volume_name"]
-        
+
         user_settings = await get_user_settings(request, db)
         hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
         if user_settings is not None and user_settings.hugging_face_token:
@@ -531,7 +537,9 @@ async def handle_file_download(
             print("e: ", str(e))
             raise HTTPException(status_code=400, detail="Error: " + str(e))
 
-        modal_download_file_task = modal.Function.lookup("volume-operations", "modal_download_file_task")
+        modal_download_file_task = modal.Function.lookup(
+            "volume-operations", "modal_download_file_task"
+        )
 
         async def event_generator():
             try:
@@ -575,20 +583,20 @@ async def handle_file_download(
                                 updated_at=datetime.now(),
                             )
                         )
-                    
+
                     await db.execute(model_status_query)
                     await db.commit()
-                    
+
                     # yield json.dumps(event) + "\n"
             except Exception as e:
                 error_event = {
                     "status": "failed",
                     "error_log": str(e),
                     "model_id": db_model_id,
-                    "download_progress": 0
+                    "download_progress": 0,
                 }
                 # yield json.dumps(error_event) + "\n"
-                
+
                 model_status_query = (
                     update(ModelDB)
                     .where(ModelDB.id == db_model_id)
@@ -603,7 +611,7 @@ async def handle_file_download(
                 raise e
 
         background_tasks.add_task(event_generator)
-        
+
         return JSONResponse(content={"message": "success"})
 
     except Exception as e:
@@ -632,27 +640,30 @@ async def add_file(
 
 @router.post("/volume/file/{file_id}/retry")
 async def retry_download(
-    request: Request, 
-    file_id: str, 
+    request: Request,
+    file_id: str,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     # Query to get the existing model record
-    query = select(ModelDB).where(
-        ModelDB.id == file_id,
-        ModelDB.deleted == False,
-        ModelDB.status == "failed"  # Only allow retrying failed downloads
-    ).apply_org_check(request)
-    
+    query = (
+        select(ModelDB)
+        .where(
+            ModelDB.id == file_id,
+            ModelDB.deleted == False,
+            ModelDB.status == "failed",  # Only allow retrying failed downloads
+        )
+        .apply_org_check(request)
+    )
+
     result = await db.execute(query)
     model = result.scalar_one_or_none()
-    
+
     if not model:
         raise HTTPException(
-            status_code=404,
-            detail="Model not found or not eligible for retry"
+            status_code=404, detail="Model not found or not eligible for retry"
         )
-        
+
     # Use the helper function for the download
     res = await handle_file_download(
         request=request,
@@ -664,7 +675,7 @@ async def retry_download(
         db_model_id=str(model.id),
         background_tasks=background_tasks,
     )
-    
+
     # Reset the model status for retry
     model_status_query = (
         update(ModelDB)
@@ -673,13 +684,14 @@ async def retry_download(
             status="started",
             error_log=None,
             updated_at=datetime.now(),
-            download_progress=0
+            download_progress=0,
         )
     )
     await db.execute(model_status_query)
     await db.commit()
-    
+
     return res
+
 
 # Helper functions
 def does_file_exist(path: str, volume: Volume) -> bool:
@@ -748,9 +760,11 @@ async def volume_full(
                 "path": content.path,
                 "type": "folder" if content.type == DIRECTORY_TYPE else "file",
                 # "mtime": content.mtime,
-                # "size": content.size if content.type == FILE_TYPE else None,
+                "size": content.size if content.type == FILE_TYPE else None,
                 "contents": [] if content.type == DIRECTORY_TYPE else None,
             }
+
+            # print("entry_data: ", entry_data)
 
             # Simulate the nested structure that recursive_listdir would create
             path_parts = content.path.split("/")

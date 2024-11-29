@@ -431,6 +431,7 @@ class VolFolder(BaseModel):
 class VolFile(BaseModel):
     path: str
     type: Literal["file"]
+    size: Optional[float] = None
 
 
 VolFSStructure.update_forward_refs()
