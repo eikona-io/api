@@ -70,6 +70,23 @@ async def get_machines(
 
     return JSONResponse(content=machines_data)
 
+@router.get("/machines/all", response_model=List[MachineModel])
+async def get_all_machines(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    machines_query = (
+        select(Machine)
+        .order_by(Machine.created_at.desc())
+        .where(~Machine.deleted)
+        .apply_org_check(request)
+    )
+    
+    result = await db.execute(machines_query)
+    machines = result.unique().scalars().all()
+
+    return JSONResponse(content=[machine.to_dict() for machine in machines])
+
 
 @router.get("/machine/{machine_id}", response_model=MachineModel)
 async def get_machine(
