@@ -41,7 +41,7 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
         # async with AsyncSessionLocal() as db:
         #     request.state.current_user = await get_current_user(request, db)
 
-        if not request.state.current_user:
+        if "current_user" not in request.state or not request.state.current_user:
             return
 
         org_id = request.state.current_user.get("org_id")
