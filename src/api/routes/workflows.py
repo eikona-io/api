@@ -162,3 +162,20 @@ async def get_workflows(
         status_code=200, 
         content=json.loads(json.dumps(workflows, cls=CustomJSONEncoder))
     )
+
+@router.get("/workflows/all", response_model=List[WorkflowModel])
+async def get_all_workflows(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    workflows_query = (
+        select(Workflow)
+        .order_by(Workflow.created_at.desc())
+        .where(~Workflow.deleted)
+        .apply_org_check(request)
+    )
+
+    result = await db.execute(workflows_query)
+    workflows = result.scalars().all()
+
+    return JSONResponse(content=[workflow.to_dict() for workflow in workflows])
