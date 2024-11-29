@@ -440,23 +440,32 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
     headers = dict(request.headers)
     # Remove host header as it will be set by aiohttp
     headers.pop("host", None)
-
-    async with aiohttp.ClientSession(
-        headers=headers,
-        # Explicitly configure compression
-        compress=True,
-        # Enable auto decompression
-        auto_decompress=True,
-    ) as session:
-        async with session.post(new_url, json=data) as response:
-            content = await response.text()
-            if response.status >= 400:
-                raise HTTPException(status_code=response.status, detail=content)
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.post(new_url, json=data, headers=headers) as response:
+            content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
                 headers=dict(response.headers),
             )
+
+    # async with aiohttp.ClientSession(
+    #     headers=headers,
+    #     # Explicitly configure compression
+    #     compress=True,
+    #     # Enable auto decompression
+    #     auto_decompress=True,
+    # ) as session:
+    #     async with session.post(new_url, json=data) as response:
+    #         content = await response.text()
+    #         if response.status >= 400:
+    #             raise HTTPException(status_code=response.status, detail=content)
+    #         return Response(
+    #             content=content,
+    #             status_code=response.status,
+    #             headers=dict(response.headers),
+    #         )
 
 
 @router.post("/machine-built", include_in_schema=False)
