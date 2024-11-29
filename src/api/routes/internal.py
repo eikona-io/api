@@ -442,12 +442,17 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
     headers.pop("host", None)
     
     async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers['Accept-Encoding'] = 'gzip, deflate'
+        if 'content-encoding' in headers:
+            del headers['content-encoding']
+            
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
             )
 
     # async with aiohttp.ClientSession(
@@ -479,12 +484,17 @@ async def machine_built(request: Request, data: Any = Body(...)):
     headers.pop("host", None)
 
     async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers['Accept-Encoding'] = 'gzip, deflate'
+        if 'content-encoding' in headers:
+            del headers['content-encoding']
+            
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
             )
 
 
@@ -499,12 +509,17 @@ async def fal_webhook(request: Request, data: Any = Body(...)):
     headers.pop("host", None)
 
     async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers['Accept-Encoding'] = 'gzip, deflate'
+        if 'content-encoding' in headers:
+            del headers['content-encoding']
+            
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
             )
 
 
