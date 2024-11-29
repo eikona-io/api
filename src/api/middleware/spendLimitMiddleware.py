@@ -38,10 +38,8 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
         ]
 
     async def check_spend_limit(self, request: Request):
-        # async with AsyncSessionLocal() as db:
-        #     request.state.current_user = await get_current_user(request, db)
-
-        if "current_user" not in request.state or not request.state.current_user:
+        # Check if request.state exists and has current_user attribute
+        if not hasattr(request.state, 'current_user') or request.state.current_user is None:
             return
 
         org_id = request.state.current_user.get("org_id")
