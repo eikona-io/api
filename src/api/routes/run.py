@@ -656,21 +656,25 @@ async def _create_run(
         workflow_version_version = workflow_version.version
         workflow = workflow_version.workflow
 
-    if workflow_id is None:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+    is_model_run = isinstance(data, ModelRunRequest)
     
-    # To account for the new soft delete workflow
-    test_workflow = await db.execute(
-        select(Workflow)
-        .where(Workflow.id == workflow_id)
-        .where(Workflow.deleted == False)
-        .apply_org_check(request)
-    )
-    test_workflow = test_workflow.scalar_one_or_none()
-    test_workflow = cast(Optional[Workflow], test_workflow)
+    # check if the actual workflow exists if it is not a model run
+    if not is_model_run:
+        if workflow_id is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        
+        # To account for the new soft delete workflow
+        test_workflow = await db.execute(
+            select(Workflow)
+            .where(Workflow.id == workflow_id)
+            .where(Workflow.deleted == False)
+            .apply_org_check(request)
+        )
+        test_workflow = test_workflow.scalar_one_or_none()
+        test_workflow = cast(Optional[Workflow], test_workflow)
 
-    if not test_workflow:
-        raise HTTPException(status_code=404, detail="Workflow not found")
+        if not test_workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
     if machine_id is not None:
         # Get the machine associated with the deployment
@@ -686,7 +690,6 @@ async def _create_run(
                 status_code=404, detail="Machine not found for this deployment"
             )
 
-    is_model_run = isinstance(data, ModelRunRequest)
 
     if not is_model_run:
         if not workflow_api_raw:
