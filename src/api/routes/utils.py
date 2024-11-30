@@ -3,7 +3,9 @@ from functools import wraps
 from http.client import HTTPException
 import logging
 from typing import Any, Literal, Self, TypeVar, Tuple, Union
+from api.routes.types import WorkflowRunOutputModel
 from fastapi import Request
+import logfire
 from sqlalchemy import GenerativeSelect, Select
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.selectable import _ColumnsClauseArgument
@@ -33,6 +35,7 @@ from .subscription import get_current_plan, get_usage_detail
 from decimal import Decimal
 import math
 from typing import Dict, List, Set
+from pydantic import ValidationError
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -223,6 +226,20 @@ def ensure_run_timeout(run):
         if now - updated_at > timeout_delta:
             run.status = "timeout"
 
+def clean_up_outputs(outputs: List):
+    """
+    Clean up outputs by validating each against WorkflowRunOutputModel.
+    Invalid outputs will be removed from the list entirely.
+    """
+    # Iterate through the list in reverse to safely remove items
+    for i in range(len(outputs) - 1, -1, -1):
+        output = outputs[i]
+        if output.data and isinstance(output.data, dict):
+            try:
+                WorkflowRunOutputModel.model_validate(output)
+            except ValidationError:
+                logfire.warn("Invalid output", output=output)
+                outputs.pop(i)
 
 def post_process_outputs(outputs, user_settings):
     for output in outputs:

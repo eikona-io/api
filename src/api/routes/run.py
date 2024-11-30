@@ -33,6 +33,7 @@ from fastapi import BackgroundTasks
 import fal_client
 from .internal import insert_to_clickhouse, send_realtime_update, send_workflow_update
 from .utils import (
+    clean_up_outputs,
     ensure_run_timeout,
     generate_temporary_token,
     get_temporary_download_url,
@@ -117,8 +118,8 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
 
     user_settings = await get_user_settings(request, db)
     ensure_run_timeout(run)
+    clean_up_outputs(run.outputs)
     post_process_outputs(run.outputs, user_settings)
-
     # Convert the run to a dictionary and remove the run_log
     # run_dict = {k: v for k, v in vars(run).items() if k != "run_log"}
 
