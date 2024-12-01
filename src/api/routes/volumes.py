@@ -229,7 +229,7 @@ async def refresh_db_files_from_volume(
                     # If the size is None, probably is old file, we should add it to the list
                     if (
                         item.path not in existing_model_names
-                        or existing_model_names[item.path].size is None
+                        or (existing_model_names[item.path].size is None and item.size is not None)
                     ):
                         if (item.path in existing_model_names):
                             item.id = existing_model_names[item.path].id
