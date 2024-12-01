@@ -192,12 +192,15 @@ async def refresh_db_files_from_volume(
             select(ModelDB).where(ModelDB.deleted == False).apply_org_check(request)
         )
         existing_models = existing_models.scalars().all()
-
+        
         # Create a set of existing model names for faster lookup
         existing_model_names = {
             model.folder_path + "/" + model.model_name: model
             for model in existing_models
+            if model.folder_path is not None and model.model_name is not None
         }
+
+        # print("existing_model_names: ", existing_model_names)
 
         # Filter out existing models from volume_structure
         def filter_existing_models(contents):
@@ -209,6 +212,7 @@ async def refresh_db_files_from_volume(
                     if filtered_item.contents:
                         filtered_contents.append(filtered_item)
                 elif isinstance(item, VolFile):
+                    # print(item.path)
                     # logger.info(f"existing_model_names {existing_model_names}")
                     # logger.info(
                     #     f"item.path, {item.path}, {item.path not in existing_model_names}"
