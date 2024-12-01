@@ -141,6 +141,8 @@ async def upsert_model_to_db(
         ]
         else category,
     )
+    if model_data.get("id") is not None:
+        new_model.id = model_data.get("id")
     query = insert(ModelDB).values(new_model.to_dict())
     update_dict = {c.name: c for c in query.excluded if not c.primary_key}
     query = query.on_conflict_do_update(
@@ -161,6 +163,7 @@ async def process_volume_contents(contents, db, user_volume_id, request):
             await upsert_model_to_db(
                 db,
                 {
+                    "id": item.id,
                     "name": item.path.split("/")[-1],
                     "path": "/".join(item.path.split("/")[:-1]),
                     "category": item.path.split("/")[0],
@@ -215,6 +218,8 @@ async def refresh_db_files_from_volume(
                         item.path not in existing_model_names
                         or existing_model_names[item.path].size is None
                     ):
+                        if (item.path in existing_model_names):
+                            item.id = existing_model_names[item.path].id
                         filtered_contents.append(item)
             return filtered_contents
 

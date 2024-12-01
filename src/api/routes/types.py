@@ -405,6 +405,7 @@ class VolFolder(BaseModel):
 
 
 class VolFile(BaseModel):
+    id: Optional[str] = None
     path: str
     type: Literal["file"]
     size: Optional[float] = None
