@@ -144,9 +144,15 @@ async def upsert_model_to_db(
     if model_data.get("id") is not None:
         new_model.id = model_data.get("id")
     query = insert(ModelDB).values(new_model.to_dict())
-    update_dict = {c.name: c for c in query.excluded if not c.primary_key}
+    # update_dict = {c.name: c for c in query.excluded if not c.primary_key}
     query = query.on_conflict_do_update(
-        index_elements=["id"], set_=update_dict
+        index_elements=["id"], set_={
+            "model_name": new_model.model_name,
+            "folder_path": new_model.folder_path,
+            "download_progress": 100,
+            "size": new_model.size,
+            "updated_at": datetime.now(),
+        }
     )
     # logger.info(f"model_name: {model_name}, size: {new_model.size}")
     await db.execute(query)
