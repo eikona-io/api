@@ -4,6 +4,7 @@ import os
 
 from .workflows import CustomJSONEncoder
 from .utils import (
+    UserIconData,
     ensure_run_timeout,
     fetch_user_icon,
     get_user_settings,
@@ -144,14 +145,15 @@ async def get_versions(
         *[fetch_user_icon(user_id) for user_id in unique_user_ids]
     )
 
-    # Process results
-    user_icons = dict(results)
+    # Process results - create dictionary by pairing user IDs with their icon data
+    user_icons = {str(user_id): icon_data for user_id, icon_data in zip(unique_user_ids, results)}
 
     if not runs:
         return []
 
     runs_data = [
-        {**run.to_dict(), "user_icon": user_icons.get(run.user_id)} for run in runs
+        {**run.to_dict(), "user_icon": user_icons.get(run.user_id).image_url if user_icons.get(run.user_id) else None}
+        for run in runs
     ]
 
     return JSONResponse(content=runs_data)

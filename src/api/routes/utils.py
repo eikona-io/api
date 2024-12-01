@@ -35,7 +35,7 @@ from .subscription import get_current_plan, get_usage_detail
 from decimal import Decimal
 import math
 from typing import Dict, List, Set
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -129,15 +129,36 @@ def async_lru_cache(maxsize=128, typed=False, expire_after=None):
 user_icon_cache = {}
 
 
+class UserIconData(BaseModel):
+    user_id: str
+    image_url: Optional[str]
+    username: Optional[str]
+    first_name: Optional[str]
+    last_name: Optional[str]
+
+
+class ClerkUserResponse(BaseModel):
+    image_url: Optional[str] = None
+    username: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
 @async_lru_cache(maxsize=1000)
-async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
+async def fetch_user_icon(user_id: str) -> UserIconData:
     current_time = datetime.now()
 
     # Check if the user_id is in the cache and not expired (1 day)
     if user_id in user_icon_cache:
         cached_data, timestamp = user_icon_cache[user_id]
         if current_time - timestamp < timedelta(days=1):
-            return user_id, cached_data
+            return UserIconData(
+                user_id=user_id,
+                image_url=cached_data[0],
+                username=cached_data[2],
+                first_name=cached_data[3],
+                last_name=cached_data[4]
+            )
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -145,15 +166,26 @@ async def fetch_user_icon(user_id: str) -> tuple[str, Optional[str]]:
             headers={"Authorization": f"Bearer {clerk_token}"},
         )
         if response.status_code == 200:
-            user_data = response.json()
-            image_url = user_data.get("image_url")
+            user_data = ClerkUserResponse.model_validate(response.json())
             # Update the cache
-            user_icon_cache[user_id] = (image_url, current_time)
-            return user_id, image_url
+            user_icon_cache[user_id] = (
+                user_data.image_url,
+                current_time,
+                user_data.username,
+                user_data.first_name,
+                user_data.last_name,
+            )
+            return UserIconData(
+                user_id=user_id,
+                image_url=user_data.image_url,
+                username=user_data.username,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name
+            )
 
     # If fetching fails, cache None for 1 hour to avoid frequent retries
-    user_icon_cache[user_id] = (None, current_time)
-    return user_id, None
+    user_icon_cache[user_id] = (None, current_time, None, None, None)
+    return UserIconData(user_id=user_id, image_url=None, username=None, first_name=None, last_name=None)
 
 
 def get_org_or_user_condition(target: Base, request: Request):
@@ -226,6 +258,7 @@ def ensure_run_timeout(run):
         if now - updated_at > timeout_delta:
             run.status = "timeout"
 
+
 def clean_up_outputs(outputs: List):
     """
     Clean up outputs by validating each against WorkflowRunOutputModel.
@@ -240,6 +273,7 @@ def clean_up_outputs(outputs: List):
             except ValidationError:
                 logfire.warn("Invalid output", output=output)
                 outputs.pop(i)
+
 
 def post_process_outputs(outputs, user_settings):
     for output in outputs:

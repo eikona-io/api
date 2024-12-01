@@ -5,7 +5,7 @@ from typing import List, Optional
 from .types import WorkflowModel
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
+from .utils import UserIconData, fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
 from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion
 from .utils import get_user_settings, is_exceed_spend_limit
 from sqlalchemy import func, select as sa_select, distinct, and_, or_
@@ -150,12 +150,13 @@ async def get_workflows(
     user_icon_results = await asyncio.gather(
         *[fetch_user_icon(user_id) for user_id in unique_user_ids]
     )
-    user_icons = dict(user_icon_results)
+    user_icons = {str(user_id): icon_data for user_id, icon_data in zip(unique_user_ids, user_icon_results)}
 
     for workflow in workflows:
         if workflow["latest_output"]:
             post_process_output_data(workflow["latest_output"], user_settings)
-        workflow["user_icon"] = user_icons.get(workflow["user_id"])
+        user_icon = user_icons.get(str(workflow["user_id"]))
+        workflow["user_icon"] = user_icon.image_url if user_icon else None
 
     # Use the custom encoder to serialize the data
     return JSONResponse(
