@@ -109,11 +109,12 @@ def async_lru_cache(maxsize=128, typed=False, expire_after=None):
             if cache_key in cache:
                 result, timestamp = cache[cache_key]
                 if expire_after is None or now - timestamp < expire_after:
+                    logfire.info(f"Cache hit for {cache_key}")
                     return result
 
             result = await async_func(*args, **kwargs)
             cache[cache_key] = (result, now)
-
+            
             if len(cache) > maxsize:
                 oldest_key = min(cache, key=lambda k: cache[k][1])
                 del cache[oldest_key]
