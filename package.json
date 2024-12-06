@@ -4,7 +4,7 @@
   "description": "A simple API project",
   "main": "src/api/__init__.py",
   "scripts": {
-    "dev": "PORT=3011 uv run src/api/__init__.py",
+    "dev:api": "PORT=3011 uv run src/api/__init__.py",
     "watch": "nodemon --watch src -e py,ts --exec \"bun test\"",
     "start": "uv run src/api/__init__.py"
   },
