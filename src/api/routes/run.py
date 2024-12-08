@@ -760,7 +760,10 @@ async def _create_run(
     workflow_id = None
     workflow_api_raw = None
 
-    gpu = data.gpu
+    # Ensure GPU is always a string
+    gpu = str(data.gpu) if data.gpu is not None else None
+
+    print("GPU", gpu)
 
     org_id = (
         request.state.current_user["org_id"]
@@ -848,7 +851,8 @@ async def _create_run(
                 status_code=404, detail="Machine not found for this deployment"
             )
 
-        gpu = machine.gpu if gpu is None else gpu
+        # Ensure GPU is always a string
+        gpu = str(machine.gpu) if machine.gpu is not None and gpu is None else gpu
 
     if not is_model_run:
         if not workflow_api_raw:
