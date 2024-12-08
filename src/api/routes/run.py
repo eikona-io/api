@@ -761,9 +761,9 @@ async def _create_run(
     workflow_api_raw = None
 
     # Ensure GPU is always a string
-    gpu = str(data.gpu) if data.gpu is not None else None
+    gpu = data.gpu.value if data.gpu is not None else None
 
-    print("GPU", gpu)
+    # print("MyGPU", gpu)
 
     org_id = (
         request.state.current_user["org_id"]
