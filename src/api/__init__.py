@@ -23,13 +23,13 @@ from api.routes import (
     workflows,
     machines,
     comfy_node,
-	deployments,
-	runs,
+    deployments,
+    runs,
     session,
     files,
     models,
     platform,
-    search
+    search,
 )
 from api.modal import builder
 from api.models import APIKey
@@ -67,7 +67,7 @@ set_global_textmap(NullPropagator())
 
 load_dotenv()
 logfire.configure(
-    service_name='comfydeploy-api',
+    service_name="comfydeploy-api",
     # send_to_logfire=False
 )
 logger = logfire
@@ -103,6 +103,23 @@ app = FastAPI(
 
 app.openapi_schema = None  # Clear any existing schema
 
+docs = """
+### Overview
+
+Welcome to the ComfyDeploy API!
+
+To create a run thru the API, use the [queue run endpoint](#tag/run/POST/run/deployment/queue).
+
+Check out the [get run endpoint](#tag/run/GET/run/{run_id}), for getting the status and output of a run.
+
+### Authentication
+
+To authenticate your requests, include your API key in the `Authorization` header as a bearer token. Make sure to generate an API key in the [API Keys section of your ComfyDeploy account](https://www.comfydeploy.com/api-keys).
+
+###
+
+"""
+
 
 def custom_openapi():
     if app.openapi_schema:
@@ -110,8 +127,8 @@ def custom_openapi():
 
     openapi_schema = get_openapi(
         title="ComfyDeploy API",
-        version="1.0.0",
-        description="API for ComfyDeploy",
+        version="V2",
+        description=docs,
         routes=public_api_router.routes,
         servers=app.servers,
         webhooks=app.webhooks.routes,
@@ -130,11 +147,12 @@ def custom_openapi():
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
+
 def custom_openapi_internal():
     openapi_schema = get_openapi(
         title="ComfyDeploy API (Internal)",
-        version="1.0.0",
-        description="Internal API for ComfyDeploy",
+        version="V2",
+        description=docs,
         routes=api_router.routes,
         webhooks=app.webhooks.routes,
         servers=app.servers,
@@ -209,11 +227,13 @@ async def scalar_html():
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
     )
-    
+
+
 @app.get("/internal/openapi.json", include_in_schema=False)
 async def openapi_json_internal():
     return JSONResponse(status_code=200, content=custom_openapi_internal())
-    
+
+
 @app.get("/internal", include_in_schema=False)
 async def scalar_html_internal():
     return get_scalar_api_reference(
@@ -224,6 +244,7 @@ async def scalar_html_internal():
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
     )
+
 
 # Set up logging
 
@@ -260,5 +281,5 @@ if __name__ == "__main__":
         port=port,
         workers=4,
         reload=reload,
-        reload_dirs=[project_root + '/api/src'],
+        reload_dirs=[project_root + "/api/src"],
     )

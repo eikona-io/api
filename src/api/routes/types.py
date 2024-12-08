@@ -4,19 +4,40 @@ from api.sqlmodels import WorkflowRunStatus
 
 
 # from sqlalchemy import select
-from typing import Literal, Optional, Union
-from pydantic import BaseModel, Field, RootModel
+from typing import Annotated, Literal, Optional, Union
+from pydantic import ConfigDict, Field, RootModel, WithJsonSchema
 from typing import Dict, Any
 from uuid import UUID
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import Field
 from typing import Optional, List
+from pydantic.json_schema import GenerateJsonSchema
+from pydantic.json_schema import SkipJsonSchema
+
 # from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 from enum import Enum
 
+from pydantic import BaseModel
+
+# class CustomJsonSchemaGenerator(GenerateJsonSchema):
+#     def generate(self, schema, mode='validation'):
+#         print("hi")
+#         json_schema = super().generate(schema, mode=mode)
+#         if 'properties' in json_schema:
+#             # Filter out hidden properties
+#             json_schema['properties'] = {
+#                 k: v for k, v in json_schema['properties'].items()
+#                 if not v.get('hidden', False)
+#             }
+#         return json_schema
+
+# class BaseModel(_BaseModel):
+#     model_config = {
+#         "schema_generator": CustomJsonSchemaGenerator,
+#     }
 
 # class WorkflowRunOutputModel(BaseModel):
 #     id: UUID
@@ -53,6 +74,7 @@ class WorkflowListResponse(BaseModel):
     workflows: List[WorkflowModel]
     query_length: int
 
+
 class MediaItem(BaseModel):
     url: str
     type: str
@@ -74,15 +96,16 @@ class WorkflowRunOutputModel(BaseModel):
 
     class Config:
         from_attributes = True
-        
-        
+
+
 class WorkflowRunWebhookBody(BaseModel):
     run_id: str
     status: WorkflowRunStatus
     live_status: Optional[str]
     progress: float = Field(default=0)
     outputs: List[WorkflowRunOutputModel] = []
-    
+
+
 class WorkflowRunModel(BaseModel):
     id: UUID
     workflow_version_id: Optional[UUID]
@@ -239,33 +262,39 @@ class MachineModel(BaseModel):
 
 
 class WorkflowRequestShare(BaseModel):
-    execution_mode: Optional[
-        Literal["async", "sync", "sync_first_result", "stream"]
+    execution_mode: SkipJsonSchema[
+        Optional[Literal["async", "sync", "sync_first_result", "stream"]]
     ] = Field(
         default="async",
         example="async",
     )
-    inputs: Optional[Dict[str, Union[str, int, float, bool, List[Any]]]] = Field(
-        default_factory=dict,
+
+    inputs: Dict[str, Union[str, int, float, bool, List[Any]]] = Field(
+        # default_factory=dict,
+        default={},
+        description="The inputs to the workflow",
         example={"prompt": "A beautiful landscape", "seed": 42},
     )
-    webhook: Optional[str] = Field(
+    webhook: Annotated[
+        Optional[str], WithJsonSchema(json_schema={"type": "string"})
+    ] = Field(
         default=None,
         example="https://example.com/webhook",
+        json_schema_extra={"type": "string"},  # This ensures it shows as string in docs
     )
-    webhook_intermediate_status: Optional[bool] = Field(
+    webhook_intermediate_status: bool = Field(
         default=False,
         example=True,
     )
-    origin: Optional[str] = Field(
+    origin: SkipJsonSchema[Optional[str]] = Field(
         default="api",
         example="manual",
     )
-    batch_number: Optional[int] = Field(
+    batch_number: SkipJsonSchema[Optional[int]] = Field(
         default=None,
         example=5,
     )
-    batch_input_params: Optional[Dict[str, List[Any]]] = Field(
+    batch_input_params: SkipJsonSchema[Optional[Dict[str, List[Any]]]] = Field(
         default=None,
         example={
             "input_number": [1, 2, 3],
@@ -273,13 +302,22 @@ class WorkflowRequestShare(BaseModel):
         },
         description="Optional dictionary of batch input parameters. Keys are input names, values are lists of inputs.",
     )
-    is_native_run: Optional[bool] = Field(
+    is_native_run: SkipJsonSchema[Optional[bool]] = Field(
         default=False,
         example=True,
     )
-    gpu_event_id: Optional[str] = Field(
+    gpu_event_id: SkipJsonSchema[Optional[str]] = Field(
         default=None,
         example="123e4567-e89b-12d3-a456-426614174000",
+    )
+    gpu: Annotated[
+        Optional[MachineGPU],
+        WithJsonSchema(
+            json_schema={"type": "string", "enum": [g.value for g in MachineGPU]}
+        ),
+    ] = Field(
+        default=None,
+        description="The GPU to override the machine's default GPU",
     )
 
     # model_config = {
@@ -301,8 +339,12 @@ class WorkflowRequestShare(BaseModel):
 class WorkflowRunRequest(WorkflowRequestShare):
     workflow_id: UUID
     workflow_api_json: Dict[str, Any]
-    workflow: Optional[Dict[str, Any]] = None
-    machine_id: Optional[UUID] = None
+    workflow: Annotated[
+        Dict[str, Any], WithJsonSchema(json_schema={"type": "object"})
+    ] = None
+    machine_id: Annotated[
+        Optional[UUID], WithJsonSchema(json_schema={"type": "string"})
+    ] = None
 
     model_config = {
         "json_schema_extra": {
@@ -328,9 +370,25 @@ class WorkflowRunVersionRequest(WorkflowRequestShare):
 
 
 class DeploymentRunRequest(WorkflowRequestShare):
-    deployment_id: UUID
-    
-    
+    deployment_id: UUID = Field(examples=["15e79589-12c9-453c-a41a-348fdd7de957"])
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "deployment_id": "12345678-1234-5678-1234-567812345678",
+                    "inputs": {
+                        "prompt": "A futuristic cityscape",
+                        "seed": 123456,
+                        "num_inference_steps": 30,
+                    },
+                    "webhook": "https://myapp.com/webhook",
+                }
+            ]
+        }
+    }
+
+
 class ModelRunRequest(WorkflowRequestShare):
     model_id: str
 
@@ -345,7 +403,9 @@ class CreateRunBatchResponse(BaseModel):
 
 
 class CreateRunResponse(BaseModel):
-    run_id: UUID
+    run_id: UUID = Field(
+        ..., description="The ID of the run, use this to get the run status and outputs"
+    )
 
 
 class Input(BaseModel):
@@ -361,25 +421,31 @@ class LogDataContent(BaseModel):
     logs: str
     timestamp: datetime = Field(..., description="Timestamp in UTC")
 
+
 class LogUpdateEvent(BaseModel):
     event: Literal["log_update"] = "log_update"
     data: LogDataContent
     # data: str
 
+
 class EventUpdate(BaseModel):
     event: Optional[str] = None
     data: Optional[Any] = None
-    
+
+
 class EventUpdateEvent(BaseModel):
     event: Literal["event_update"] = "event_update"
     # data: str
     data: EventUpdate
-    
+
+
 # RunStream = Union[LogUpdateEvent, EventUpdateEvent]
+
 
 # Add this discriminator class
 class RunStream(RootModel):
-    root: Union[LogUpdateEvent, EventUpdateEvent] = Field(..., discriminator='event')
+    root: Union[LogUpdateEvent, EventUpdateEvent] = Field(..., discriminator="event")
+
 
 class WorkflowRunNativeOutputModel(BaseModel):
     prompt_id: str
@@ -454,9 +520,11 @@ class DeploymentEnvironment(str, Enum):
     PUBLIC_SHARE = "public-share"
     PRIVATE_SHARE = "private-share"
 
+
 class WorkflowWithName(BaseModel):
     id: UUID
     name: str
+
 
 class InputModel(BaseModel):
     type: str
@@ -471,12 +539,18 @@ class InputModel(BaseModel):
 
     # You might want to add additional fields based on the specific input types
     # For example:
-    enum_options: Optional[List[str]] = Field(None, description="Options for enum input type")
-    step: Optional[Union[int, float]] = Field(None, description="Step for number slider input types")
+    enum_options: Optional[List[str]] = Field(
+        None, description="Options for enum input type"
+    )
+    step: Optional[Union[int, float]] = Field(
+        None, description="Step for number slider input types"
+    )
+
 
 class OutputModel(BaseModel):
     class_type: str
     output_id: str
+
 
 class DeploymentModel(BaseModel):
     id: UUID
@@ -493,12 +567,13 @@ class DeploymentModel(BaseModel):
     created_at: datetime
     updated_at: datetime
     workflow: WorkflowWithName
-    
+
     input_types: Optional[List[InputModel]] = None
     output_types: Optional[List[OutputModel]] = None
 
     class Config:
         from_attributes = True
+
 
 class MachineGPU(str, Enum):
     CPU = "CPU"
@@ -542,6 +617,7 @@ class GPUEventModel(BaseModel):
     class Config:
         from_attributes = True
 
+
 class SubscriptionPlanType(str, Enum):
     BASIC = "basic"
     PRO = "pro"
@@ -551,11 +627,13 @@ class SubscriptionPlanType(str, Enum):
     WS_BASIC = "ws_basic"
     WS_PRO = "ws_pro"
 
+
 class SubscriptionPlanStatus(str, Enum):
     ACTIVE = "active"
     DELETED = "deleted"
     PAUSED = "paused"
-        
+
+
 class SubscriptionStatusType(BaseModel):
     stripe_customer_id: str
     user_id: str
@@ -571,7 +649,8 @@ class SubscriptionStatusType(BaseModel):
     trial_end: Optional[datetime]
     trial_start: Optional[datetime]
     last_invoice_timestamp: datetime
-    
+
+
 class PlanInfo(BaseModel):
     plan: str = "free"
     status: str = "active"

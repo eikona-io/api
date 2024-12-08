@@ -158,7 +158,160 @@ async def create_run_all(
 
 
 @router.post(
+    "/run/deployment/queue",
+    response_model=CreateRunResponse,
+    summary="Deployment - Queue",
+    description="Create a new deployment run with the given parameters.",
+    openapi_extra={
+        "x-speakeasy-group": "run.deployment",
+        "x-speakeasy-name-override": "queue",
+    },
+)
+async def queue_deployment_run(
+    request: Request,
+    data: DeploymentRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/deployment/sync",
+    response_model=List[WorkflowRunOutputModel],
+    summary="Deployment - Sync",
+    description="Create a new deployment run with the given parameters.",
+    openapi_extra={
+        "x-speakeasy-group": "run.deployment",
+        "x-speakeasy-name-override": "sync",
+    },
+)
+async def sync_deployment_run(
+    request: Request,
+    data: DeploymentRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    data.execution_mode = "sync"
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/deployment/stream",
+    response_model=RunStream,
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Stream of workflow run events",
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "$ref": "#/components/schemas/RunStream",
+                    },
+                },
+            },
+        }
+    },
+    summary="Deployment - Stream",
+    description="Create a new deployment run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    callbacks=webhook_router.routes,
+    openapi_extra={
+        "x-speakeasy-group": "run.deployment",
+        "x-speakeasy-name-override": "stream",
+    },
+)
+async def create_run_deployment_stream(
+    request: Request,
+    data: DeploymentRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    data.execution_mode = "stream"
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/workflow/queue",
+    response_model=CreateRunResponse,
+    summary="Workflow - Queue",
+    description="Create a new workflow run with the given parameters.",
+    openapi_extra={
+        "x-speakeasy-group": "run.workflow",
+        "x-speakeasy-name-override": "queue",
+    },
+)
+async def queue_workflow_run(
+    request: Request,
+    data: WorkflowRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/workflow/sync",
+    response_model=List[WorkflowRunOutputModel],
+    summary="Workflow - Sync",
+    description="Create a new workflow run with the given parameters.",
+    openapi_extra={
+        "x-speakeasy-group": "run.workflow",
+        "x-speakeasy-name-override": "sync",
+    },
+)
+async def sync_workflow_run(
+    request: Request,
+    data: WorkflowRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    data.execution_mode = "sync"
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
+    "/run/workflow/stream",
+    response_model=RunStream,
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Stream of workflow run events",
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "$ref": "#/components/schemas/RunStream",
+                    },
+                },
+            },
+        }
+    },
+    summary="Workflow - Stream",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    callbacks=webhook_router.routes,
+    openapi_extra={
+        "x-speakeasy-group": "run.workflow",
+        "x-speakeasy-name-override": "stream",
+    },
+)
+async def create_run_workflow_stream(
+    request: Request,
+    data: WorkflowRunRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    client: AsyncClient = Depends(get_clickhouse_client),
+):
+    data.execution_mode = "stream"
+    return await _create_run(request, data, background_tasks, db, client)
+
+
+@router.post(
     "/run/queue",
+    deprecated=True,
     response_model=CreateRunResponse,
     summary="Queue a workflow",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
@@ -181,6 +334,7 @@ async def create_run_queue(
 @router.post(
     "/run/sync",
     response_model=List[WorkflowRunOutputModel],
+    deprecated=True,
     summary="Run a workflow in sync",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
     callbacks=webhook_router.routes,
@@ -204,6 +358,7 @@ async def create_run_sync(
     "/run/stream",
     response_model=RunStream,
     response_class=StreamingResponse,
+    deprecated=True,
     responses={
         200: {
             "description": "Stream of workflow run events",
@@ -605,6 +760,8 @@ async def _create_run(
     workflow_id = None
     workflow_api_raw = None
 
+    gpu = data.gpu
+
     org_id = (
         request.state.current_user["org_id"]
         if "org_id" in request.state.current_user
@@ -658,12 +815,12 @@ async def _create_run(
         workflow = workflow_version.workflow
 
     is_model_run = isinstance(data, ModelRunRequest)
-    
+
     # check if the actual workflow exists if it is not a model run
     if not is_model_run:
         if workflow_id is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-        
+
         # To account for the new soft delete workflow
         test_workflow = await db.execute(
             select(Workflow)
@@ -691,6 +848,7 @@ async def _create_run(
                 status_code=404, detail="Machine not found for this deployment"
             )
 
+        gpu = machine.gpu if gpu is None else gpu
 
     if not is_model_run:
         if not workflow_api_raw:
@@ -703,7 +861,7 @@ async def _create_run(
         # Make it an empty so it will not get stuck
         if inputs is None:
             inputs = {}
-        
+
         prompt_id = uuid.uuid4()
         user_id = request.state.current_user["user_id"]
 
@@ -727,7 +885,7 @@ async def _create_run(
             # Machine
             machine_id=machine_id,
             machine_type=machine.type if machine else None,
-            gpu=machine.gpu if machine else None,
+            gpu=gpu,
             # Webhook
             webhook=data.webhook,
             webhook_intermediate_status=data.webhook_intermediate_status,
@@ -872,7 +1030,7 @@ async def _create_run(
             match machine.type:
                 case "comfy-deploy-serverless":
                     # print("shit", str(machine_id))
-                    ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
+                    ComfyDeployRunner = get_comfy_deploy_runner(machine_id, gpu)
                     with logfire.span("spawn-run"):
                         result = ComfyDeployRunner.run.spawn(params)
                         new_run.modal_function_call_id = result.object_id
@@ -951,7 +1109,7 @@ async def _create_run(
             return {"run_id": new_run.id}
         elif data.execution_mode in ["sync", "sync_first_result"]:
             with logfire.span("run-sync"):
-                ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
+                ComfyDeployRunner = get_comfy_deploy_runner(machine_id, gpu)
                 result = await ComfyDeployRunner.run.remote.aio(params)
 
             if data.execution_mode == "sync_first_result":
@@ -1009,7 +1167,7 @@ async def _create_run(
 
                 return [output.to_dict() for output in outputs]
         elif data.execution_mode == "stream":
-            ComfyDeployRunner = get_comfy_deploy_runner(machine_id, machine.gpu)
+            ComfyDeployRunner = get_comfy_deploy_runner(machine_id, gpu)
             user_settings = await get_user_settings(request, db)
 
             async def wrapped_generator():
