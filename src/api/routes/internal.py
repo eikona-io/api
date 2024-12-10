@@ -31,6 +31,7 @@ from pprint import pprint
 
 from .utils import (
     async_lru_cache,
+    clean_up_outputs,
     generate_presigned_url,
     get_user_settings,
     post_process_outputs,
@@ -405,6 +406,7 @@ async def update_run(
         user_settings = await get_user_settings(request, db)
         if outputs:
             post_process_outputs(outputs, user_settings)
+        clean_up_outputs(outputs)
         # Instead of setting outputs directly, create a new dictionary with all the data
         workflow_run_data = workflow_run.to_dict()
         workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
