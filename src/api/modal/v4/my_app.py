@@ -1,3 +1,4 @@
+import sys
 from config import config
 import modal
 from time import time
@@ -1711,8 +1712,12 @@ class ComfyDeployRunner:
 
             class TimeoutError(Exception):
                 pass
+            
+            my_function_call_id = modal.current_function_call_id()
 
             def timeout_handler(signum, frame):
+                asyncio.create_task(interrupt_comfyui())
+                
                 data = json.dumps(
                     {
                         "run_id": input.prompt_id,
@@ -1731,7 +1736,17 @@ class ComfyDeployRunner:
                     },
                 )
                 urllib.request.urlopen(req)
-                raise TimeoutError("Operation timed out")
+                
+                print("current_function_call_id", my_function_call_id)
+                
+                try:
+                    modal.functions.FunctionCall.from_id(my_function_call_id).cancel()
+                except Exception as e:
+                    print("Issues when canceling function call", e)
+                    pass
+                
+                # cancel self, instead of crashing it.
+                # asyncio.create_task(self.timeout_and_exit(0, True))
 
             signal.signal(signal.SIGALRM, timeout_handler)
 

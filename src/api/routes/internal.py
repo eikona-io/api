@@ -348,6 +348,10 @@ async def update_run(
         # If the run is already cancelled, don't update it
         if body.status == "cancelled":
             return {"status": "success"}
+        
+        # If the run is already timed out, don't update it
+        if workflow_run.status == "timeout":
+            return {"status": "success"}
 
         # Update the run status
         update_data = {"status": body.status, "updated_at": updated_at}
