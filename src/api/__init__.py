@@ -124,22 +124,40 @@ To authenticate your requests, include your API key in the `Authorization` heade
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
+    
+    if (os.getenv("ENV", "production").lower() == "production"):
+        # In development mode, fetch from Speakeasy
+        import requests
+        try:
+            response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
+            openapi_schema = response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch Speakeasy schema: {e}")
+            # Fallback to default schema generation
+            openapi_schema = get_openapi(
+                title="ComfyDeploy API",
+                version="V2",
+                description=docs,
+                routes=public_api_router.routes,
+                servers=app.servers,
+                webhooks=app.webhooks.routes,
+            )
+    else:
+        openapi_schema = get_openapi(
+            title="ComfyDeploy API",
+            version="V2",
+            description=docs,
+            routes=public_api_router.routes,
+            servers=app.servers,
+            webhooks=app.webhooks.routes,
+        )
 
-    openapi_schema = get_openapi(
-        title="ComfyDeploy API",
-        version="V2",
-        description=docs,
-        routes=public_api_router.routes,
-        servers=app.servers,
-        webhooks=app.webhooks.routes,
-    )
-
-    openapi_schema["components"]["securitySchemes"] = {
-        "Bearer": {
-            "type": "http",
-            "scheme": "bearer",
+        openapi_schema["components"]["securitySchemes"] = {
+            "Bearer": {
+                "type": "http",
+                "scheme": "bearer",
+            }
         }
-    }
 
     # Apply Bearer Auth security globally
     openapi_schema["security"] = [{"Bearer": []}]

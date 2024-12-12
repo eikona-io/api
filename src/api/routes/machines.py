@@ -1,11 +1,17 @@
 import asyncio
 from datetime import timedelta
-from http.client import HTTPException
+# from http.client import HTTPException
+from fastapi import Request, HTTPException, Depends
 import os
 from uuid import UUID
 import uuid
 
-from api.modal.builder import BuildMachineItem, build_logic
+from api.modal.builder import (
+    BuildMachineItem,
+    KeepWarmBody,
+    build_logic,
+    set_machine_always_on,
+)
 from api.routes.volumes import get_model_volumes, retrieve_model_volumes
 from api.utils.docker import generate_all_docker_commands, comfyui_hash
 from pydantic import BaseModel
@@ -70,6 +76,7 @@ async def get_machines(
 
     return JSONResponse(content=machines_data)
 
+
 @router.get("/machines/all", response_model=List[MachineModel])
 async def get_all_machines(
     request: Request,
@@ -81,7 +88,7 @@ async def get_all_machines(
         .where(~Machine.deleted)
         .apply_org_check(request)
     )
-    
+
     result = await db.execute(machines_query)
     machines = result.unique().scalars().all()
 
@@ -95,7 +102,10 @@ async def get_machine(
     db: AsyncSession = Depends(get_db),
 ):
     machine = await db.execute(
-        select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+        select(Machine)
+        .where(Machine.id == machine_id)
+        .where(~Machine.deleted)
+        .apply_org_check(request)
     )
     machine = machine.scalars().first()
     if not machine:
@@ -159,6 +169,7 @@ class UpdateServerlessMachineModel(BaseModel):
     python_version: Optional[str] = None
     extra_args: Optional[str] = None
     prestart_command: Optional[str] = None
+    keep_warm: Optional[int] = None
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
@@ -260,7 +271,6 @@ async def update_serverless_machine(
         "extra_docker_commands",
         "idle_timeout",
         "ws_timeout",
-        "gpu",
         "machine_builder_version",
         "install_custom_node_with_gpu",
         "run_timeout",
@@ -268,20 +278,30 @@ async def update_serverless_machine(
         "extra_args",
         "prestart_command",
         "python_version",
+        "install_custom_node_with_gpu",
     ]
 
-    rebuild = False
+    update_machine_dict = update_machine.model_dump()
+
+    rebuild = check_fields_for_changes(
+        machine, update_machine_dict, fields_to_trigger_rebuild
+    )
+    keep_warm_changed = check_fields_for_changes(
+        machine, update_machine_dict, ["keep_warm"]
+    )
+    gpu_changed = check_fields_for_changes(machine, update_machine_dict, ["gpu"])
+
+    # We dont need to trigger a rebuild if we only change the gpu.
+    # We need to trigger a rebuild if we change the gpu and install_custom_node_with_gpu is true
+    if gpu_changed and machine.install_custom_node_with_gpu:
+        rebuild = True
 
     print(update_machine.model_dump())
 
     for key, value in update_machine.model_dump().items():
         if hasattr(machine, key) and value is not None:
-            if key in fields_to_trigger_rebuild:
-                existing_value = getattr(machine, key)
-                if existing_value != value:
-                    rebuild = True
             setattr(machine, key, value)
-            
+
     machine.updated_at = func.now()
 
     if rebuild:
@@ -318,10 +338,15 @@ async def update_serverless_machine(
         machine.status = "building"
         background_tasks.add_task(build_logic, params)
 
+    if keep_warm_changed and not rebuild:
+        print("Keep warm changed", machine.keep_warm)
+        set_machine_always_on(
+            machine.id, KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu)
+        )
 
     await db.commit()
     await db.refresh(machine)
-    
+
     return JSONResponse(content=machine.to_dict())
 
 
@@ -329,6 +354,7 @@ async def update_serverless_machine(
 async def delete_machine(
     request: Request,
     machine_id: UUID,
+    force: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     machine = await db.execute(
@@ -338,21 +364,29 @@ async def delete_machine(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    # Check if there are existing deployments
-    deployments = await db.execute(
-        select(Deployment)
-        .join(Workflow)
-        .where(Deployment.machine_id == machine_id)
-        .with_only_columns(Deployment.workflow_id, Workflow.name)
-    )
-    deployments = deployments.all()
-
-    if len(deployments) > 0:
-        workflow_names = ",".join([d.Workflow.name for d in deployments])
+    if machine.keep_warm > 0:
         raise HTTPException(
             status_code=400,
-            detail=f"You still have these workflows related to this machine: {workflow_names}",
+            detail="Please set keep warm to 0 before deleting the machine.",
         )
+
+    if not force:
+        # Check if there are existing deployments
+        deployments = await db.execute(
+            select(Deployment)
+            .join(Workflow)
+            .where(Deployment.machine_id == machine_id)
+            .with_only_columns(Deployment.workflow_id, Workflow.name)
+        )
+        deployments = deployments.all()
+
+        if len(deployments) > 0:
+            logger.info(f"Deployments: {deployments}")
+            workflow_names = ",".join([name for _, name in deployments])
+            raise HTTPException(
+                status_code=402,
+                detail=f"You still have these workflows related to this machine: {workflow_names}",
+            )
 
     machine.deleted = True
     await db.commit()
@@ -429,10 +463,29 @@ async def update_custom_machine(
     for key, value in machine.model_dump().items():
         if hasattr(machine, key) and value is not None:
             setattr(machine, key, value)
-            
+
     machine.updated_at = func.now()
 
     await db.commit()
     await db.refresh(machine)
 
     return JSONResponse(content=machine.to_dict())
+
+
+def has_field_changed(old_obj, new_value, field_name):
+    """Check if a field's value has changed."""
+    existing_value = getattr(old_obj, field_name)
+    return existing_value != new_value
+
+
+def check_fields_for_changes(old_obj, new_data, fields_to_check):
+    """Check if any of the specified fields have changed."""
+    for field in fields_to_check:
+        if (
+            field in new_data
+            and new_data[field] is not None
+            and hasattr(old_obj, field)
+            and has_field_changed(old_obj, new_data[field], field)
+        ):
+            return True
+    return False

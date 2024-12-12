@@ -840,7 +840,10 @@ async def _create_run(
     if machine_id is not None:
         # Get the machine associated with the deployment
         machine_query = (
-            select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+            select(Machine)
+            .where(Machine.id == machine_id)
+            .where(~Machine.deleted)
+            .apply_org_check(request)
         )
         machine_result = await db.execute(machine_query)
         machine = machine_result.scalar_one_or_none()

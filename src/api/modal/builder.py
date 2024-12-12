@@ -28,6 +28,7 @@ import modal
 from fastapi import APIRouter
 import tempfile
 from database import get_db
+import shutil
 
 machine_id_websocket_dict = {}
 machine_id_websocket_dict_live_logs = {}
@@ -180,6 +181,7 @@ class KeepWarmBody(BaseModel):
     warm_pool_size: int = 1
     gpu: Optional[GPUType] = Field(default=None)
 
+
 # Keep warm for workspace app
 @router.post("/modal/{app_name}/keep-warm")
 def set_machine_always_on(app_name: str, body: KeepWarmBody):
@@ -189,7 +191,9 @@ def set_machine_always_on(app_name: str, body: KeepWarmBody):
         if body.gpu:
             gpu = body.gpu.value if body.gpu != GPUType.CPU else None
             print("Keep warm start", gpu)
-            model.with_options(gpu=gpu)(gpu=body.gpu.value).keep_warm(body.warm_pool_size)
+            model.with_options(gpu=gpu)(gpu=body.gpu.value).keep_warm(
+                body.warm_pool_size
+            )
         else:
             model().keep_warm(body.warm_pool_size)
     except Exception as e:
@@ -414,6 +418,7 @@ async def stop_app(item: StopAppItem):
 machine_logs_cache = {}
 import_failed_logs_cache = {}
 
+
 async def listen_logs(machine_id):
     process = await asyncio.subprocess.create_subprocess_shell(
         "modal app logs " + machine_id,
@@ -587,7 +592,7 @@ async def build_logic(item: BuildMachineItem):
 
         # with open(f"{folder_path}/config.py", "w") as f:
         #     f.write("config = " + json.dumps(config))
-        
+
         with open(f"{folder_path}/config.py", "w") as f:
             f.write("config = {\n")
             for key, value in config.items():
@@ -694,7 +699,9 @@ async def build_logic(item: BuildMachineItem):
                         machine_logs.append({"logs": l, "timestamp": time.time()})
 
                         if "(IMPORT FAILED)" in l:
-                            import_failed_logs.append({"logs": l, "timestamp": time.time()})
+                            import_failed_logs.append(
+                                {"logs": l, "timestamp": time.time()}
+                            )
 
                         if l.startswith("APPID="):
                             app_id = l.split("=")[1].strip()
@@ -791,14 +798,14 @@ async def build_logic(item: BuildMachineItem):
                 app_id = info["value"]
             elif info["type"] == "URL":
                 url = info["value"]
-                
+
         try:
             app = modal.App.lookup(item.name)
             # print("my legit app id", app.app_id)
-            
+
             if app.app_id:
                 app_id = app.app_id
-            
+
         except Exception as e:
             print("error", e)
 
@@ -841,8 +848,6 @@ async def build_logic(item: BuildMachineItem):
 
         if machine_id in import_failed_logs_cache:
             del import_failed_logs_cache[machine_id]
-
-        import shutil
 
         # Remove the copied folder
         if os.path.exists(folder_path):
@@ -937,7 +942,9 @@ async def build_logic(item: BuildMachineItem):
                     machine_version=BUILDER_VERSION,
                     build_log=json.dumps(machine_logs),
                     modal_app_id=app_id,
-                    import_failed_logs=json.dumps(import_failed_logs) if not item.skip_static_assets else None,
+                    import_failed_logs=json.dumps(import_failed_logs)
+                    if not item.skip_static_assets
+                    else None,
                 )
                 .returning(Machine)
             )
@@ -945,6 +952,12 @@ async def build_logic(item: BuildMachineItem):
             await db.commit()
             machine = result.scalar_one()
             await db.refresh(machine)
+
+            if machine.keep_warm > 0:
+                set_machine_always_on(
+                    machine.id,
+                    KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu),
+                )
     else:
         async with get_db_context() as db:
             update_stmt = (
