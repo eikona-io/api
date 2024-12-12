@@ -150,7 +150,7 @@ async def search_civitai(search: str):
                             if file.get("sizeKB") is not None
                             else None
                         )
-                        print(item)
+                        # print(item)
                         results.append(
                             ModelSearchQuery(
                                 name=f"{item['name']} {version['name']}",
