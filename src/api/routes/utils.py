@@ -268,12 +268,14 @@ def clean_up_outputs(outputs: List):
     # Iterate through the list in reverse to safely remove items
     for i in range(len(outputs) - 1, -1, -1):
         output = outputs[i]
-        if output.data and isinstance(output.data, dict):
+        if output.data:
             try:
                 WorkflowRunOutputModel.model_validate(output)
             except ValidationError:
                 logfire.warn("Invalid output", output=output)
                 outputs.pop(i)
+                
+    return outputs
 
 
 def post_process_outputs(outputs, user_settings):
