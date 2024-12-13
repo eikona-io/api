@@ -121,11 +121,11 @@ To authenticate your requests, include your API key in the `Authorization` heade
 """
 
 
-def custom_openapi():
-    if app.openapi_schema:
+def custom_openapi(with_code_samples: bool = True):
+    if app.openapi_schema and with_code_samples:
         return app.openapi_schema
     
-    if (os.getenv("ENV", "production").lower() == "production"):
+    if (with_code_samples and os.getenv("ENV", "production").lower() == "production"):
         # In development mode, fetch from Speakeasy
         import requests
         try:
@@ -158,6 +158,15 @@ def custom_openapi():
                 "scheme": "bearer",
             }
         }
+         
+        # openapi_schema["x-speakeasy-webhooks"] = {
+        #     "security": {
+        #         "type": "signature",
+        #         "name": "x-signature",
+        #         "encoding": "base64",
+        #         "algorithm": "hmac-sha256",
+        #     }
+        # }
 
     # Apply Bearer Auth security globally
     openapi_schema["security"] = [{"Bearer": []}]
@@ -245,6 +254,11 @@ async def scalar_html():
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
     )
+    
+    
+@app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
+async def openapi_json():
+    return JSONResponse(status_code=200, content=custom_openapi(with_code_samples=False))
 
 
 @app.get("/internal/openapi.json", include_in_schema=False)
