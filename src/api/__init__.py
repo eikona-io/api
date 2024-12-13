@@ -122,10 +122,12 @@ To authenticate your requests, include your API key in the `Authorization` heade
 
 
 def custom_openapi(with_code_samples: bool = True):
-    if app.openapi_schema and with_code_samples:
-        return app.openapi_schema
+    # if app.openapi_schema and with_code_samples:
+    #     return app.openapi_schema
     
-    if (with_code_samples and os.getenv("ENV", "production").lower() == "production"):
+    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    
+    if (fetch_from_speakeasy):
         # In development mode, fetch from Speakeasy
         import requests
         try:
