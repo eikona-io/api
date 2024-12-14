@@ -5,8 +5,8 @@ from typing import List, Optional
 from .types import WorkflowModel
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import UserIconData, fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
-from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion
+from .utils import UserIconData, clean_up_outputs, fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
+from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion, WorkflowRunOutput
 from .utils import get_user_settings, is_exceed_spend_limit
 from sqlalchemy import func, select as sa_select, distinct, and_, or_
 from sqlalchemy.orm import joinedload, load_only, contains_eager
@@ -48,73 +48,22 @@ async def get_workflows(
     raw_query = text("""
     WITH RECURSIVE search_param(term) AS (
         SELECT lower(:search)
-    ),
-    filtered_workflows AS (
-        SELECT id
-        FROM comfyui_deploy.workflows
-        WHERE deleted = false AND ((CAST(:org_id AS TEXT) IS NOT NULL AND org_id = CAST(:org_id AS TEXT))
-            OR (CAST(:org_id AS TEXT) IS NULL AND org_id IS NULL AND user_id = CAST(:user_id AS TEXT)))
-            AND (CAST(:search AS TEXT) IS NULL OR lower(name) LIKE '%' || (SELECT term FROM search_param) || '%')
-    ),
-    latest_versions AS (
-        SELECT 
-            workflow_id,
-            MAX(version) AS max_version
-        FROM 
-            comfyui_deploy.workflow_versions
-        WHERE workflow_id IN (SELECT id FROM filtered_workflows)
-        GROUP BY 
-            workflow_id
-    ),
-    latest_workflow_runs AS (
-        SELECT wr.workflow_id, wr.id, wr.created_at, wr.status
-        FROM comfyui_deploy.workflow_runs wr
-        INNER JOIN (
-            SELECT workflow_id, MAX(created_at) as max_created_at
-            FROM comfyui_deploy.workflow_runs
-            WHERE workflow_id IN (SELECT id FROM filtered_workflows)
-            GROUP BY workflow_id
-        ) latest ON wr.workflow_id = latest.workflow_id AND wr.created_at = latest.max_created_at
-    ),
-    recent_runs AS (
-        SELECT 
-            wr.workflow_id,
-            wr.created_at AS latest_run_at,
-            wr.status,
-            wro.data AS latest_output
-        FROM latest_workflow_runs wr
-        LEFT JOIN LATERAL (
-            SELECT data
-            FROM comfyui_deploy.workflow_run_outputs
-            WHERE run_id = wr.id
-            ORDER BY created_at DESC
-            LIMIT 1
-        ) wro ON true
     )
     SELECT
         wf.id AS id,
         wf.name AS name, 
         wf.created_at AS created_at, 
         wf.updated_at AS updated_at, 
-        COALESCE(vr.version, 0) AS latest_version, 
         users.name AS user_name,
-        users.id AS user_id,
-        rr.latest_run_at,
-        rr.status,
-        rr.latest_output
+        users.id AS user_id
     FROM 
         comfyui_deploy.workflows AS wf
-    LEFT JOIN 
-        latest_versions ON wf.id = latest_versions.workflow_id
-    LEFT JOIN 
-        comfyui_deploy.workflow_versions AS vr 
-            ON wf.id = vr.workflow_id AND vr.version = latest_versions.max_version
     INNER JOIN 
         comfyui_deploy.users AS users ON users.id = wf.user_id
-    LEFT JOIN 
-        recent_runs AS rr ON wf.id = rr.workflow_id
     WHERE 
-        wf.id IN (SELECT id FROM filtered_workflows)
+        wf.deleted = false AND ((CAST(:org_id AS TEXT) IS NOT NULL AND wf.org_id = CAST(:org_id AS TEXT))
+            OR (CAST(:org_id AS TEXT) IS NULL AND org_id IS NULL AND wf.user_id = CAST(:user_id AS TEXT)))
+            AND (CAST(:search AS TEXT) IS NULL OR lower(wf.name) LIKE '%' || (SELECT term FROM search_param) || '%')
     ORDER BY 
         wf.pinned DESC,
         wf.updated_at DESC
@@ -153,7 +102,7 @@ async def get_workflows(
     user_icons = {str(user_id): icon_data for user_id, icon_data in zip(unique_user_ids, user_icon_results)}
 
     for workflow in workflows:
-        if workflow["latest_output"]:
+        if "latest_output" in workflow and workflow["latest_output"]:
             post_process_output_data(workflow["latest_output"], user_settings)
         user_icon = user_icons.get(str(workflow["user_id"]))
         workflow["user_icon"] = user_icon.image_url if user_icon else None
