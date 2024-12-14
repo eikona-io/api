@@ -268,6 +268,11 @@ def clean_up_outputs(outputs: List):
     # Iterate through the list in reverse to safely remove items
     for i in range(len(outputs) - 1, -1, -1):
         output = outputs[i]
+        if output.data is None or output.data == []:  # Check for None or empty list
+            logfire.warn("Empty output data", output=output)
+            outputs.pop(i)
+            continue
+            
         if output.data:
             try:
                 WorkflowRunOutputModel.model_validate(output)
