@@ -24,7 +24,7 @@ from sqlalchemy import func
 from datetime import datetime, timedelta, timezone
 from fastapi.responses import JSONResponse
 from pprint import pprint
-
+from sqlalchemy import desc
 from sqlalchemy import text
 
 
@@ -35,6 +35,7 @@ from api.models import (
     WorkflowRun,
     WorkflowRunWithExtra,
     WorkflowVersion,
+    WorkflowRunOutput,
 )
 from api.database import get_db
 import logging
@@ -105,6 +106,55 @@ async def get_all_runs(
         runs_data.append(run_dict)
 
     return JSONResponse(content=runs_data)
+
+
+@router.get("/workflow/{workflow_id}/run/latest", response_model=List[WorkflowRunModel])
+async def get_latest_run(
+    request: Request,
+    workflow_id: str,
+    limit: int = 1,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    user_settings = await get_user_settings(request, db)
+
+    # First get the latest run ID
+    latest_run_query = (
+        select(WorkflowRun)
+        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
+        .where(WorkflowRun.workflow_id == workflow_id)
+        .where(Workflow.deleted == False)
+        .apply_org_check(request)
+        .order_by(WorkflowRun.created_at.desc())
+        .limit(1)
+    )
+
+    result = await db.execute(latest_run_query)
+    latest_run = result.scalar_one_or_none()
+
+    if not latest_run:
+        return []
+
+    # Then fetch only the outputs for this run
+    outputs_query = (
+        select(WorkflowRunOutput)
+        .where(WorkflowRunOutput.run_id == latest_run.id)
+        .where(text("data ?| array['images', 'gifs', 'mesh']"))
+        .order_by(desc("created_at"))
+        .limit(1)
+    )
+
+    outputs_result = await db.execute(outputs_query)
+    outputs = outputs_result.scalars().all()
+
+    # Process the outputs
+    if outputs:
+        post_process_outputs(outputs, user_settings)
+        
+    result = latest_run.to_dict()
+    result["outputs"] = [output.to_dict() for output in outputs]
+
+    return JSONResponse(content=result)
 
 
 @router.get(
