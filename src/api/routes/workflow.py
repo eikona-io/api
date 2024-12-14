@@ -154,7 +154,7 @@ async def get_latest_run(
     result = latest_run.to_dict()
     result["outputs"] = [output.to_dict() for output in outputs]
 
-    return JSONResponse(content=result)
+    return JSONResponse(content=[result])
 
 
 @router.get(
