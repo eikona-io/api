@@ -53,16 +53,23 @@ async def get_all_runs(
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
+    with_outputs: bool = True,
 ):
     user_settings = await get_user_settings(request, db)
 
+    # Create base query options
+    query_options = [
+        joinedload(WorkflowRun.workflow),
+        joinedload(WorkflowRun.version),
+    ]
+    
+    # Conditionally add outputs loading
+    if with_outputs:
+        query_options.append(joinedload(WorkflowRun.outputs))
+
     query = (
         select(WorkflowRunWithExtra)
-        .options(
-            joinedload(WorkflowRun.outputs),
-            joinedload(WorkflowRun.workflow),
-            joinedload(WorkflowRun.version),
-        )
+        .options(*query_options)  # Unpack the options list
         .outerjoin(
             WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
         )
@@ -83,9 +90,10 @@ async def get_all_runs(
         ensure_run_timeout(run)
 
     # Loop through each run and check its outputs
-    for run in runs:
-        if run.outputs:
-            post_process_outputs(run.outputs, user_settings)
+    if with_outputs:  # Only process outputs if they were loaded
+        for run in runs:
+            if run.outputs:
+                post_process_outputs(run.outputs, user_settings)
 
     runs_data = []
     for run in runs:
