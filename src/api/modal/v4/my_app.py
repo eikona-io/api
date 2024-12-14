@@ -102,7 +102,7 @@ if base_docker_image is not None and base_docker_image != "":
 
 # Install all custom nodes
 if docker_commands is not None:
-    print("docker_commands: ", docker_commands)
+    # print("docker_commands: ", docker_commands)
     for commands in docker_commands:
         dockerfile_image = dockerfile_image.dockerfile_commands(
             commands,
