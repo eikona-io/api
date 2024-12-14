@@ -333,9 +333,9 @@ async def get_deployments(
     deployments = deployments.scalars().all()
 
     if not deployments:
-        raise HTTPException(
+        return JSONResponse(
             status_code=404,
-            detail="Deployments not found or you don't have access to it",
+            content={"detail": "Deployments not found or you don't have access to it"}
         )
 
     deployments_data = [deployment.to_dict() for deployment in deployments]
