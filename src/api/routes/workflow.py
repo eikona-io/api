@@ -1,6 +1,9 @@
 import asyncio
 import json
 import os
+from uuid import UUID
+
+from pydantic import BaseModel
 
 from .workflows import CustomJSONEncoder
 from .utils import (
@@ -45,6 +48,141 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Workflow"])
+
+class WorkflowUpdateModel(BaseModel):
+    name: Optional[str] = None
+    selected_machine_id: Optional[UUID] = None
+    pinned: Optional[bool] = None
+    deleted: Optional[bool] = None
+    
+    class Config:
+        from_attributes = True
+
+
+@router.patch("/workflow/{workflow_id}", response_model=WorkflowModel)
+async def update_workflow(
+    request: Request,
+    workflow_id: str,
+    body: WorkflowModel,
+    db: AsyncSession = Depends(get_db),
+):
+    # Get the workflow
+    query = (
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .where(Workflow.deleted == False)
+        .apply_org_check(request)
+    )
+    
+    result = await db.execute(query)
+    workflow = result.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Update workflow fields if provided in request body
+    if body.name is not None:
+        workflow.name = body.name
+    if body.selected_machine_id is not None:
+        workflow.selected_machine_id = body.selected_machine_id
+    if body.pinned is not None:
+        workflow.pinned = body.pinned
+    if body.deleted is not None:
+        workflow.deleted = body.deleted
+        
+    workflow.updated_at = datetime.now(timezone.utc)
+    
+    await db.commit()
+
+    return workflow
+
+@router.delete("/workflow/{workflow_id}")
+async def delete_workflow(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    # Get the workflow
+    query = (
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .where(Workflow.deleted == False)
+        .apply_org_check(request)
+    )
+    
+    result = await db.execute(query)
+    workflow = result.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Soft delete by setting deleted flag
+    workflow.deleted = True
+    workflow.updated_at = datetime.now(timezone.utc)
+    
+    await db.commit()
+
+    return {"message": "Workflow deleted successfully"}
+
+
+@router.post("/workflow/{workflow_id}/clone")
+async def clone_workflow(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    # Get the original workflow
+    query = (
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .where(Workflow.deleted == False)
+        .apply_org_check(request)
+    )
+    
+    result = await db.execute(query)
+    workflow = result.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Get the latest workflow version
+    version_query = (
+        select(WorkflowVersion)
+        .where(WorkflowVersion.workflow_id == workflow_id)
+        .order_by(WorkflowVersion.created_at.desc())
+    )
+    
+    version_result = await db.execute(version_query)
+    workflow_version = version_result.scalar_one_or_none()
+
+    # Create new workflow as a clone
+    new_workflow = Workflow(
+        name=f"{workflow.name} (Cloned)",
+        org_id=workflow.org_id,
+        user_id=workflow.user_id,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    db.add(new_workflow)
+    await db.flush()
+
+    # Create new version for cloned workflow if original had a version
+    if workflow_version:
+        new_version = WorkflowVersion(
+            workflow_id=new_workflow.id,
+            workflow=workflow_version.workflow,
+            workflow_api=workflow_version.workflow_api,
+            snapshot=workflow_version.snapshot,
+            dependencies=workflow_version.dependencies,
+            created_at=datetime.now(timezone.utc)
+        )
+        db.add(new_version)
+
+    await db.commit()
+
+    return new_workflow
+
+
 
 
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
