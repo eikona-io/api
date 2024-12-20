@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel
 
@@ -49,12 +49,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Workflow"])
 
+
 class WorkflowUpdateModel(BaseModel):
     name: Optional[str] = None
     selected_machine_id: Optional[UUID] = None
     pinned: Optional[bool] = None
     deleted: Optional[bool] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -73,7 +74,7 @@ async def update_workflow(
         .where(Workflow.deleted == False)
         .apply_org_check(request)
     )
-    
+
     result = await db.execute(query)
     workflow = result.scalar_one_or_none()
 
@@ -89,12 +90,13 @@ async def update_workflow(
         workflow.pinned = body.pinned
     if body.deleted is not None:
         workflow.deleted = body.deleted
-        
+
     workflow.updated_at = datetime.now(timezone.utc)
-    
+
     await db.commit()
 
     return workflow
+
 
 @router.delete("/workflow/{workflow_id}")
 async def delete_workflow(
@@ -109,7 +111,7 @@ async def delete_workflow(
         .where(Workflow.deleted == False)
         .apply_org_check(request)
     )
-    
+
     result = await db.execute(query)
     workflow = result.scalar_one_or_none()
 
@@ -119,7 +121,7 @@ async def delete_workflow(
     # Soft delete by setting deleted flag
     workflow.deleted = True
     workflow.updated_at = datetime.now(timezone.utc)
-    
+
     await db.commit()
 
     return {"message": "Workflow deleted successfully"}
@@ -138,7 +140,7 @@ async def clone_workflow(
         .where(Workflow.deleted == False)
         .apply_org_check(request)
     )
-    
+
     result = await db.execute(query)
     workflow = result.scalar_one_or_none()
 
@@ -151,7 +153,7 @@ async def clone_workflow(
         .where(WorkflowVersion.workflow_id == workflow_id)
         .order_by(WorkflowVersion.created_at.desc())
     )
-    
+
     version_result = await db.execute(version_query)
     workflow_version = version_result.scalar_one_or_none()
 
@@ -161,7 +163,7 @@ async def clone_workflow(
         org_id=workflow.org_id,
         user_id=workflow.user_id,
         created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc)
+        updated_at=datetime.now(timezone.utc),
     )
     db.add(new_workflow)
     await db.flush()
@@ -174,15 +176,13 @@ async def clone_workflow(
             workflow_api=workflow_version.workflow_api,
             snapshot=workflow_version.snapshot,
             dependencies=workflow_version.dependencies,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
         db.add(new_version)
 
     await db.commit()
 
     return new_workflow
-
-
 
 
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
@@ -201,7 +201,7 @@ async def get_all_runs(
         joinedload(WorkflowRun.workflow),
         joinedload(WorkflowRun.version),
     ]
-    
+
     # Conditionally add outputs loading
     if with_outputs:
         query_options.append(joinedload(WorkflowRun.outputs))
@@ -288,7 +288,7 @@ async def get_latest_run(
     # Process the outputs
     if outputs:
         post_process_outputs(outputs, user_settings)
-        
+
     result = latest_run.to_dict()
     result["outputs"] = [output.to_dict() for output in outputs]
 
@@ -342,13 +342,20 @@ async def get_versions(
     )
 
     # Process results - create dictionary by pairing user IDs with their icon data
-    user_icons = {str(user_id): icon_data for user_id, icon_data in zip(unique_user_ids, results)}
+    user_icons = {
+        str(user_id): icon_data for user_id, icon_data in zip(unique_user_ids, results)
+    }
 
     if not runs:
         return []
 
     runs_data = [
-        {**run.to_dict(), "user_icon": user_icons.get(run.user_id).image_url if user_icons.get(run.user_id) else None}
+        {
+            **run.to_dict(),
+            "user_icon": user_icons.get(run.user_id).image_url
+            if user_icons.get(run.user_id)
+            else None,
+        }
         for run in runs
     ]
 
@@ -531,9 +538,106 @@ async def get_deployments(
     if not deployments:
         return JSONResponse(
             status_code=404,
-            content={"detail": "Deployments not found or you don't have access to it"}
+            content={"detail": "Deployments not found or you don't have access to it"},
         )
 
     deployments_data = [deployment.to_dict() for deployment in deployments]
 
     return JSONResponse(content=deployments_data)
+
+
+class WorkflowCreateRequest(BaseModel):
+    name: str
+    workflow_json: str
+    workflow_api: Optional[str] = None
+    machine_id: Optional[str] = None
+
+
+@router.post("/workflow", response_model=WorkflowModel)
+async def create_workflow(
+    request: Request,
+    body: WorkflowCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    # Check for authorized user
+    try:
+        user_id = request.state.current_user["user_id"]
+    except (AttributeError, KeyError):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized access. "}
+        )
+    
+    # Validate JSON first
+    try:
+        json.loads(body.workflow_json)
+        if body.workflow_api:
+            json.loads(body.workflow_api)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON format"})
+
+    # Check if machine exists
+    if body.machine_id:
+        machine = await db.execute(
+            select(Machine)
+            .where(Machine.id == body.machine_id)
+            .apply_org_check(request)
+        )
+        machine = machine.scalar_one_or_none()
+        if not machine:
+            return JSONResponse(status_code=404, content={"error": "Machine not found"})
+
+    try:
+        # Your existing workflow creation code...
+        org_id = (
+            request.state.current_user["org_id"]
+            if "org_id" in request.state.current_user
+            else None
+        )
+
+        new_workflow = Workflow(
+            id=uuid4(),
+            user_id=user_id,
+            org_id=org_id,
+            name=body.name,
+            selected_machine_id=UUID(body.machine_id) if body.machine_id else None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        db.add(new_workflow)
+        await db.flush()
+        workflow_id = new_workflow.id
+
+        # Create workflow version
+        new_version = WorkflowVersion(
+            id=uuid4(),
+            workflow_id=workflow_id,
+            workflow=json.loads(body.workflow_json),  # Convert string to dict
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            user_id=user_id,
+            version=1,
+            comment="initial version",
+        )
+        
+        if body.workflow_api:
+            new_version.workflow_api = json.loads(body.workflow_api)
+
+        db.add(new_version)
+
+        await db.commit()
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "workflow_id": str(workflow_id),
+                "machine_id": body.machine_id if body.machine_id else None,
+            },
+        )
+
+    except Exception as e:
+        await db.rollback()
+        return JSONResponse(
+            status_code=500, content={"error": f"Failed to create workflow: {str(e)}"}
+        )
