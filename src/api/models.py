@@ -329,8 +329,8 @@ class Deployment(SerializableMixin, Base):
         ),
         nullable=False,
     )
-    created_at = Column(DateTime(timezone=True), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     machine = relationship("Machine")
     version = relationship("WorkflowVersion")
