@@ -47,9 +47,12 @@ PRICING_PLAN_MAPPING = {
 
 PRICING_PLAN_REVERSE_MAPPING = {v: k for k, v in PRICING_PLAN_MAPPING.items()}
 
-async def get_current_plan(db: AsyncSession, user_id: str, org_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+
+async def get_current_plan(
+    db: AsyncSession, user_id: str, org_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """Get the current subscription plan for a user/org"""
-    
+
     if not user_id:
         return None
 
@@ -57,7 +60,7 @@ async def get_current_plan(db: AsyncSession, user_id: str, org_id: Optional[str]
     if os.getenv("DISABLE_STRIPE") == "true":
         return {
             "stripe_customer_id": "id",
-            "user_id": user_id, 
+            "user_id": user_id,
             "org_id": org_id,
             "plan": "enterprise",
             "status": "active",
@@ -67,26 +70,31 @@ async def get_current_plan(db: AsyncSession, user_id: str, org_id: Optional[str]
             "created_at": None,
             "updated_at": None,
             "subscription_item_api_id": "id",
-            "subscription_item_plan_id": "id", 
+            "subscription_item_plan_id": "id",
             "trial_end": 0,
-            "last_invoice_timestamp": None
+            "last_invoice_timestamp": None,
         }
 
     # Query subscription status table
     # Note: This is a simplified version - you'll need to adapt the actual DB query
     # based on your SQLAlchemy models and schema
-    query = select(SubscriptionStatus).where(
-        and_(
-            SubscriptionStatus.status != "deleted",
-            or_(
-                and_(
-                    SubscriptionStatus.org_id.is_(None),
-                    SubscriptionStatus.user_id == user_id
-                ) if not org_id else
-                SubscriptionStatus.org_id == org_id
+    query = (
+        select(SubscriptionStatus)
+        .where(
+            and_(
+                SubscriptionStatus.status != "deleted",
+                or_(
+                    and_(
+                        SubscriptionStatus.org_id.is_(None),
+                        SubscriptionStatus.user_id == user_id,
+                    )
+                    if not org_id
+                    else SubscriptionStatus.org_id == org_id
+                ),
             )
         )
-    ).order_by(SubscriptionStatus.created_at.desc())
+        .order_by(SubscriptionStatus.created_at.desc())
+    )
 
     result = await db.execute(query)
     subscription = result.scalar_one_or_none()
@@ -106,32 +114,34 @@ async def get_current_plan(db: AsyncSession, user_id: str, org_id: Optional[str]
             "subscription_item_api_id": subscription.subscription_item_api_id,
             "subscription_item_plan_id": subscription.subscription_item_plan_id,
             "trial_end": subscription.trial_end,
-            "last_invoice_timestamp": subscription.last_invoice_timestamp
+            "last_invoice_timestamp": subscription.last_invoice_timestamp,
         }
 
     return None
 
 
-async def get_stripe_plan(db: AsyncSession, user_id: str, org_id: str) -> Optional[Dict]:
+async def get_stripe_plan(
+    db: AsyncSession, user_id: str, org_id: str
+) -> Optional[Dict]:
     """Get the Stripe plan details for a user"""
     # First get the current plan (you'll need to implement this based on your DB schema)
     plan = await get_current_plan(db, user_id, org_id)
-    
+
     if not plan or not plan.get("subscription_id"):
         return None
-    
+
     try:
         stripe_plan = stripe.Subscription.retrieve(
-            plan["subscription_id"],
-            expand=["discounts"]
+            plan["subscription_id"], expand=["discounts"]
         )
         return stripe_plan
     except stripe.error.StripeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, Any]:
     """Get plans information including current subscription details"""
-    
+
     # Check if Stripe is disabled
     if os.getenv("DISABLE_STRIPE") == "true":
         return {
@@ -140,11 +150,11 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
             "prices": [os.getenv("STRIPE_PR_BUSINESS")],
             "amount": [100],
             "cancel_at_period_end": False,
-            "canceled_at": None
+            "canceled_at": None,
         }
 
     stripe_plan = await get_stripe_plan(db, user_id, org_id)
-    
+
     if not stripe_plan:
         return None
 
@@ -166,44 +176,50 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                 payment_issue_reason = "Your latest payment has failed. Update your payment method to continue this plan."
         except stripe.error.StripeError:
             pass
+        
+    print(stripe_plan)
 
     # Extract plans from stripe subscription
     plans = [
         PRICING_PLAN_REVERSE_MAPPING.get(item.price.id)
-        for item in stripe_plan.items.data
+        for item in stripe_plan.get("items", {}).get("data", [])
         if PRICING_PLAN_REVERSE_MAPPING.get(item.price.id)
     ]
 
     # Calculate charges with discounts
     charges = []
-    for item in stripe_plan.items.data:
-        base_amount = item.price.unit_amount or 0
+    for item in stripe_plan.get("items", {}).get("data", []):
+        base_amount = item.get("price", {}).get("unit_amount", 0)
         final_amount = base_amount
 
         # Apply subscription-level discounts
-        if hasattr(stripe_plan, 'discounts') and stripe_plan.discounts:
+        if hasattr(stripe_plan, "discounts") and stripe_plan.discounts:
             for discount in stripe_plan.discounts:
                 if isinstance(discount, str):
                     continue
 
                 if discount.coupon.percent_off:
-                    final_amount = final_amount * (1 - discount.coupon.percent_off / 100)
+                    final_amount = final_amount * (
+                        1 - discount.coupon.percent_off / 100
+                    )
                 elif discount.coupon.amount_off:
                     total_items = len(stripe_plan.items.data)
-                    final_amount = max(0, final_amount - (discount.coupon.amount_off / total_items))
+                    final_amount = max(
+                        0, final_amount - (discount.coupon.amount_off / total_items)
+                    )
 
         charges.append(round(final_amount))
 
     return {
         "plans": plans,
-        "names": [item.plan.nickname for item in stripe_plan.items.data],
-        "prices": [item.price.id for item in stripe_plan.items.data],
-        "amount": [item.price.unit_amount for item in stripe_plan.items.data],
+        "names": [item.get("plan", {}).get("nickname", "") for item in stripe_plan.get("items", {}).get("data", [])],
+        "prices": [item.get("price", {}).get("id", "") for item in stripe_plan.get("items", {}).get("data", [])],
+        "amount": [item.get("price", {}).get("unit_amount", 0) for item in stripe_plan.get("items", {}).get("data", [])],
         "charges": charges,
         "cancel_at_period_end": stripe_plan.cancel_at_period_end,
         "canceled_at": stripe_plan.canceled_at,
         "payment_issue": payment_issue,
-        "payment_issue_reason": payment_issue_reason
+        "payment_issue_reason": payment_issue_reason,
     }
 
 
@@ -238,7 +254,6 @@ async def get_workflow_count(db: AsyncSession, request: Request) -> int:
     return result.scalar() or 0
 
 
-
 @router.get("/platform/plan")
 async def get_api_plan(
     request: Request,
@@ -247,7 +262,7 @@ async def get_api_plan(
     # Get authenticated user info
     user_id = request.state.current_user.get("user_id")
     org_id = request.state.current_user.get("org_id")
-    
+
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -256,6 +271,14 @@ async def get_api_plan(
     machine_count = await get_machine_count(db, request)
     workflow_count = await get_workflow_count(db, request)
     user_settings = await get_user_settings_util(request, db)
+
+    if plans is None:
+        raise HTTPException(status_code=400, detail="Payment issue - No plans found")
+
+    if plans.get("payment_issue"):
+        raise HTTPException(
+            status_code=400, detail="Payment issue - " + plans.get("payment_issue_reason")
+        )
 
     # Check if user has subscription
     has_subscription = any(
@@ -283,7 +306,9 @@ async def get_api_plan(
 
     # Use updated limits if available
     effective_machine_limit = max(user_settings.machine_limit or 0, machine_max_count)
-    effective_workflow_limit = max(user_settings.workflow_limit or 0, workflow_max_count)
+    effective_workflow_limit = max(
+        user_settings.workflow_limit or 0, workflow_max_count
+    )
 
     machine_limited = machine_count >= effective_machine_limit
     workflow_limited = workflow_count >= effective_workflow_limit

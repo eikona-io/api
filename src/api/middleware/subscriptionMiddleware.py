@@ -48,7 +48,11 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
         redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
-        self.redis = Redis(url=redis_url, token=redis_token)
+        if redis_token is None:
+            print("Redis token is None", redis_url)
+            self.redis = Redis(url="http://localhost:8079", token="example_token")
+        else:
+            self.redis = Redis(url=redis_url, token=redis_token)
         self.disable_stripe = os.getenv("DISABLE_STRIPE", "false").lower() == "true"
 
     async def dispatch(self, request: Request, call_next):
