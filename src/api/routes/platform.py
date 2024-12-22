@@ -39,13 +39,25 @@ stripe.api_key = os.getenv("STRIPE_API_KEY")
 
 # Define pricing plan mappings similar to TypeScript
 PRICING_PLAN_MAPPING = {
-    "creator": "price_id_for_creator",
-    "pro": "price_id_for_pro",
-    "business": "price_id_for_business",
-    # Add other plans as needed
+    "ws_basic": os.getenv("STRIPE_PR_WS_BASIC"),
+    "ws_pro": os.getenv("STRIPE_PR_WS_PRO"),
+    "pro": os.getenv("STRIPE_PR_PRO"),
+    "basic": os.getenv("STRIPE_PR_BASIC"),
+    "creator": os.getenv("STRIPE_PR_ENTERPRISE"),
+    "business": os.getenv("STRIPE_PR_BUSINESS"),
 }
 
-PRICING_PLAN_REVERSE_MAPPING = {v: k for k, v in PRICING_PLAN_MAPPING.items()}
+PRICING_PLAN_NAMES = {
+    "ws_basic": "Workspace Basic",
+    "ws_pro": "Workspace Pro",
+    "pro": "API Pro (Early Adopter)",
+    "creator": "API Creator (Early Adopter)",
+    "business": "API Business",
+    "basic": "API Basic",
+}
+
+# Update reverse mapping to use actual Stripe price IDs
+PRICING_PLAN_REVERSE_MAPPING = {v: k for k, v in PRICING_PLAN_MAPPING.items() if v is not None}
 
 
 async def get_current_plan(
