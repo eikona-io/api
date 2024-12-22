@@ -410,12 +410,14 @@ async def delete_machine(
 
 class CustomMachineModel(BaseModel):
     name: str
+    type: MachineType
     endpoint: str
     auth_token: Optional[str]
 
 
 class UpdateCustomMachineModel(BaseModel):
     name: Optional[str]
+    type: Optional[MachineType]
     endpoint: Optional[str]
     auth_token: Optional[str]
 
@@ -433,7 +435,7 @@ async def create_custom_machine(
     machine = Machine(
         name=machine.name,
         endpoint=machine.endpoint,
-        type=MachineType.CLASSIC,
+        type=machine.type,
         auth_token=machine.auth_token,
         user_id=user_id,
         org_id=org_id,
@@ -450,7 +452,7 @@ async def create_custom_machine(
 async def update_custom_machine(
     request: Request,
     machine_id: UUID,
-    machine: UpdateCustomMachineModel,
+    machine_update: UpdateCustomMachineModel,
     db: AsyncSession = Depends(get_db),
 ) -> MachineModel:
     machine = await db.execute(
@@ -460,7 +462,7 @@ async def update_custom_machine(
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    for key, value in machine.model_dump().items():
+    for key, value in machine_update.model_dump().items():
         if hasattr(machine, key) and value is not None:
             setattr(machine, key, value)
 
