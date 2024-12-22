@@ -454,7 +454,28 @@ DIRECTORY_TYPE = 2
 
 class NewRenameFileBody(BaseModel):
     filename: str
+    
+class AddFileInputNew(BaseModel):
+    url: str
+    filename: Optional[str]
+    folder_path: str
 
+
+@router.post("/file")
+async def add_file(
+    request: Request, 
+    body: AddFileInputNew,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Handle model file uploads from different sources (Civitai, HuggingFace, or generic URLs)"""
+    
+    if "civitai.com/models/" in body.url:
+        return await handle_civitai_model(request, body, db, background_tasks)
+    elif "huggingface.co/" in body.url:
+        return await handle_huggingface_model(request, body, db, background_tasks)
+    else:
+        return await handle_generic_model(request, body, db, background_tasks)
 
 @router.post("/file/{file_id}/rename")
 async def rename_file(
@@ -563,7 +584,7 @@ async def delete_file(
 
 
 # Used by v1 dashboard
-@router.post("/volume/rename_file")
+@router.post("/volume/rename_file", deprecated=True, include_in_schema=False)
 async def rename_file_old(request: Request, body: RenameFileBody):
     src_path = body.src_path
     new_filename = body.new_filename
@@ -616,7 +637,7 @@ async def rename_file_old(request: Request, body: RenameFileBody):
     }
 
 
-@router.post("/volume/rm")
+@router.post("/volume/rm", deprecated=True, include_in_schema=False)
 async def remove_file_old(request: Request, body: RemoveFileInput):
     try:
         volume = lookup_volume(body.volume_name)
@@ -753,8 +774,8 @@ async def handle_file_download(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.post("/volume/add_file")
-async def add_file(
+@router.post("/volume/add_file", deprecated=True, include_in_schema=False)
+async def add_file_old(
     request: Request,
     body: AddFileInput,
     background_tasks: BackgroundTasks,
@@ -770,29 +791,6 @@ async def add_file(
         db_model_id=body.db_model_id,
         background_tasks=background_tasks,
     )
-
-
-class AddFileInputNew(BaseModel):
-    url: str
-    filename: Optional[str]
-    folder_path: str
-
-
-@router.post("/file")
-async def add_file_new(
-    request: Request, 
-    body: AddFileInputNew,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
-):
-    """Handle model file uploads from different sources (Civitai, HuggingFace, or generic URLs)"""
-    
-    if "civitai.com/models/" in body.url:
-        return await handle_civitai_model(request, body, db, background_tasks)
-    elif "huggingface.co/" in body.url:
-        return await handle_huggingface_model(request, body, db, background_tasks)
-    else:
-        return await handle_generic_model(request, body, db, background_tasks)
 
 async def handle_generic_model(
     request: Request,
@@ -908,7 +906,8 @@ async def create_model_error_record(
     
     return new_model
 
-@router.post("/volume/file/{file_id}/retry")
+@router.post("/volume/file/{file_id}/retry", include_in_schema=False)
+@router.post("/file/{file_id}/retry")
 async def retry_download(
     request: Request,
     file_id: str,
@@ -1032,7 +1031,7 @@ def lookup_volume(volume_name: str, create_if_missing: bool = False):
         raise Exception(f"Can't find Volume: {e}")
 
 
-@router.get("/volume/ls_full")
+@router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
 async def volume_full(
     request: Request, volume_name: str, create_if_missing: bool = False
 ):
@@ -1080,7 +1079,7 @@ async def volume_full(
         )
 
 
-@router.get("/volume/ls")
+@router.get("/volume/ls", include_in_schema=False)
 async def list_contents(request: Request, volume_name: str, path: str = "/"):
     try:
         volume = lookup_volume(volume_name)
@@ -1121,7 +1120,7 @@ class RequestModel(BaseModel):
     download_progress: Optional[float] = None
 
 
-@router.post("/volume/volume-upload")
+@router.post("/volume/volume-upload", include_in_schema=False)
 async def update_status(
     request: Request, body: RequestModel, db: AsyncSession = Depends(get_db)
 ):
@@ -1198,7 +1197,7 @@ class ListModelsInput(BaseModel):
     search: Optional[str] = None
 
 
-@router.get("/volume/list-models")
+@router.get("/volume/list-models", include_in_schema=False)
 async def list_models(request: Request, limit: int = 10, search: Optional[str] = None):
     api = HfApi()
     models = api.list_models(limit=limit, search=search)
@@ -1257,7 +1256,7 @@ async def list_models(request: Request, limit: int = 10, search: Optional[str] =
     return {"models": detailed_models}
 
 
-@router.get("/volume/get-model-info")
+@router.get("/volume/get-model-info", include_in_schema=False)
 async def get_model_info(request: Request, repo_id: str):
     api = HfApi()
     model_info = api.model_info(repo_id)
