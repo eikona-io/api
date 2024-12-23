@@ -9,6 +9,9 @@ from api.routes.utils import (
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
+from fastapi.responses import RedirectResponse
+import aiohttp
 
 router = APIRouter(
     tags=["Platform"],
@@ -342,3 +345,286 @@ async def get_api_plan(
         },
         "plans": plans,
     }
+
+
+@router.get("/platform/upgrade-plan")
+async def get_upgrade_plan(
+    request: Request,
+    plan: str,
+    coupon: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get upgrade or new plan details with proration calculations"""
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # Get current stripe plan
+    stripe_plan = await get_stripe_plan(db, user_id, org_id)
+    if not stripe_plan:
+        return None
+
+    # Find workspace and API plans
+    ws_plan = next(
+        (item for item in stripe_plan.get("items", {}).get("data", []) 
+         if item.get("price", {}).get("id") in [PRICING_PLAN_MAPPING["ws_basic"], PRICING_PLAN_MAPPING["ws_pro"]]),
+        None
+    )
+    
+    api_plan = next(
+        (item for item in stripe_plan.get("items", {}).get("data", []) 
+         if item.get("price", {}).get("id") in [
+             PRICING_PLAN_MAPPING["creator"],
+             PRICING_PLAN_MAPPING["pro"],
+             PRICING_PLAN_MAPPING["basic"],
+             PRICING_PLAN_MAPPING["business"]
+         ]),
+        None
+    )
+
+    # Determine conflicting plan
+    conflicting_plan = ws_plan if not plan.startswith("ws_") else api_plan
+
+    # Get target price ID
+    target_price_id = PRICING_PLAN_MAPPING.get(plan)
+    if not target_price_id:
+        raise HTTPException(status_code=400, detail="Invalid plan type")
+
+    # Check if plan already exists
+    has_target_price = any(item.get("price", {}).get("id") == target_price_id for item in stripe_plan.get("items", {}).get("data", []))
+    if has_target_price:
+        return None
+
+    # Handle coupon if provided
+    promotion_code_id = None
+    if coupon:
+        try:
+            promotion_codes = stripe.PromotionCode.list(code=coupon, limit=1)
+            if promotion_codes.data:
+                promotion_code_id = promotion_codes.data[0].id
+            else:
+                raise HTTPException(status_code=400, detail="Invalid coupon")
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        # Calculate proration
+        if conflicting_plan:
+            return stripe.Invoice.upcoming(
+                subscription=stripe_plan.id,
+                subscription_details={
+                    "proration_behavior": "always_invoice",
+                    "items": [
+                        {"id": conflicting_plan.id, "deleted": True},
+                        {"price": target_price_id, "quantity": 1},
+                    ],
+                },
+                discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+            )
+        else:
+            return stripe.Invoice.upcoming(
+                subscription=stripe_plan.id,
+                subscription_details={
+                    "proration_behavior": "always_invoice",
+                    "items": [
+                        {"price": target_price_id, "quantity": 1},
+                    ],
+                },
+                discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+            )
+
+    except stripe.error.StripeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return None
+
+
+async def get_clerk_user(user_id: str) -> dict:
+    """
+    Fetch user data from Clerk's Backend API
+    
+    Args:
+        user_id: The Clerk user ID
+        
+    Returns:
+        dict: User data from Clerk
+        
+    Raises:
+        HTTPException: If the API call fails
+    """
+    clerk_api_key = os.getenv("CLERK_SECRET_KEY")
+    headers = {
+        "Authorization": f"Bearer {clerk_api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers=headers
+        ) as response:
+            if response.status == 200:
+                return await response.json()
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Failed to fetch user data from Clerk: {await response.text()}"
+            )
+
+
+@router.get("/platform/checkout")
+async def stripe_checkout(
+    request: Request,
+    plan: str,
+    redirect_url: str = None,
+    trial: Optional[bool] = False,
+    coupon: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Handle Stripe checkout process"""
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+
+    if not user_id:
+        return {"url": redirect_url or "/"}
+    if not plan:
+        return {"url": redirect_url or "/pricing"}
+
+    # Get user data from Clerk
+    user_data = await get_clerk_user(user_id)
+    user_email = next(
+        (email["email_address"] for email in user_data["email_addresses"] 
+        if email["id"] == user_data["primary_email_address_id"]),
+        None
+    )
+    
+    # Get target price ID
+    target_price_id = PRICING_PLAN_MAPPING.get(plan)
+    if not target_price_id:
+        raise HTTPException(status_code=400, detail="Invalid plan type")
+
+    metadata = {
+        "userId": user_id,
+        "orgId": org_id,
+        "plan": plan,
+    }
+
+    line_items = [{"price": target_price_id, "quantity": 1}]
+
+    # Handle coupon if provided
+    promotion_code_id = None
+    if coupon:
+        try:
+            promotion_codes = stripe.PromotionCode.list(code=coupon, limit=1)
+            if promotion_codes.data:
+                promotion_code_id = promotion_codes.data[0].id
+        except stripe.error.StripeError as e:
+            print(f"Error fetching promotion code: {e}")
+
+    # Get current plan
+    current_plan = await get_current_plan(db, user_id, org_id)
+    
+    if current_plan and current_plan.get("subscription_id"):
+        try:
+            stripe_plan = stripe.Subscription.retrieve(current_plan["subscription_id"])
+
+            if stripe_plan and stripe_plan.status != "canceled":
+                # Check if user already has this plan
+                has_existing_plan = any(
+                    item.get("price", {}).get("id") == target_price_id for item in stripe_plan.get("items", {}).get("data", [])
+                )
+
+                if has_existing_plan:
+                    # Return portal URL instead of redirecting
+                    portal_session = stripe.billing_portal.Session.create(
+                        customer=stripe_plan.customer,
+                        return_url=redirect_url or "/pricing",
+                    )
+                    return {"url": portal_session.url}
+
+                # Handle plan updates
+                ws_plan = next(
+                    (item for item in stripe_plan.get("items", {}).get("data", []) 
+                     if item.get("price", {}).get("id") in [PRICING_PLAN_MAPPING["ws_basic"], PRICING_PLAN_MAPPING["ws_pro"]]),
+                    None
+                )
+                api_plan = next(
+                    (item for item in stripe_plan.get("items", {}).get("data", []) 
+                     if item.get("price", {}).get("id") in [
+                         PRICING_PLAN_MAPPING["creator"],
+                         PRICING_PLAN_MAPPING["pro"],
+                         PRICING_PLAN_MAPPING["basic"],
+                         PRICING_PLAN_MAPPING["business"]
+                     ]),
+                    None
+                )
+
+                conflicting_plan = ws_plan if not plan.startswith("ws_") else api_plan
+
+                if conflicting_plan:
+                    # Update subscription with plan replacement
+                    await stripe.Subscription.modify(
+                        current_plan["subscription_id"],
+                        proration_behavior="always_invoice",
+                        metadata=metadata,
+                        discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+                        items=[
+                            {"id": conflicting_plan.id, "deleted": True},
+                            {"price": target_price_id, "quantity": 1},
+                        ],
+                    )
+                else:
+                    # Add new plan to subscription
+                    await stripe.Subscription.modify(
+                        current_plan["subscription_id"],
+                        proration_behavior="always_invoice",
+                        metadata=metadata,
+                        discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+                        items=[{"price": target_price_id, "quantity": 1}],
+                    )
+
+                return {"url": redirect_url or "/"}
+
+        except stripe.error.StripeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    # Create new checkout session
+    try:
+        session_params = {
+            "success_url": redirect_url or "/",
+            "line_items": line_items,
+            "metadata": metadata,
+            "allow_promotion_codes": True,
+            "client_reference_id": org_id or user_id,
+            "customer_email": user_email,
+            "mode": "subscription",
+            "discounts": [{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+        }
+        
+        print(session_params)
+
+        if trial:
+            session_params["subscription_data"] = {
+                "trial_settings": {
+                    "end_behavior": {
+                        "missing_payment_method": "cancel"
+                    }
+                },
+                "trial_period_days": 7,
+                "metadata": metadata,
+            }
+        else:
+            session_params["subscription_data"] = {"metadata": metadata}
+
+        session = stripe.checkout.Session.create(**session_params)
+        
+        if session.url:
+            return {"url": session.url}
+
+    except stripe.error.StripeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    raise HTTPException(status_code=400, detail="Failed to create checkout session")
+
+
