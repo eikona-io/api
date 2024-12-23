@@ -628,3 +628,18 @@ async def stripe_checkout(
     raise HTTPException(status_code=400, detail="Failed to create checkout session")
 
 
+# GPU pricing per second with 10% margin
+GPU_PRICING = {
+    "T4": round(0.000164 * 1.1, 6),
+    "L4": round(0.000291 * 1.1, 6),
+    "A10G": round(0.000306 * 1.1, 6),
+    "A100": round(0.001036 * 1.1, 6),
+    "A100-80GB": round(0.001553 * 1.1, 6),
+    "H100": round(0.002125 * 1.1, 6),
+    "CPU": round(0.000038 * 1.1, 6),  # Price per core
+}
+
+@router.get("/platform/gpu-pricing")
+async def gpu_pricing():
+    """Return the GPU pricing table"""
+    return GPU_PRICING
