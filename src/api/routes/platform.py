@@ -1,14 +1,17 @@
 import os
+from pydantic import BaseModel
 from api.database import get_db
 from api.models import Machine, SubscriptionStatus, Workflow
 from api.routes.utils import (
     fetch_user_icon,
     get_user_settings as get_user_settings_util,
+    update_user_settings as update_user_settings_util,
     select,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional, Dict, Any
 
 router = APIRouter(
     tags=["Platform"],
@@ -22,6 +25,25 @@ async def get_user_settings(
 ):
     return await get_user_settings_util(request, db)
 
+class UserSettingsUpdateRequest(BaseModel):
+    api_version: str
+    custom_output_bucket: bool
+    hugging_face_token: Optional[str] = None
+    output_visibility: str
+    s3_access_key_id: Optional[str] = None
+    s3_secret_access_key: Optional[str] = None 
+    s3_bucket_name: Optional[str] = None
+    s3_region: Optional[str] = None
+    spend_limit: Optional[float] = None
+
+@router.patch("/platform/user-settings")
+async def update_user_settings(
+    request: Request,
+    body: UserSettingsUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    return await update_user_settings_util(request, db, body)
+
 
 @router.get("/user/{user_id}")
 async def get_user_meta(
@@ -30,7 +52,6 @@ async def get_user_meta(
     return await fetch_user_icon(user_id)
 
 
-from typing import Optional, Dict, Any
 import stripe
 from fastapi import HTTPException
 

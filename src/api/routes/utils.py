@@ -321,6 +321,55 @@ def post_process_output_data(data, user_settings):
     return data
 
 
+async def update_user_settings(request: Request, db: AsyncSession, body: any):
+    logging.info(f"Updating user settings: {request.state.current_user}")
+    # Check for authorized user
+    try:
+        user_id = request.state.current_user["user_id"]
+    except (AttributeError, KeyError):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized access. "}
+        )
+    # Clean out None values from the update request
+    update_data = {
+        key: value 
+        for key, value in body.model_dump().items() 
+        if value is not None
+    }
+
+    if not update_data:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No valid fields to update"}
+        )
+
+    # Get existing settings or create new
+    user_settings = await db.execute(
+        select(UserSettings).where(
+            UserSettings.user_id == user_id
+        ).apply_org_check(request)
+    )
+    user_settings = user_settings.scalar_one_or_none()
+
+    if user_settings is None:
+        # Create new settings if none exist
+        org_id = request.state.current_user.get("org_id")
+        user_settings = UserSettings(
+            user_id=user_id,
+            org_id=org_id
+        )
+        db.add(user_settings)
+    
+    # Update fields in the database
+    # This uses SQLAlchemy's setattr to update the model attributes
+    for key, value in update_data.items():
+        setattr(user_settings, key, value)
+
+    await db.commit()
+
+    return JSONResponse(content=user_settings.to_dict())
+
 async def get_user_settings(request: Request, db: AsyncSession):
     user_query = select(UserSettings).apply_org_check(request)
     user_settings = await db.execute(user_query)
