@@ -28,6 +28,10 @@ import logfire
 # import aiohttp
 # from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
 import json
+import aiohttp
+from urllib.parse import urlparse
+import re
+from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -145,17 +149,18 @@ async def upsert_model_to_db(
     if model_data.get("id") is not None:
         new_model.id = model_data.get("id")
 
-    with logfire.span("Upserting model", output = new_model):
+    with logfire.span("Upserting model", output=new_model):
         query = insert(ModelDB).values(new_model.to_dict())
         # update_dict = {c.name: c for c in query.excluded if not c.primary_key}
         query = query.on_conflict_do_update(
-            index_elements=["id"], set_={
+            index_elements=["id"],
+            set_={
                 "model_name": new_model.model_name,
                 "folder_path": new_model.folder_path,
                 "download_progress": 100,
                 "size": new_model.size,
                 "updated_at": datetime.now(),
-            }
+            },
         )
         # logger.info(f"model_name: {model_name}, size: {new_model.size}")
         await db.execute(query)
@@ -201,7 +206,7 @@ async def refresh_db_files_from_volume(
             select(ModelDB).where(ModelDB.deleted == False).apply_org_check(request)
         )
         existing_models = existing_models.scalars().all()
-        
+
         # Create a set of existing model names for faster lookup
         existing_model_names = {
             model.folder_path + "/" + model.model_name: model
@@ -227,11 +232,11 @@ async def refresh_db_files_from_volume(
                     #     f"item.path, {item.path}, {item.path not in existing_model_names}"
                     # )
                     # If the size is None, probably is old file, we should add it to the list
-                    if (
-                        item.path not in existing_model_names
-                        or (existing_model_names[item.path].size is None and item.size is not None)
+                    if item.path not in existing_model_names or (
+                        existing_model_names[item.path].size is None
+                        and item.size is not None
                     ):
-                        if (item.path in existing_model_names):
+                        if item.path in existing_model_names:
                             item.id = existing_model_names[item.path].id
                         filtered_contents.append(item)
             return filtered_contents
@@ -447,8 +452,140 @@ DIRECTORY_TYPE = 2
 # New routes and helper functions
 
 
-@router.post("/volume/rename_file")
-async def rename_file(request: Request, body: RenameFileBody):
+class NewRenameFileBody(BaseModel):
+    filename: str
+    
+class AddFileInputNew(BaseModel):
+    url: str
+    filename: Optional[str]
+    folder_path: str
+
+
+@router.post("/file")
+async def add_file(
+    request: Request, 
+    body: AddFileInputNew,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Handle model file uploads from different sources (Civitai, HuggingFace, or generic URLs)"""
+    
+    if "civitai.com/models/" in body.url:
+        return await handle_civitai_model(request, body, db, background_tasks)
+    elif "huggingface.co/" in body.url:
+        return await handle_huggingface_model(request, body, db, background_tasks)
+    else:
+        return await handle_generic_model(request, body, db, background_tasks)
+
+@router.post("/file/{file_id}/rename")
+async def rename_file(
+    request: Request,
+    body: NewRenameFileBody,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    new_filename = body.filename
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    volume_name = f"models_{org_id}" if org_id else f"models_{user_id}"
+
+    volume = Volume.from_name(volume_name)
+
+    model = (
+        await db.execute(
+            select(ModelDB)
+            .apply_org_check(request)
+            .where(ModelDB.id == file_id, ~ModelDB.deleted)
+        )
+    ).scalar_one()
+
+    src_path = os.path.join(model.folder_path, model.model_name)
+
+    # check src_path is a file
+    is_valid, error_message = await validate_file_path_aio(src_path, volume)
+    if not is_valid:
+        if "not found" in error_message:
+            raise HTTPException(status_code=404, detail=error_message)
+        else:
+            raise HTTPException(status_code=400, detail=error_message)
+
+    filename_valid = is_valid_filename(new_filename)
+    if not filename_valid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid filename{new_filename}, only allow characters, numerics, underscores, and hyphens.",
+        )
+
+    folder_path = os.path.dirname(src_path)
+    dst_path = os.path.join(folder_path, new_filename)
+
+    # Check if the destination file exists and if we can overwrite it
+    try:
+        contents = await volume.listdir.aio(dst_path)
+        if contents:
+            # if not overwrite:
+            raise HTTPException(
+                status_code=400,
+                detail="Destination file exists and overwrite is False.",
+            )
+    except Exception as _:
+        pass
+
+    print("src_path: ", src_path)
+    print("dst_path: ", dst_path)
+
+    await volume.copy_files.aio([src_path], dst_path)
+    await volume.remove_file.aio(src_path)
+
+    model.model_name = new_filename
+
+    await db.commit()
+
+    return model.to_dict()
+
+
+@router.delete("/file/{file_id}")
+async def delete_file(
+    request: Request, file_id: str, db: AsyncSession = Depends(get_db)
+):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    volume_name = f"models_{org_id}" if org_id else f"models_{user_id}"
+
+    model = (
+        await db.execute(
+            select(ModelDB)
+            .apply_org_check(request)
+            .where(ModelDB.id == file_id, ~ModelDB.deleted)
+        )
+    ).scalar_one()
+
+    volume = Volume.from_name(volume_name)
+    src_path = os.path.join(model.folder_path, model.model_name)
+
+    is_valid, error_message = await validate_file_path_aio(src_path, volume)
+    if not is_valid:
+        if "not found" in error_message:
+            raise HTTPException(status_code=404, detail=error_message)
+        else:
+            raise HTTPException(status_code=400, detail=error_message)
+
+    await volume.remove_file.aio(src_path)
+
+    model.deleted = True
+
+    await db.commit()
+
+    return model.to_dict()
+
+
+# Used by v1 dashboard
+@router.post("/volume/rename_file", deprecated=True, include_in_schema=False)
+async def rename_file_old(request: Request, body: RenameFileBody):
     src_path = body.src_path
     new_filename = body.new_filename
     overwrite = body.overwrite
@@ -500,8 +637,8 @@ async def rename_file(request: Request, body: RenameFileBody):
     }
 
 
-@router.post("/volume/rm")
-async def remove_file(request: Request, body: RemoveFileInput):
+@router.post("/volume/rm", deprecated=True, include_in_schema=False)
+async def remove_file_old(request: Request, body: RemoveFileInput):
     try:
         volume = lookup_volume(body.volume_name)
     except Exception as e:
@@ -637,8 +774,8 @@ async def handle_file_download(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.post("/volume/add_file")
-async def add_file(
+@router.post("/volume/add_file", deprecated=True, include_in_schema=False)
+async def add_file_old(
     request: Request,
     body: AddFileInput,
     background_tasks: BackgroundTasks,
@@ -655,8 +792,122 @@ async def add_file(
         background_tasks=background_tasks,
     )
 
+async def handle_generic_model(
+    request: Request,
+    data: AddFileInputNew, 
+    db: AsyncSession,
+    background_tasks: BackgroundTasks
+):
+    filename = data.filename or await get_filename_from_url(data.url)
+    if not filename:
+        model = await create_model_error_record(
+            request=request,
+            db=db,
+            url=data.url,
+            error_message="filename not found",
+            upload_type="download-url",
+            folder_path=data.folder_path
+        )
+        raise HTTPException(status_code=400, detail="No filename found")
 
-@router.post("/volume/file/{file_id}/retry")
+    # Check if file exists
+    await check_file_existence(filename, data.folder_path, data.url, "download-url", request, db)
+
+    volumes = await retrieve_model_volumes(request, db)
+    
+    model = await add_model_download_url(
+        request=request,
+        db=db,
+        upload_type="download-url",
+        model_name=filename,
+        url=data.url,
+        volume_id=volumes[0]["id"],
+        custom_path=data.folder_path
+    )
+
+    await handle_file_download(
+        request=request,
+        db=db,
+        download_url=data.url,
+        folder_path=data.folder_path,
+        filename=filename,
+        upload_type="download-url", 
+        db_model_id=str(model.id),
+        background_tasks=background_tasks
+    )
+
+    return {"message": "Generic model download started"}
+
+# Helper functions
+
+async def add_model_download_url(
+    request: Request,
+    db: AsyncSession,
+    upload_type: str,
+    model_name: str,
+    url: str,
+    volume_id: str,
+    custom_path: str
+) -> ModelDB:
+    """Create a new model record in the database"""
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    new_model = ModelDB(
+        user_id=user_id,
+        org_id=org_id,
+        user_volume_id=volume_id,
+        upload_type=upload_type,
+        model_name=model_name,
+        user_url=url,
+        model_type="custom",
+        folder_path=custom_path,
+        status="started",
+        download_progress=0
+    )
+
+    db.add(new_model)
+    await db.commit()
+    await db.refresh(new_model)
+    
+    return new_model
+
+async def create_model_error_record(
+    request: Request,
+    db: AsyncSession,
+    url: str,
+    error_message: str,
+    upload_type: str,
+    folder_path: str,
+    model_name: Optional[str] = None
+) -> ModelDB:
+    """Create an error record in the model table"""
+    volumes = await retrieve_model_volumes(request, db)
+    current_user = request.state.current_user
+    
+    new_model = ModelDB(
+        user_id=current_user["user_id"],
+        org_id=current_user.get("org_id"),
+        user_volume_id=volumes[0]["id"],
+        upload_type=upload_type,
+        model_type="custom",
+        user_url=url if upload_type == "download-url" else None,
+        civitai_url=url if upload_type == "civitai" else None,
+        error_log=error_message,
+        folder_path=folder_path,
+        model_name=model_name,
+        status="failed"
+    )
+
+    db.add(new_model)
+    await db.commit()
+    await db.refresh(new_model)
+    
+    return new_model
+
+@router.post("/volume/file/{file_id}/retry", include_in_schema=False)
+@router.post("/file/{file_id}/retry")
 async def retry_download(
     request: Request,
     file_id: str,
@@ -727,6 +978,25 @@ def does_file_exist(path: str, volume: Volume) -> bool:
             raise e
 
 
+async def validate_file_path_aio(path: str, volume: Volume):
+    try:
+        contents = await volume.listdir.aio(path)
+        if not contents:
+            return False, "No file found or the first item is not a file."
+        if len(contents) > 1:
+            return False, "directory supplied"
+        if contents[0].type == DIRECTORY_TYPE:
+            return False, "directory supplied"
+        if contents[0].type != FILE_TYPE:
+            return False, "not a file"
+        return True, None
+    except grpclib.exceptions.GRPCError as e:
+        if e.status == grpclib.Status.NOT_FOUND:
+            return False, f"path: {path} not found."
+        else:
+            return False, str(e)
+
+
 def validate_file_path(path: str, volume: Volume):
     try:
         contents = volume.listdir(path)
@@ -761,7 +1031,7 @@ def lookup_volume(volume_name: str, create_if_missing: bool = False):
         raise Exception(f"Can't find Volume: {e}")
 
 
-@router.get("/volume/ls_full")
+@router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
 async def volume_full(
     request: Request, volume_name: str, create_if_missing: bool = False
 ):
@@ -809,7 +1079,7 @@ async def volume_full(
         )
 
 
-@router.get("/volume/ls")
+@router.get("/volume/ls", include_in_schema=False)
 async def list_contents(request: Request, volume_name: str, path: str = "/"):
     try:
         volume = lookup_volume(volume_name)
@@ -850,7 +1120,7 @@ class RequestModel(BaseModel):
     download_progress: Optional[float] = None
 
 
-@router.post("/volume/volume-upload")
+@router.post("/volume/volume-upload", include_in_schema=False)
 async def update_status(
     request: Request, body: RequestModel, db: AsyncSession = Depends(get_db)
 ):
@@ -927,7 +1197,7 @@ class ListModelsInput(BaseModel):
     search: Optional[str] = None
 
 
-@router.get("/volume/list-models")
+@router.get("/volume/list-models", include_in_schema=False)
 async def list_models(request: Request, limit: int = 10, search: Optional[str] = None):
     api = HfApi()
     models = api.list_models(limit=limit, search=search)
@@ -986,8 +1256,245 @@ async def list_models(request: Request, limit: int = 10, search: Optional[str] =
     return {"models": detailed_models}
 
 
-@router.get("/volume/get-model-info")
+@router.get("/volume/get-model-info", include_in_schema=False)
 async def get_model_info(request: Request, repo_id: str):
     api = HfApi()
     model_info = api.model_info(repo_id)
     return model_info
+
+# Helper functions for file operations
+async def get_filename_from_url(url: str) -> Optional[str]:
+    """Extract filename from URL or Content-Disposition header"""
+    try:
+        # First try to get filename from the URL path
+        parsed_url = urlparse(url)
+        path_filename = parsed_url.path.split('/')[-1]
+        if path_filename and '.' in path_filename:
+            return path_filename
+
+        # If no filename in URL, try to get it from Content-Disposition header
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url) as response:
+                if response.status == 200:
+                    content_disposition = response.headers.get('Content-Disposition')
+                    if content_disposition:
+                        filename_match = re.search(r'filename="?([^"]+)"?', content_disposition)
+                        if filename_match:
+                            return filename_match.group(1)
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error getting filename from URL: {str(e)}")
+        return None
+
+async def check_file_existence(
+    filename: str, 
+    custom_path: str, 
+    url: str, 
+    upload_type: str,
+    request: Request,
+    db: AsyncSession
+) -> None:
+    """Check if a file already exists in the volume"""
+    try:
+        volumes = await retrieve_model_volumes(request, db)
+        volume = Volume.from_name(volumes[0]["volume_name"])
+        
+        full_path = os.path.join(custom_path, filename)
+        try:
+            contents = volume.listdir(full_path)
+            if contents:
+                await create_model_error_record(
+                    request=request,
+                    db=db,
+                    url=url,
+                    error_message="File already exists",
+                    upload_type=upload_type,
+                    folder_path=custom_path,
+                    model_name=filename
+                )
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"File {full_path} already exists"
+                )
+        except grpclib.exceptions.GRPCError as e:
+            if e.status != grpclib.Status.NOT_FOUND:
+                raise e
+    except Exception as e:
+        logger.error(f"Error checking file existence: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Civitai handler
+async def handle_civitai_model(
+    request: Request,
+    data: AddFileInputNew,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks
+):
+    """Handle Civitai model downloads"""
+    try:
+        # Parse Civitai URL and get model info
+        model_id, version_id = parse_civitai_url(data.url)
+        civitai_info = await get_civitai_model_info(model_id)
+        
+        if not civitai_info.get("modelVersions"):
+            raise HTTPException(status_code=400, detail="No model versions found")
+            
+        # Select version (latest if not specified)
+        selected_version = next(
+            (v for v in civitai_info["modelVersions"] 
+             if str(v["id"]) == version_id) if version_id 
+            else civitai_info["modelVersions"][0]
+        )
+        
+        if not selected_version:
+            raise HTTPException(status_code=400, detail="Model version not found")
+            
+        # Get filename
+        filename = data.filename or selected_version["files"][0]["name"]
+        
+        # Check if file exists
+        await check_file_existence(
+            filename, 
+            data.folder_path, 
+            data.url, 
+            "civitai",
+            request,
+            db
+        )
+        
+        # Create model record
+        volumes = await retrieve_model_volumes(request, db)
+        model = ModelDB(
+            user_id=request.state.current_user["user_id"],
+            org_id=request.state.current_user.get("org_id"),
+            upload_type="civitai",
+            model_name=filename,
+            civitai_id=str(civitai_info["id"]),
+            civitai_version_id=str(selected_version["id"]),
+            civitai_url=data.url,
+            civitai_download_url=selected_version["files"][0]["downloadUrl"],
+            civitai_model_response=civitai_info,
+            user_volume_id=volumes[0]["id"],
+            model_type="custom",
+            folder_path=data.folder_path,
+            status="started",
+            download_progress=0
+        )
+        
+        db.add(model)
+        await db.commit()
+        await db.refresh(model)
+        
+        # Start download
+        await handle_file_download(
+            request=request,
+            db=db,
+            download_url=selected_version["files"][0]["downloadUrl"],
+            folder_path=data.folder_path,
+            filename=filename,
+            upload_type="civitai",
+            db_model_id=str(model.id),
+            background_tasks=background_tasks
+        )
+        
+        return {"message": "Civitai model download started"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error handling Civitai model: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# HuggingFace handler
+async def handle_huggingface_model(
+    request: Request,
+    data: AddFileInputNew,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks
+):
+    """Handle HuggingFace model downloads"""
+    try:
+        # Extract repo ID from URL
+        repo_id = extract_huggingface_repo_id(data.url)
+        if not repo_id:
+            raise HTTPException(status_code=400, detail="Invalid Hugging Face URL")
+            
+        # Get filename
+        filename = data.filename or await get_filename_from_url(data.url)
+        if not filename:
+            await create_model_error_record(
+                request=request,
+                db=db,
+                url=data.url,
+                error_message="filename not found",
+                upload_type="huggingface",
+                folder_path=data.folder_path
+            )
+            raise HTTPException(status_code=400, detail="No filename found")
+            
+        # Check if file exists
+        await check_file_existence(
+            filename, 
+            data.folder_path, 
+            data.url, 
+            "huggingface",
+            request,
+            db
+        )
+        
+        # Create model record
+        volumes = await retrieve_model_volumes(request, db)
+        model = await add_model_download_url(
+            request=request,
+            db=db,
+            upload_type="huggingface",
+            model_name=filename,
+            url=data.url,
+            volume_id=volumes[0]["id"],
+            custom_path=data.folder_path
+        )
+        
+        # Start download
+        await handle_file_download(
+            request=request,
+            db=db,
+            download_url=data.url,
+            folder_path=data.folder_path,
+            filename=filename,
+            upload_type="huggingface",
+            db_model_id=str(model.id),
+            background_tasks=background_tasks
+        )
+        
+        return {"message": "Hugging Face model download started"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error handling HuggingFace model: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Helper functions for Civitai and HuggingFace
+def parse_civitai_url(url: str) -> Tuple[str, Optional[str]]:
+    """Extract model ID and version ID from Civitai URL"""
+    model_match = re.search(r'civitai\.com/models/(\d+)(?:/.*?)?(?:\?modelVersionId=(\d+))?', url)
+    if not model_match:
+        raise HTTPException(status_code=400, detail="Invalid Civitai URL")
+    return model_match.group(1), model_match.group(2)
+
+async def get_civitai_model_info(model_id: str) -> dict:
+    """Fetch model information from Civitai API"""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"https://civitai.com/api/v1/models/{model_id}") as response:
+            if response.status != 200:
+                raise HTTPException(
+                    status_code=response.status,
+                    detail="Error fetching model info from Civitai"
+                )
+            return await response.json()
+
+def extract_huggingface_repo_id(url: str) -> Optional[str]:
+    """Extract repository ID from HuggingFace URL"""
+    match = re.search(r'huggingface\.co/([^/]+/[^/]+)', url)
+    return match.group(1) if match else None

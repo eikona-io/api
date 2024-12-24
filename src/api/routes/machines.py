@@ -34,7 +34,7 @@ from api.models import Deployment, GPUEvent, Machine, Workflow
 # from sqlalchemy import select
 from api.database import get_db
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Literal
 # from fastapi_pagination import Page, add_pagination, paginate
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,9 @@ async def get_machine_events(
     events = events.scalars().all()
     return JSONResponse(content=[event.to_dict() for event in events])
 
+class DockerCommand(BaseModel):
+    when: Literal["before", "after"]
+    commands: List[str]
 
 class ServerlessMachineModel(BaseModel):
     name: str
@@ -145,7 +148,7 @@ class ServerlessMachineModel(BaseModel):
     # ws_timeout: int = 2
     run_timeout: int = 300
     idle_timeout: int = 60
-    extra_docker_commands: Optional[Dict[str, Any]] = None
+    extra_docker_commands: Optional[List[DockerCommand]] = None
     machine_builder_version: Optional[str] = "4"
     base_docker_image: Optional[str] = None
     python_version: Optional[str] = None
@@ -163,7 +166,7 @@ class UpdateServerlessMachineModel(BaseModel):
     install_custom_node_with_gpu: Optional[bool] = None
     run_timeout: Optional[int] = None
     idle_timeout: Optional[int] = None
-    extra_docker_commands: Optional[Dict[str, Any]] = None
+    extra_docker_commands: Optional[List[DockerCommand]] = None
     machine_builder_version: Optional[str] = None
     base_docker_image: Optional[str] = None
     python_version: Optional[str] = None
