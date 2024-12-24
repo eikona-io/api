@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from http.client import HTTPException
+from upstash_redis.asyncio import Redis
 import logging
 from typing import Any, Literal, Self, TypeVar, Tuple, Union
 from api.routes.types import WorkflowRunOutputModel
@@ -368,6 +369,28 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
         setattr(user_settings, key, value)
 
     await db.commit()
+
+    # Update Redis with new spend limit if it was provided in the update
+    if "spend_limit" in update_data:
+        logging.info("Updating spend limit in Redis")
+        redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
+        redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
+        redis = Redis(url=redis_url, token=redis_token)
+
+        entity_id = request.state.current_user.get("org_id") or user_id
+        redis_key = f"plan:{entity_id}"
+
+        raw_value = await redis.get(redis_key)
+        if raw_value:
+            plan_data = json.loads(raw_value)
+            # Update spend_limit while preserving other fields
+            plan_data["spend_limit"] = update_data["spend_limit"]
+        else:
+            # Create new Redis entry with spend_limit
+            plan_data = {"spend_limit": update_data["spend_limit"]}
+
+        # Save updated data back to Redis
+        await redis.set(redis_key, json.dumps(plan_data))
 
     return JSONResponse(content=user_settings.to_dict())
 
