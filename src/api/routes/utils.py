@@ -43,6 +43,10 @@ from uuid import UUID
 JWT_SECRET = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
 
+# Initialize Redis client at the module level
+redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
+redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
+redis = Redis(url=redis_url, token=redis_token)
 
 def generate_temporary_token(
     user_id: str, org_id: Optional[str] = None, expires_in: str = "1h"
@@ -373,9 +377,6 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
     # Update Redis with new spend limit if it was provided in the update
     if "spend_limit" in update_data:
         logging.info("Updating spend limit in Redis")
-        redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
-        redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
-        redis = Redis(url=redis_url, token=redis_token)
 
         entity_id = request.state.current_user.get("org_id") or user_id
         redis_key = f"plan:{entity_id}"
