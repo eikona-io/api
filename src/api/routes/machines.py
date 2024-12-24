@@ -106,7 +106,7 @@ async def get_all_machines(
     result = await db.execute(machines_query)
     machines = result.unique().scalars().all()
 
-    return [MachineModel.from_orm(machine) for machine in machines]
+    return JSONResponse(content=[machine.to_dict() for machine in machines])
 
 
 @router.get("/machine/{machine_id}", response_model=MachineModel)
