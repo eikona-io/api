@@ -24,7 +24,7 @@ from .types import (
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .utils import generate_persistent_token, select
+from .utils import generate_persistent_token, select, is_valid_uuid
 from sqlalchemy import func, cast, String, or_
 from fastapi.responses import JSONResponse
 
@@ -91,13 +91,14 @@ async def get_all_machines(
     )
 
     if search:
-        search = search.lower()
-        machines_query = machines_query.where(
-            or_(
-                func.lower(Machine.name).like(f"%{search}%"),
-                cast(Machine.id, String).like(f"%{search}%")
+        if is_valid_uuid(search):
+            # Exact UUID match - most efficient
+            machines_query = machines_query.where(Machine.id == search)
+        else:
+            # Name search using trigram similarity for better performance
+            machines_query = machines_query.where(
+                Machine.name.ilike(f"%{search}%")
             )
-        )
 
     if limit:
         machines_query = machines_query.limit(limit)
@@ -105,7 +106,7 @@ async def get_all_machines(
     result = await db.execute(machines_query)
     machines = result.unique().scalars().all()
 
-    return JSONResponse(content=[machine.to_dict() for machine in machines])
+    return [MachineModel.from_orm(machine) for machine in machines]
 
 
 @router.get("/machine/{machine_id}", response_model=MachineModel)
