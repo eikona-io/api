@@ -143,6 +143,6 @@ async def get_all_workflows(
         workflows_query = workflows_query.limit(limit)
 
     result = await db.execute(workflows_query)
-    workflows = result.scalars().all()
+    workflows = result.unique().scalars().all()
 
     return [WorkflowModel.from_orm(workflow) for workflow in workflows]

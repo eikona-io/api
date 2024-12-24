@@ -206,6 +206,9 @@ class MachineGPU(str, Enum):
 class WorkspaceGPU(str, Enum):
     RTX_4090 = "4090"
 
+class DockerCommand(BaseModel):
+    when: Literal["before", "after"]
+    commands: List[str]
 
 class MachineModel(BaseModel):
     id: UUID
@@ -239,7 +242,7 @@ class MachineModel(BaseModel):
     modal_app_id: Optional[str]
     target_workflow_id: Optional[UUID]
     dependencies: Optional[Dict[str, Any]]
-    extra_docker_commands: Optional[Dict[str, Any]]
+    extra_docker_commands: Optional[List[DockerCommand]]
     install_custom_node_with_gpu: bool = False
     deleted: bool = False
     keep_warm: int = 0
