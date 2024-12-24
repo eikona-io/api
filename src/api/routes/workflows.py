@@ -1,19 +1,16 @@
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from typing import List, Optional
 from .types import WorkflowModel
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import UserIconData, clean_up_outputs, fetch_user_icon, has, post_process_output_data, require_permission, select, post_process_outputs
-from api.models import Deployment, User, Workflow, WorkflowRun, WorkflowVersion, WorkflowRunOutput
-from .utils import get_user_settings, is_exceed_spend_limit
-from sqlalchemy import func, select as sa_select, distinct, and_, or_
-from sqlalchemy.orm import joinedload, load_only, contains_eager
+from .utils import fetch_user_icon, post_process_output_data, select
+from api.models import Workflow
+from .utils import get_user_settings
+from sqlalchemy import func
 from fastapi.responses import JSONResponse
-from pprint import pprint
-from sqlalchemy import desc
-from sqlalchemy import text
+from sqlalchemy import text, cast, String, or_
 from datetime import datetime
 from uuid import UUID
 from decimal import Decimal
@@ -129,8 +126,13 @@ async def get_all_workflows(
     )
 
     if search:
+        search = search.lower()
         workflows_query = workflows_query.where(
-            func.lower(Workflow.name).like(f"%{search.lower()}%")
+            or_(
+                func.lower(Workflow.name).like(f"%{search}%"),
+                # Cast UUID to string using proper SQLAlchemy type
+                cast(Workflow.id, String).like(f"%{search}%")
+            )
         )
 
     if limit:

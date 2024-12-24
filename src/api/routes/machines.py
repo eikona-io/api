@@ -12,7 +12,7 @@ from api.modal.builder import (
     build_logic,
     set_machine_always_on,
 )
-from api.routes.volumes import get_model_volumes, retrieve_model_volumes
+from api.routes.volumes import retrieve_model_volumes
 from api.utils.docker import generate_all_docker_commands, comfyui_hash
 from pydantic import BaseModel
 from .types import (
@@ -20,13 +20,12 @@ from .types import (
     MachineGPU,
     MachineModel,
     MachineType,
-    WorkflowVersionModel,
 )
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .utils import generate_persistent_token, select
-from sqlalchemy import func
+from sqlalchemy import func, cast, String, or_
 from fastapi.responses import JSONResponse
 
 from api.models import Deployment, GPUEvent, Machine, Workflow
@@ -92,8 +91,12 @@ async def get_all_machines(
     )
 
     if search:
+        search = search.lower()
         machines_query = machines_query.where(
-            func.lower(Machine.name).like(f"%{search.lower()}%")
+            or_(
+                func.lower(Machine.name).like(f"%{search}%"),
+                cast(Machine.id, String).like(f"%{search}%")
+            )
         )
 
     if limit:
