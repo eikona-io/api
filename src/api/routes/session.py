@@ -15,10 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 import modal
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import (
-    select,
-    is_exceed_spend_limit,
-)
+from .utils import select
 from pydantic import BaseModel, Field
 
 # from sqlalchemy import select
@@ -131,6 +128,7 @@ async def get_machine_sessions(
         )
     )
     return result.scalars().all()
+
 
 async def create_session_background_task(
     machine_id: str,
@@ -259,7 +257,6 @@ async def create_session(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
-    
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
     # if exceed_spend_limit:
@@ -379,7 +376,7 @@ async def create_dynamic_sesssion_background_task(
     status_queue: Optional[asyncio.Queue] = None,
 ):
     app = modal.App(str(session_id))
-    
+
     # gpu_event_id = uuid4()
 
     try:
@@ -399,7 +396,7 @@ async def create_dynamic_sesssion_background_task(
             #     db.add(new_gpu_event)
             #     await db.commit()
             #     await db.refresh(new_gpu_event)
-            
+
             dockerfile_image = modal.Image.debian_slim(python_version="3.11")
 
             if body.dependencies:
@@ -467,7 +464,7 @@ async def create_dynamic_sesssion_background_task(
         #     new_gpu_event.error = str(e)
         #     await db.commit()
         #     await db.refresh(new_gpu_event)
-            
+
         raise e
 
 

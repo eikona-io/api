@@ -36,6 +36,7 @@ from decimal import Decimal
 import math
 from typing import Dict, List, Set
 from pydantic import ValidationError, BaseModel
+from uuid import UUID
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -695,94 +696,9 @@ def has(
     elif isinstance(permission, list):
         return all(perm in user_permissions for perm in permission)
 
-
-def r(price: float) -> Decimal:
-    return Decimal(math.ceil(price * 1000000) / 1000000)
-
-
-pricing_lookup_table = {
-    "T4": r(0.000164 * 1.10),
-    "L4": r(0.000291 * 1.10),
-    "A10G": r(0.000306 * 1.10),
-    "A100": r(0.001036 * 1.10),
-    "A100-80GB": r(0.001553 * 1.10),
-    "H100": r(0.002125 * 1.10),
-    "CPU": r(0.000038 * 1.10),
-}
-
-
-async def get_total_gpu_compute(usage_details: List[Dict[str, Any]]) -> Decimal:
-    total_compute_cost = Decimal("0")
-    individual_costs: List[Dict[str, Any]] = []
-
-    for usage_detail in usage_details:
-        gpu = usage_detail.gpu
-        if not gpu or gpu not in pricing_lookup_table:
-            print(f"GPU type {gpu} not found in pricing lookup table")
-            continue
-
-        usage_in_sec = usage_detail.usage_in_sec or Decimal("0")
-        if usage_in_sec < 0:
-            print("Usage time cannot be negative")
-            continue
-
-        if not usage_in_sec or usage_in_sec.is_nan():
-            print("Usage time is NaN")
-            continue
-
-        machine_name = usage_detail.machine_name
-        machine_cost = pricing_lookup_table[gpu] * usage_in_sec
-        total_compute_cost += machine_cost
-
-        individual_costs.append(
-            {
-                "machine_name": machine_name,
-                "gpu": gpu,
-                "usage_in_sec": usage_in_sec,
-                "cost": machine_cost,
-            }
-        )
-
-    # Print debug information
-    # for cost_detail in individual_costs:
-    #     print(f"Machine: {cost_detail['machine_name']}, GPU: {cost_detail['gpu']}, "
-    #           f"Usage: {cost_detail['usage_in_sec']:.2f} sec, Cost: ${cost_detail['cost']:.6f}")
-
-    # print(f"Total Compute Cost: ${total_compute_cost:.6f}")
-
-    return total_compute_cost
-
-
-async def is_exceed_spend_limit(request: Request, db: AsyncSession):
-    # default spend limit
-    spend_limit = 500
-    # max_spend_limit = 1000
-
-    user_settings = await get_user_settings(request, db)
-
-    if user_settings is None:
-        return False
-
-    current_plan = await get_current_plan(request, db, select)
-    last_invoice_timestamp = current_plan.last_invoice_timestamp
-
-    usage_details = await get_usage_detail(request, last_invoice_timestamp, db, select)
-
-    # print("usage_details:")
-    # for item in usage_details:
-    #     print(item)
-    # print()
-
-    total_compute_cost = await get_total_gpu_compute(usage_details)
-    print("total_compute_cost", total_compute_cost)
-
-    user_spend_limit = Decimal(
-        user_settings.spend_limit
-        if user_settings.spend_limit is not None
-        else spend_limit
-    )
-
-    if total_compute_cost > user_spend_limit:
+def is_valid_uuid(uuid_string: str) -> bool:
+    try:
+        UUID(uuid_string)
         return True
-
-    return False
+    except ValueError:
+        return False

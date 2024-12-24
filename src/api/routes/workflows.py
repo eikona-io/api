@@ -5,9 +5,8 @@ from typing import List, Optional
 from .types import WorkflowModel
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import fetch_user_icon, post_process_output_data, select
+from .utils import fetch_user_icon, post_process_output_data, select, is_valid_uuid, get_user_settings
 from api.models import Workflow
-from .utils import get_user_settings
 from sqlalchemy import func
 from fastapi.responses import JSONResponse
 from sqlalchemy import text, cast, String, or_
@@ -18,6 +17,7 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
+
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime, UUID)):
@@ -26,13 +26,16 @@ class CustomJSONEncoder(json.JSONEncoder):
             return float(obj)
         return super().default(obj)
 
+
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
     if isinstance(obj, (datetime, UUID)):
         return str(obj)
     raise TypeError(f"Type {type(obj)} not serializable")
 
+
 router = APIRouter(tags=["Workflow"])
+
 
 @router.get("/workflows", response_model=List[WorkflowModel])
 async def get_workflows(
@@ -70,8 +73,8 @@ async def get_workflows(
 
     current_user = request.state.current_user
     user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if 'org_id' in current_user else None
-    
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
     # Execute the query
     result = await db.execute(
         raw_query,
@@ -84,19 +87,21 @@ async def get_workflows(
         },
     )
 
-    workflows = [
-        dict(row._mapping)
-        for row in result.fetchall()
-    ]
-    
+    workflows = [dict(row._mapping) for row in result.fetchall()]
+
     user_settings = await get_user_settings(request, db)
-    
+
     # Fetch user icons
-    unique_user_ids = list(set(workflow["user_id"] for workflow in workflows if workflow["user_id"]))
+    unique_user_ids = list(
+        set(workflow["user_id"] for workflow in workflows if workflow["user_id"])
+    )
     user_icon_results = await asyncio.gather(
         *[fetch_user_icon(user_id) for user_id in unique_user_ids]
     )
-    user_icons = {str(user_id): icon_data for user_id, icon_data in zip(unique_user_ids, user_icon_results)}
+    user_icons = {
+        str(user_id): icon_data
+        for user_id, icon_data in zip(unique_user_ids, user_icon_results)
+    }
 
     for workflow in workflows:
         if "latest_output" in workflow and workflow["latest_output"]:
@@ -106,9 +111,10 @@ async def get_workflows(
 
     # Use the custom encoder to serialize the data
     return JSONResponse(
-        status_code=200, 
-        content=json.loads(json.dumps(workflows, cls=CustomJSONEncoder))
+        status_code=200,
+        content=json.loads(json.dumps(workflows, cls=CustomJSONEncoder)),
     )
+
 
 @router.get("/workflows/all", response_model=List[WorkflowModel])
 async def get_all_workflows(
@@ -125,14 +131,12 @@ async def get_all_workflows(
     )
 
     if search:
-        search = search.lower()
-        workflows_query = workflows_query.where(
-            or_(
-                func.lower(Workflow.name).like(f"%{search}%"),
-                # Cast UUID to string using proper SQLAlchemy type
-                cast(Workflow.id, String).like(f"%{search}%")
-            )
-        )
+        if is_valid_uuid(search):
+            # Exact UUID match - most efficient
+            workflows_query = workflows_query.where(Workflow.id == search)
+        else:
+            # Name search using trigram similarity for better performance
+            workflows_query = workflows_query.where(Workflow.name.ilike(f"%{search}%"))
 
     if limit:
         workflows_query = workflows_query.limit(limit)
@@ -140,4 +144,4 @@ async def get_all_workflows(
     result = await db.execute(workflows_query)
     workflows = result.scalars().all()
 
-    return JSONResponse(content=[workflow.to_dict() for workflow in workflows])
+    return [WorkflowModel.from_orm(workflow) for workflow in workflows]
