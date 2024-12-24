@@ -80,6 +80,8 @@ async def get_machines(
 @router.get("/machines/all", response_model=List[MachineModel])
 async def get_all_machines(
     request: Request,
+    search: Optional[str] = None,
+    limit: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
     machines_query = (
@@ -88,6 +90,14 @@ async def get_all_machines(
         .where(~Machine.deleted)
         .apply_org_check(request)
     )
+
+    if search:
+        machines_query = machines_query.where(
+            func.lower(Machine.name).like(f"%{search.lower()}%")
+        )
+
+    if limit:
+        machines_query = machines_query.limit(limit)
 
     result = await db.execute(machines_query)
     machines = result.unique().scalars().all()

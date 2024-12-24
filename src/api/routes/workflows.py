@@ -116,6 +116,8 @@ async def get_workflows(
 @router.get("/workflows/all", response_model=List[WorkflowModel])
 async def get_all_workflows(
     request: Request,
+    search: Optional[str] = None,
+    limit: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
     workflows_query = (
@@ -124,6 +126,14 @@ async def get_all_workflows(
         .where(~Workflow.deleted)
         .apply_org_check(request)
     )
+
+    if search:
+        workflows_query = workflows_query.where(
+            func.lower(Workflow.name).like(f"%{search.lower()}%")
+        )
+
+    if limit:
+        workflows_query = workflows_query.limit(limit)
 
     result = await db.execute(workflows_query)
     workflows = result.scalars().all()
