@@ -53,7 +53,8 @@ async def get_workflows(
         wf.id AS id,
         wf.name AS name, 
         wf.created_at AS created_at, 
-        wf.updated_at AS updated_at, 
+        wf.updated_at AS updated_at,
+        wf.pinned AS pinned,
         users.name AS user_name,
         users.id AS user_id
     FROM 
