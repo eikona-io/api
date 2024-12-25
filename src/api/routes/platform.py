@@ -1,7 +1,7 @@
 import os
 from pydantic import BaseModel
 from api.database import get_db
-from api.models import Machine, SubscriptionStatus, Workflow
+from api.models import Machine, SubscriptionStatus, Workflow, GPUEvent
 from api.routes.utils import (
     fetch_user_icon,
     get_user_settings as get_user_settings_util,
@@ -9,11 +9,12 @@ from api.routes.utils import (
     select,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import and_, func, or_
+from sqlalchemy import Date, and_, func, or_, cast, extract, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import RedirectResponse
 import aiohttp
 from typing import Optional, Dict, Any
+from datetime import datetime
 
 router = APIRouter(
     tags=["Platform"],
@@ -663,3 +664,74 @@ GPU_PRICING = {
 async def gpu_pricing():
     """Return the GPU pricing table"""
     return GPU_PRICING
+
+
+@router.get("/platform/usage-details")
+async def get_usage_details_by_day(
+    request: Request,
+    start_time: datetime,
+    end_time: datetime,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get GPU usage details grouped by day"""
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+
+    if not user_id and not org_id:
+        raise HTTPException(status_code=400, detail="User or org id is required")
+
+    # Build the base query conditions
+    conditions = [
+        GPUEvent.end_time >= start_time,
+        GPUEvent.end_time < end_time,
+    ]
+
+    # Add org/user conditions
+    if org_id:
+        conditions.append(GPUEvent.org_id == org_id)
+    else:
+        conditions.append(
+            and_(
+                or_(GPUEvent.org_id.is_(None), GPUEvent.org_id == ""),
+                GPUEvent.user_id == user_id,
+            )
+        )
+
+    # Create the query
+    query = (
+        select(
+            cast(GPUEvent.start_time, Date).label("date"),
+            GPUEvent.gpu,
+            func.sum(
+                extract('epoch', GPUEvent.end_time) - 
+                extract('epoch', GPUEvent.start_time)
+            ).label("usage_in_sec"),
+            func.coalesce(func.sum(GPUEvent.cost), 0).label("cost"),
+        )
+        .where(and_(*conditions))
+        .group_by(text("date"), GPUEvent.gpu)
+        .order_by(text("date"))
+    )
+
+    result = await db.execute(query)
+    usage_details = result.fetchall()
+
+    # Transform the data into the desired format
+    grouped_by_date = {}
+    for row in usage_details:
+        date_str = row.date.strftime("%Y-%m-%d")
+        if date_str not in grouped_by_date:
+            grouped_by_date[date_str] = {}
+        
+        if row.gpu:
+            unit_amount = GPU_PRICING.get(row.gpu, 0)
+            usage_seconds = float(row.usage_in_sec)  # Convert Decimal to float
+            grouped_by_date[date_str][row.gpu] = unit_amount * usage_seconds
+
+    # Convert to array format
+    chart_data = [{"date": date, **gpu_costs} for date, gpu_costs in grouped_by_date.items()]
+
+    return chart_data
+
+
+
