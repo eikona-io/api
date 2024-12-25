@@ -324,11 +324,11 @@ async def get_api_plan(
     if plans is None:
         raise HTTPException(status_code=400, detail="Payment issue - No plans found")
 
-    if plans.get("payment_issue"):
-        raise HTTPException(
-            status_code=400,
-            detail="Payment issue - " + plans.get("payment_issue_reason"),
-        )
+    # if plans.get("payment_issue"):
+    #     raise HTTPException(
+    #         status_code=400,
+    #         detail="Payment issue - " + plans.get("payment_issue_reason"),
+    #     )
 
     # Check if user has subscription
     has_subscription = any(
