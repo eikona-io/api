@@ -64,7 +64,7 @@ class WorkflowUpdateModel(BaseModel):
 async def update_workflow(
     request: Request,
     workflow_id: str,
-    body: WorkflowModel,
+    body: WorkflowUpdateModel,
     db: AsyncSession = Depends(get_db),
 ):
     # Get the workflow
@@ -82,16 +82,17 @@ async def update_workflow(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
     # Update workflow fields if provided in request body
-    if body.name is not None:
-        workflow.name = body.name
-    if body.selected_machine_id is not None:
-        workflow.selected_machine_id = body.selected_machine_id
     if body.pinned is not None:
         workflow.pinned = body.pinned
-    if body.deleted is not None:
-        workflow.deleted = body.deleted
-
-    workflow.updated_at = datetime.now(timezone.utc)
+    else:
+        # Only update timestamp if we're changing something other than pinned
+        workflow.updated_at = datetime.now(timezone.utc)
+        if body.name is not None:
+            workflow.name = body.name
+        if body.selected_machine_id is not None:
+            workflow.selected_machine_id = body.selected_machine_id
+        if body.deleted is not None:
+            workflow.deleted = body.deleted
 
     await db.commit()
 
@@ -152,6 +153,7 @@ async def clone_workflow(
         select(WorkflowVersion)
         .where(WorkflowVersion.workflow_id == workflow_id)
         .order_by(WorkflowVersion.created_at.desc())
+        .limit(1)
     )
 
     version_result = await db.execute(version_query)
@@ -159,24 +161,32 @@ async def clone_workflow(
 
     # Create new workflow as a clone
     new_workflow = Workflow(
-        name=f"{workflow.name} (Cloned)",
+        id=uuid4(),
+        name=f"{workflow.name} (Cloned)", 
         org_id=workflow.org_id,
         user_id=workflow.user_id,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
+    if workflow.selected_machine_id:
+        new_workflow.selected_machine_id = workflow.selected_machine_id
     db.add(new_workflow)
     await db.flush()
 
     # Create new version for cloned workflow if original had a version
     if workflow_version:
         new_version = WorkflowVersion(
+            id=uuid4(),
             workflow_id=new_workflow.id,
             workflow=workflow_version.workflow,
             workflow_api=workflow_version.workflow_api,
             snapshot=workflow_version.snapshot,
             dependencies=workflow_version.dependencies,
             created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            version=1,
+            comment="initial version",
+            user_id=workflow.user_id
         )
         db.add(new_version)
 
