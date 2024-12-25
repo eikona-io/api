@@ -1,7 +1,7 @@
 import os
 from pydantic import BaseModel
 from api.database import get_db
-from api.models import Machine, SubscriptionStatus, Workflow, GPUEvent
+from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent
 from api.routes.utils import (
     fetch_user_icon,
     get_user_settings as get_user_settings_util,
@@ -9,11 +9,11 @@ from api.routes.utils import (
     select,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import Date, and_, func, or_, cast, extract, text
+from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import RedirectResponse
 import aiohttp
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 router = APIRouter(
@@ -35,16 +35,18 @@ async def get_user_meta(
 ):
     return await fetch_user_icon(user_id)
 
+
 class UserSettingsUpdateRequest(BaseModel):
     api_version: str
     custom_output_bucket: bool
     hugging_face_token: Optional[str] = None
     output_visibility: str
     s3_access_key_id: Optional[str] = None
-    s3_secret_access_key: Optional[str] = None 
+    s3_secret_access_key: Optional[str] = None
     s3_bucket_name: Optional[str] = None
     s3_region: Optional[str] = None
     spend_limit: Optional[float] = None
+
 
 @router.patch("/platform/user-settings")
 async def update_user_settings(
@@ -81,7 +83,9 @@ PRICING_PLAN_NAMES = {
 }
 
 # Update reverse mapping to use actual Stripe price IDs
-PRICING_PLAN_REVERSE_MAPPING = {v: k for k, v in PRICING_PLAN_MAPPING.items() if v is not None}
+PRICING_PLAN_REVERSE_MAPPING = {
+    v: k for k, v in PRICING_PLAN_MAPPING.items() if v is not None
+}
 
 
 async def get_current_plan(
@@ -212,7 +216,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                 payment_issue_reason = "Your latest payment has failed. Update your payment method to continue this plan."
         except stripe.error.StripeError:
             pass
-        
+
     print(stripe_plan)
 
     # Extract plans from stripe subscription
@@ -248,9 +252,18 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
 
     return {
         "plans": plans,
-        "names": [item.get("plan", {}).get("nickname", "") for item in stripe_plan.get("items", {}).get("data", [])],
-        "prices": [item.get("price", {}).get("id", "") for item in stripe_plan.get("items", {}).get("data", [])],
-        "amount": [item.get("price", {}).get("unit_amount", 0) for item in stripe_plan.get("items", {}).get("data", [])],
+        "names": [
+            item.get("plan", {}).get("nickname", "")
+            for item in stripe_plan.get("items", {}).get("data", [])
+        ],
+        "prices": [
+            item.get("price", {}).get("id", "")
+            for item in stripe_plan.get("items", {}).get("data", [])
+        ],
+        "amount": [
+            item.get("price", {}).get("unit_amount", 0)
+            for item in stripe_plan.get("items", {}).get("data", [])
+        ],
         "charges": charges,
         "cancel_at_period_end": stripe_plan.cancel_at_period_end,
         "canceled_at": stripe_plan.canceled_at,
@@ -313,7 +326,8 @@ async def get_api_plan(
 
     if plans.get("payment_issue"):
         raise HTTPException(
-            status_code=400, detail="Payment issue - " + plans.get("payment_issue_reason")
+            status_code=400,
+            detail="Payment issue - " + plans.get("payment_issue_reason"),
         )
 
     # Check if user has subscription
@@ -378,7 +392,7 @@ async def get_upgrade_plan(
     """Get upgrade or new plan details with proration calculations"""
     user_id = request.state.current_user.get("user_id")
     org_id = request.state.current_user.get("org_id")
-    
+
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -389,20 +403,28 @@ async def get_upgrade_plan(
 
     # Find workspace and API plans
     ws_plan = next(
-        (item for item in stripe_plan.get("items", {}).get("data", []) 
-         if item.get("price", {}).get("id") in [PRICING_PLAN_MAPPING["ws_basic"], PRICING_PLAN_MAPPING["ws_pro"]]),
-        None
+        (
+            item
+            for item in stripe_plan.get("items", {}).get("data", [])
+            if item.get("price", {}).get("id")
+            in [PRICING_PLAN_MAPPING["ws_basic"], PRICING_PLAN_MAPPING["ws_pro"]]
+        ),
+        None,
     )
-    
+
     api_plan = next(
-        (item for item in stripe_plan.get("items", {}).get("data", []) 
-         if item.get("price", {}).get("id") in [
-             PRICING_PLAN_MAPPING["creator"],
-             PRICING_PLAN_MAPPING["pro"],
-             PRICING_PLAN_MAPPING["basic"],
-             PRICING_PLAN_MAPPING["business"]
-         ]),
-        None
+        (
+            item
+            for item in stripe_plan.get("items", {}).get("data", [])
+            if item.get("price", {}).get("id")
+            in [
+                PRICING_PLAN_MAPPING["creator"],
+                PRICING_PLAN_MAPPING["pro"],
+                PRICING_PLAN_MAPPING["basic"],
+                PRICING_PLAN_MAPPING["business"],
+            ]
+        ),
+        None,
     )
 
     # Determine conflicting plan
@@ -414,7 +436,10 @@ async def get_upgrade_plan(
         raise HTTPException(status_code=400, detail="Invalid plan type")
 
     # Check if plan already exists
-    has_target_price = any(item.get("price", {}).get("id") == target_price_id for item in stripe_plan.get("items", {}).get("data", []))
+    has_target_price = any(
+        item.get("price", {}).get("id") == target_price_id
+        for item in stripe_plan.get("items", {}).get("data", [])
+    )
     if has_target_price:
         return None
 
@@ -442,7 +467,9 @@ async def get_upgrade_plan(
                         {"price": target_price_id, "quantity": 1},
                     ],
                 },
-                discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+                discounts=[{"promotion_code": promotion_code_id}]
+                if promotion_code_id
+                else [],
             )
         else:
             return stripe.Invoice.upcoming(
@@ -453,7 +480,9 @@ async def get_upgrade_plan(
                         {"price": target_price_id, "quantity": 1},
                     ],
                 },
-                discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+                discounts=[{"promotion_code": promotion_code_id}]
+                if promotion_code_id
+                else [],
             )
 
     except stripe.error.StripeError as e:
@@ -465,32 +494,31 @@ async def get_upgrade_plan(
 async def get_clerk_user(user_id: str) -> dict:
     """
     Fetch user data from Clerk's Backend API
-    
+
     Args:
         user_id: The Clerk user ID
-        
+
     Returns:
         dict: User data from Clerk
-        
+
     Raises:
         HTTPException: If the API call fails
     """
     clerk_api_key = os.getenv("CLERK_SECRET_KEY")
     headers = {
         "Authorization": f"Bearer {clerk_api_key}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
-    
+
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            f"https://api.clerk.com/v1/users/{user_id}",
-            headers=headers
+            f"https://api.clerk.com/v1/users/{user_id}", headers=headers
         ) as response:
             if response.status == 200:
                 return await response.json()
             raise HTTPException(
-                status_code=400, 
-                detail=f"Failed to fetch user data from Clerk: {await response.text()}"
+                status_code=400,
+                detail=f"Failed to fetch user data from Clerk: {await response.text()}",
             )
 
 
@@ -515,11 +543,14 @@ async def stripe_checkout(
     # Get user data from Clerk
     user_data = await get_clerk_user(user_id)
     user_email = next(
-        (email["email_address"] for email in user_data["email_addresses"] 
-        if email["id"] == user_data["primary_email_address_id"]),
-        None
+        (
+            email["email_address"]
+            for email in user_data["email_addresses"]
+            if email["id"] == user_data["primary_email_address_id"]
+        ),
+        None,
     )
-    
+
     # Get target price ID
     target_price_id = PRICING_PLAN_MAPPING.get(plan)
     if not target_price_id:
@@ -545,7 +576,7 @@ async def stripe_checkout(
 
     # Get current plan
     current_plan = await get_current_plan(db, user_id, org_id)
-    
+
     if current_plan and current_plan.get("subscription_id"):
         try:
             stripe_plan = stripe.Subscription.retrieve(current_plan["subscription_id"])
@@ -553,7 +584,8 @@ async def stripe_checkout(
             if stripe_plan and stripe_plan.status != "canceled":
                 # Check if user already has this plan
                 has_existing_plan = any(
-                    item.get("price", {}).get("id") == target_price_id for item in stripe_plan.get("items", {}).get("data", [])
+                    item.get("price", {}).get("id") == target_price_id
+                    for item in stripe_plan.get("items", {}).get("data", [])
                 )
 
                 if has_existing_plan:
@@ -566,19 +598,30 @@ async def stripe_checkout(
 
                 # Handle plan updates
                 ws_plan = next(
-                    (item for item in stripe_plan.get("items", {}).get("data", []) 
-                     if item.get("price", {}).get("id") in [PRICING_PLAN_MAPPING["ws_basic"], PRICING_PLAN_MAPPING["ws_pro"]]),
-                    None
+                    (
+                        item
+                        for item in stripe_plan.get("items", {}).get("data", [])
+                        if item.get("price", {}).get("id")
+                        in [
+                            PRICING_PLAN_MAPPING["ws_basic"],
+                            PRICING_PLAN_MAPPING["ws_pro"],
+                        ]
+                    ),
+                    None,
                 )
                 api_plan = next(
-                    (item for item in stripe_plan.get("items", {}).get("data", []) 
-                     if item.get("price", {}).get("id") in [
-                         PRICING_PLAN_MAPPING["creator"],
-                         PRICING_PLAN_MAPPING["pro"],
-                         PRICING_PLAN_MAPPING["basic"],
-                         PRICING_PLAN_MAPPING["business"]
-                     ]),
-                    None
+                    (
+                        item
+                        for item in stripe_plan.get("items", {}).get("data", [])
+                        if item.get("price", {}).get("id")
+                        in [
+                            PRICING_PLAN_MAPPING["creator"],
+                            PRICING_PLAN_MAPPING["pro"],
+                            PRICING_PLAN_MAPPING["basic"],
+                            PRICING_PLAN_MAPPING["business"],
+                        ]
+                    ),
+                    None,
                 )
 
                 conflicting_plan = ws_plan if not plan.startswith("ws_") else api_plan
@@ -589,7 +632,9 @@ async def stripe_checkout(
                         current_plan["subscription_id"],
                         proration_behavior="always_invoice",
                         metadata=metadata,
-                        discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+                        discounts=[{"promotion_code": promotion_code_id}]
+                        if promotion_code_id
+                        else [],
                         items=[
                             {"id": conflicting_plan.id, "deleted": True},
                             {"price": target_price_id, "quantity": 1},
@@ -601,7 +646,9 @@ async def stripe_checkout(
                         current_plan["subscription_id"],
                         proration_behavior="always_invoice",
                         metadata=metadata,
-                        discounts=[{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+                        discounts=[{"promotion_code": promotion_code_id}]
+                        if promotion_code_id
+                        else [],
                         items=[{"price": target_price_id, "quantity": 1}],
                     )
 
@@ -620,17 +667,17 @@ async def stripe_checkout(
             "client_reference_id": org_id or user_id,
             "customer_email": user_email,
             "mode": "subscription",
-            "discounts": [{"promotion_code": promotion_code_id}] if promotion_code_id else [],
+            "discounts": [{"promotion_code": promotion_code_id}]
+            if promotion_code_id
+            else [],
         }
-        
+
         print(session_params)
 
         if trial:
             session_params["subscription_data"] = {
                 "trial_settings": {
-                    "end_behavior": {
-                        "missing_payment_method": "cancel"
-                    }
+                    "end_behavior": {"missing_payment_method": "cancel"}
                 },
                 "trial_period_days": 7,
                 "metadata": metadata,
@@ -639,7 +686,7 @@ async def stripe_checkout(
             session_params["subscription_data"] = {"metadata": metadata}
 
         session = stripe.checkout.Session.create(**session_params)
-        
+
         if session.url:
             return {"url": session.url}
 
@@ -649,21 +696,22 @@ async def stripe_checkout(
     raise HTTPException(status_code=400, detail="Failed to create checkout session")
 
 
+def r(price: float) -> float:
+    return round(price * 1.1, 6)
+
+
 # GPU pricing per second with 10% margin
-GPU_PRICING = {
-    "T4": round(0.000164 * 1.1, 6),
-    "L4": round(0.000291 * 1.1, 6),
-    "A10G": round(0.000306 * 1.1, 6),
-    "A100": round(0.001036 * 1.1, 6),
-    "A100-80GB": round(0.001553 * 1.1, 6),
-    "H100": round(0.002125 * 1.1, 6),
-    "CPU": round(0.000038 * 1.1, 6),  # Price per core
+PRICING_LOOKUP_TABLE = {
+    "T4": r(0.000164),
+    "L4": r(0.000291),
+    "A10G": r(0.000306),
+    "A100": r(0.001036),
+    "A100-80GB": r(0.001553),
+    "H100": r(0.002125),
+    "CPU": r(0.000038),
 }
 
-@router.get("/platform/gpu-pricing")
-async def gpu_pricing():
-    """Return the GPU pricing table"""
-    return GPU_PRICING
+FREE_TIER_USAGE = 500  # in cents, $5
 
 
 @router.get("/platform/usage-details")
@@ -703,8 +751,8 @@ async def get_usage_details_by_day(
             cast(GPUEvent.start_time, Date).label("date"),
             GPUEvent.gpu,
             func.sum(
-                extract('epoch', GPUEvent.end_time) - 
-                extract('epoch', GPUEvent.start_time)
+                extract("epoch", GPUEvent.end_time)
+                - extract("epoch", GPUEvent.start_time)
             ).label("usage_in_sec"),
             func.coalesce(func.sum(GPUEvent.cost), 0).label("cost"),
         )
@@ -722,16 +770,244 @@ async def get_usage_details_by_day(
         date_str = row.date.strftime("%Y-%m-%d")
         if date_str not in grouped_by_date:
             grouped_by_date[date_str] = {}
-        
+
         if row.gpu:
-            unit_amount = GPU_PRICING.get(row.gpu, 0)
+            unit_amount = PRICING_LOOKUP_TABLE.get(row.gpu, 0)
             usage_seconds = float(row.usage_in_sec)  # Convert Decimal to float
             grouped_by_date[date_str][row.gpu] = unit_amount * usage_seconds
 
     # Convert to array format
-    chart_data = [{"date": date, **gpu_costs} for date, gpu_costs in grouped_by_date.items()]
+    chart_data = [
+        {"date": date, **gpu_costs} for date, gpu_costs in grouped_by_date.items()
+    ]
 
     return chart_data
 
+
+async def get_usage_details(
+    db: AsyncSession,
+    start_time: datetime,
+    end_time: datetime,
+    org_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> List[Dict]:
+    """Get usage details for a given time period"""
+    if not user_id and not org_id:
+        raise ValueError("User or org id is required")
+
+    # Build the query conditions
+    conditions = [
+        GPUEvent.end_time >= start_time,
+        GPUEvent.end_time < end_time,
+    ]
+
+    # Add org/user conditions
+    if org_id:
+        conditions.append(GPUEvent.org_id == org_id)
+    else:
+        conditions.append(
+            and_(
+                or_(GPUEvent.org_id.is_(None), GPUEvent.org_id == ""),
+                GPUEvent.user_id == user_id,
+            )
+        )
+
+    # Create the query
+    query = (
+        select(
+            GPUEvent.machine_id,
+            Machine.name.label("machine_name"),
+            GPUEvent.gpu,
+            GPUEvent.ws_gpu,
+            func.sum(
+                extract("epoch", GPUEvent.end_time)
+                - extract("epoch", GPUEvent.start_time)
+            ).label("usage_in_sec"),
+            GPUEvent.cost_item_title,
+            func.sum(func.coalesce(GPUEvent.cost, 0)).label("cost"),
+        )
+        .select_from(GPUEvent)
+        .outerjoin(Machine, GPUEvent.machine_id == Machine.id)
+        .where(and_(*conditions))
+        .group_by(
+            GPUEvent.machine_id,
+            Machine.name,
+            GPUEvent.gpu,
+            GPUEvent.ws_gpu,
+            GPUEvent.cost_item_title,
+        )
+        .order_by(desc("usage_in_sec"))
+    )
+
+    result = await db.execute(query)
+    usage_details = result.fetchall()
+
+    # Convert to list of dicts
+    return [
+        {
+            "machine_id": row.machine_id,
+            "machine_name": row.machine_name,
+            "gpu": row.gpu,
+            "ws_gpu": row.ws_gpu,
+            "usage_in_sec": float(row.usage_in_sec) if row.usage_in_sec else 0,
+            "cost_item_title": row.cost_item_title,
+            "cost": float(row.cost) if row.cost else (
+                # Calculate cost based on GPU type if row.cost is not available
+                (float(row.usage_in_sec) / 3600) if row.ws_gpu else  # Workspace GPU cost
+                (PRICING_LOOKUP_TABLE.get(row.gpu, 0) * float(row.usage_in_sec) if row.gpu else 0)  # Regular GPU cost
+            ),
+        }
+        for row in usage_details
+    ]
+
+
+def get_gpu_event_cost(event: Dict) -> float:
+    """Calculate cost for a GPU event"""
+    if event.get("cost_item_title") and event.get("cost") is not None:
+        return event["cost"]
+
+    if event.get("ws_gpu"):
+        return event["usage_in_sec"] / 3600
+
+    gpu = event.get("gpu")
+    if not gpu or gpu not in PRICING_LOOKUP_TABLE:
+        return 0
+
+    return PRICING_LOOKUP_TABLE[gpu] * event["usage_in_sec"]
+
+
+@router.get("/platform/usage")
+async def get_usage(
+    request: Request,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get usage details and total cost for a given time period"""
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+
+    if not user_id and not org_id:
+        raise HTTPException(status_code=400, detail="User or org id is required")
+
+    # Get current subscription
+    query = (
+        select(SubscriptionStatus)
+        .where(
+            and_(
+                SubscriptionStatus.status != "deleted",
+                or_(
+                    and_(
+                        SubscriptionStatus.org_id.is_(None),
+                        SubscriptionStatus.user_id == user_id,
+                    )
+                    if not org_id
+                    else SubscriptionStatus.org_id == org_id
+                ),
+            )
+        )
+        .order_by(SubscriptionStatus.created_at.desc())
+    )
+    result = await db.execute(query)
+    subscription = result.scalar_one_or_none()
+
+    # If no subscription, get user creation date
+    user_created_at = None
+    if not subscription or not subscription.subscription_id:
+        query = select(User.created_at).where(User.id == user_id)
+        result = await db.execute(query)
+        user_created_at = result.scalar_one_or_none()
+
+    # Determine start time based on billing period
+    effective_start_time = (
+        start_time or subscription.last_invoice_timestamp
+        if subscription
+        else None or user_created_at
+        if user_created_at
+        else None or datetime.now()
+    )
+
+    effective_end_time = end_time or datetime.now()
+
+    # Get usage details
+    usage_details = await get_usage_details(
+        db=db,
+        start_time=effective_start_time,
+        end_time=effective_end_time,
+        org_id=org_id,
+        user_id=user_id,
+    )
+    
+    user_settings = await get_user_settings_util(request, db)
+
+    # Calculate total cost
+    total_cost = sum(get_gpu_event_cost(event) for event in usage_details)
+
+    # Apply free tier credit ($5 = 500 cents)
+    final_cost = max(total_cost - FREE_TIER_USAGE / 100, 0)
+
+    return {
+        "usage": usage_details,
+        "total_cost": total_cost,
+        "final_cost": final_cost,
+        "free_tier_credit": FREE_TIER_USAGE,  # Convert to dollars
+        "credit": user_settings.credit,
+        "period": {
+            "start": effective_start_time.isoformat(),
+            "end": effective_end_time.isoformat(),
+        },
+    }
+
+
+@router.get("/platform/invoices")
+async def get_monthly_invoices(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get monthly invoices for the current user/org"""
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # Get current plan to get subscription ID
+    current_plan = await get_current_plan(db, user_id, org_id)
+    if not current_plan or not current_plan.get("subscription_id"):
+        return []
+
+    try:
+        # Fetch invoices from Stripe
+        invoices = stripe.Invoice.list(
+            subscription=current_plan["subscription_id"],
+            limit=12,
+            expand=["data.lines"],
+        )
+
+        # Transform invoice data
+        return [
+            {
+                "id": invoice.id,
+                "period_start": datetime.fromtimestamp(invoice.period_start).strftime("%Y-%m-%d"),
+                "period_end": datetime.fromtimestamp(invoice.period_end).strftime("%Y-%m-%d"),
+                "amount_due": invoice.amount_due / 100,  # Convert cents to dollars
+                "status": invoice.status,
+                "invoice_pdf": invoice.invoice_pdf,
+                "line_items": [
+                    {
+                        "description": item.description,
+                        "amount": item.amount / 100,
+                        "quantity": item.quantity,
+                    }
+                    for item in invoice.lines.data
+                ],
+                "subtotal": invoice.subtotal / 100,
+                "total": invoice.total / 100,
+            }
+            for invoice in invoices.data
+        ]
+
+    except stripe.error.StripeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
