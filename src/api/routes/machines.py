@@ -173,6 +173,7 @@ class UpdateServerlessMachineModel(BaseModel):
     extra_args: Optional[str] = None
     prestart_command: Optional[str] = None
     keep_warm: Optional[int] = None
+    is_trigger_rebuild: Optional[bool] = False
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
@@ -286,7 +287,7 @@ async def update_serverless_machine(
 
     update_machine_dict = update_machine.model_dump()
 
-    rebuild = check_fields_for_changes(
+    rebuild = update_machine_dict.get('is_trigger_rebuild', False) or check_fields_for_changes(
         machine, update_machine_dict, fields_to_trigger_rebuild
     )
     keep_warm_changed = check_fields_for_changes(
@@ -330,7 +331,7 @@ async def update_serverless_machine(
             install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
             allow_background_volume_commits=machine.allow_background_volume_commits,
             retrieve_static_assets=machine.retrieve_static_assets,
-            skip_static_assets=False,
+            skip_static_assets=update_machine_dict.get('is_trigger_rebuild', False),
             docker_commands=docker_commands.model_dump()["docker_commands"],
             machine_builder_version=machine.machine_builder_version,
             base_docker_image=machine.base_docker_image,
@@ -436,12 +437,15 @@ async def create_custom_machine(
     org_id = current_user["org_id"] if "org_id" in current_user else None
 
     machine = Machine(
+        id=uuid.uuid4(),
         name=machine.name,
         endpoint=machine.endpoint,
         type=machine.type,
         auth_token=machine.auth_token,
         user_id=user_id,
         org_id=org_id,
+        created_at=func.now(),
+        updated_at=func.now(),
     )
 
     db.add(machine)
