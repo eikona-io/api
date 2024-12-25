@@ -713,6 +713,10 @@ PRICING_LOOKUP_TABLE = {
 
 FREE_TIER_USAGE = 500  # in cents, $5
 
+@router.get("/platform/gpu-pricing")
+async def gpu_pricing():
+    """Return the GPU pricing table"""
+    return PRICING_LOOKUP_TABLE
 
 @router.get("/platform/usage-details")
 async def get_usage_details_by_day(
