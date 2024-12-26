@@ -9,7 +9,10 @@ from api.routes.utils import (
     select,
 )
 
-from api.middleware.auth import get_api_keys as get_api_keys_auth
+from api.middleware.auth import (
+  get_api_keys as get_api_keys_auth,
+  delete_api_key as delete_api_key_auth
+)
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import Date, and_, func, or_, cast, extract, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,6 +71,13 @@ async def get_api_keys(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_api_keys_auth(request, db)
+
+@router.delete("/platform/api-keys/{key_id}")
+async def delete_api_key(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    return await delete_api_key_auth(request, db)
 
 
 import stripe
