@@ -11,7 +11,7 @@ from api.routes.utils import (
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 import aiohttp
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -1015,3 +1015,34 @@ async def get_monthly_invoices(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/platform/stripe/dashboard")
+async def get_dashboard_url(
+    request: Request,
+    redirect_url: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Get user's subscription
+    sub = await get_current_plan(
+        db=db,
+        org_id=org_id,
+        user_id=user_id
+    )
+    
+    if not sub:
+        raise HTTPException(status_code=404, detail="No subscription found")
+
+    # Create Stripe billing portal session
+    session = stripe.billing_portal.Session.create(
+        customer=sub["stripe_customer_id"],
+        return_url=redirect_url
+    )
+
+    return JSONResponse({
+        "url": session.url
+    })
