@@ -49,11 +49,9 @@ async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
             content={"error": "Unauthorized access. "}
         )
     org_id = request.state.current_user.get("org_id")
-    body = await request.json()
-
-    limit = body.get("limit")
-    offset = body.get("offset")
-    search = body.get("search")
+    limit = request.query_params.get("limit")
+    offset = request.query_params.get("offset") 
+    search = request.query_params.get("search")
 
 
     filter_conditions = and_(
@@ -66,13 +64,9 @@ async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
         # Include name filter if search is provided, otherwise ignore this filter
         APIKey.name.ilike(f"%{search}%") if search else True
     )
-    query = select(APIKey).where(filter_conditions).limit(limit).offset(offset)
-    count_query = select(func.count()).where(filter_conditions)
+    query = select(APIKey).where(filter_conditions).order_by(APIKey.created_at.desc()).limit(limit).offset(offset)
 
-    # Running in sync mode, but it's ok because we usually don't
-    # have many requests on this endpoint
     result = await db.execute(query)
-    count = await db.execute(count_query)
     
     # Get all keys first
     keys = result.scalars().all()
@@ -81,10 +75,7 @@ async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
     for key in keys:
         key.key = f"****{key.key[-4:]}"
 
-    return {
-        "data": keys,
-        "count": count.scalar_one()
-    }
+    return keys
 
 
 # Dependency to get user data from token
