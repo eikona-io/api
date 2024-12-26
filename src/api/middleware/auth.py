@@ -2,8 +2,9 @@ from fastapi import Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 import os
-from typing import Optional
-from sqlalchemy import select
+from typing import Optional, List
+from fastapi.responses import JSONResponse
+from sqlalchemy import select, and_, func
 from api.models import APIKey
 from api.database import get_db
 
@@ -35,6 +36,55 @@ async def is_key_revoked(key: str, db: AsyncSession) -> bool:
     revoked_key = result.scalar_one_or_none()
     # logger.info(f"Revoked key: {revoked_key}")
     return revoked_key is not None
+
+
+async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
+     # Access the request body
+     # Check for authorized user
+    try:
+        user_id = request.state.current_user["user_id"]
+    except (AttributeError, KeyError):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Unauthorized access. "}
+        )
+    org_id = request.state.current_user.get("org_id")
+    body = await request.json()
+
+    limit = body.get("limit")
+    offset = body.get("offset")
+    search = body.get("search")
+
+
+    filter_conditions = and_(
+        # Include org_id filter if org_id is provided, otherwise use the fallback conditions
+        (APIKey.org_id == org_id) if org_id else and_(
+            APIKey.user_id == user_id,
+            APIKey.org_id.is_(None),
+            APIKey.revoked == False
+        ),
+        # Include name filter if search is provided, otherwise ignore this filter
+        APIKey.name.ilike(f"%{search}%") if search else True
+    )
+    query = select(APIKey).where(filter_conditions).limit(limit).offset(offset)
+    count_query = select(func.count()).where(filter_conditions)
+
+    # Running in sync mode, but it's ok because we usually don't
+    # have many requests on this endpoint
+    result = await db.execute(query)
+    count = await db.execute(count_query)
+    
+    # Get all keys first
+    keys = result.scalars().all()
+    
+    # Mask API keys to only show last 4 digits
+    for key in keys:
+        key.key = f"****{key.key[-4:]}"
+
+    return {
+        "data": keys,
+        "count": count.scalar_one()
+    }
 
 
 # Dependency to get user data from token
