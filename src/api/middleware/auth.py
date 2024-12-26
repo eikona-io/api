@@ -56,10 +56,10 @@ async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
 
     filter_conditions = and_(
         # Include org_id filter if org_id is provided, otherwise use the fallback conditions
-        (APIKey.org_id == org_id) if org_id else and_(
+        APIKey.revoked == False,
+        APIKey.org_id == org_id if org_id else and_(
             APIKey.user_id == user_id,
-            APIKey.org_id.is_(None),
-            APIKey.revoked == False
+            APIKey.org_id.is_(None)
         ),
         # Include name filter if search is provided, otherwise ignore this filter
         APIKey.name.ilike(f"%{search}%") if search else True
