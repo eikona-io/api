@@ -631,3 +631,16 @@ class SubscriptionStatus(SerializableMixin, Base):
     trial_end = Column(DateTime(timezone=True))
     trial_start = Column(DateTime(timezone=True))
     last_invoice_timestamp = Column(DateTime(timezone=True))
+
+class FormSubmission(SerializableMixin, Base):
+    __tablename__ = "form_submissions"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id", ondelete="set null"))
+    org_id = Column(String)
+    inputs = Column(JSON)
+    call_booked = Column(Boolean, nullable=False, default=False)
+    discord_thread_id = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
