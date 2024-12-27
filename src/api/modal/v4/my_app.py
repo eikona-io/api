@@ -1618,22 +1618,6 @@ class ComfyDeployRunner:
         else:
             print(f"Directory {directory_path} does not exist.")
 
-        # Modify index.html to set menu position as docked
-        index_html_path = "/comfyui/web/index.html"
-        if os.path.exists(index_html_path):
-            try:
-                subprocess.run([
-                    'sed', 
-                    '-i.bak',
-                    's/<\/head>/<script>localStorage.setItem("Comfy.MenuPosition.Docked", true);<\/script><\/head>/',
-                    index_html_path
-                ])
-                print("Successfully modified index.html to set docked menu position")
-            except Exception as e:
-                print(f"Error modifying index.html: {e}")
-        else:
-            print(f"index.html not found at {index_html_path}")
-    
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
             comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU") + " --disable-metadata",
             stdout=asyncio.subprocess.PIPE,
