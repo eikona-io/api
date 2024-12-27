@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+from uuid import uuid4
 from fastapi import Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
@@ -101,6 +103,48 @@ async def delete_api_key(request: Request, db: AsyncSession):
     fetchedKey.revoked = True
     await db.commit()
     return fetchedKey
+
+async def create_api_key(request: Request, db: AsyncSession):
+    user_id = request.state.current_user["user_id"]
+    org_id = request.state.current_user.get("org_id")
+    
+    # Get request body
+    body = await request.json()
+    name = body.get("name")
+    
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name is required"})
+
+    # Generate JWT token with user/org info
+    payload = {
+        "user_id": user_id,
+        "iat": datetime.now(timezone.utc)
+    }
+
+    if org_id:
+        payload["org_id"] = org_id
+
+    token = jwt.encode(payload, os.environ["JWT_SECRET"])
+
+    # Create new API key
+    api_key = APIKey(
+        id=uuid4(),
+        name=name,
+        key=token,
+        user_id=user_id,
+        org_id=org_id,
+        revoked=False,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    
+    db.add(api_key)
+    try:
+        await db.commit()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to commit API key: {str(e)}"})
+
+    return {"key": api_key.key}
 
 # Dependency to get user data from token
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):

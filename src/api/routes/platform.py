@@ -11,7 +11,8 @@ from api.routes.utils import (
 
 from api.middleware.auth import (
   get_api_keys as get_api_keys_auth,
-  delete_api_key as delete_api_key_auth
+  delete_api_key as delete_api_key_auth,
+  create_api_key as create_api_key_auth
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import Date, and_, func, or_, cast, extract, text
@@ -71,6 +72,13 @@ async def get_api_keys(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_api_keys_auth(request, db)
+
+@router.post("/platform/api-keys")
+async def create_api_key(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    return await create_api_key_auth(request, db)
 
 @router.delete("/platform/api-keys/{key_id}")
 async def delete_api_key(
