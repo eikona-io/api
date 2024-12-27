@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
 from uuid import uuid4
+from api.routes.utils import select
 from fastapi import Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 import os
 from typing import Optional, List
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, and_
+from sqlalchemy import and_
 from api.models import APIKey
 from api.database import get_db
 
@@ -41,32 +42,24 @@ async def is_key_revoked(key: str, db: AsyncSession) -> bool:
 
 
 async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
-     # Access the request body
-     # Check for authorized user
-    try:
-        user_id = request.state.current_user["user_id"]
-    except (AttributeError, KeyError):
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Unauthorized access. "}
-        )
-    org_id = request.state.current_user.get("org_id")
     limit = request.query_params.get("limit")
     offset = request.query_params.get("offset") 
     search = request.query_params.get("search")
 
 
     filter_conditions = and_(
-        # Include org_id filter if org_id is provided, otherwise use the fallback conditions
         APIKey.revoked == False,
-        APIKey.org_id == org_id if org_id else and_(
-            APIKey.user_id == user_id,
-            APIKey.org_id.is_(None)
-        ),
         # Include name filter if search is provided, otherwise ignore this filter
         APIKey.name.ilike(f"%{search}%") if search else True
     )
-    query = select(APIKey).where(filter_conditions).order_by(APIKey.created_at.desc()).limit(limit).offset(offset)
+    query = (
+        select(APIKey)
+        .where(filter_conditions)
+        .order_by(APIKey.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .apply_org_check(request)
+    )
 
     result = await db.execute(query)
     
@@ -80,25 +73,19 @@ async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
     return keys
 
 async def delete_api_key(request: Request, db: AsyncSession):
-    user_id = request.state.current_user["user_id"]
-    org_id = request.state.current_user.get("org_id")
     key_id = request.path_params.get("key_id")
 
     # Query the API key
-    query = select(APIKey).where(APIKey.id == key_id)
+    query = (
+        select(APIKey)
+        .where(APIKey.id == key_id)
+        .apply_org_check(request)
+    )
     result = await db.execute(query)
     fetchedKey = result.scalar_one_or_none()
 
     if not fetchedKey:
         return JSONResponse(status_code=404, content={"error": "API key not found"})
-
-    # Validate ownership
-    if org_id:
-        if fetchedKey.org_id != org_id:
-            return JSONResponse(status_code=403, content={"error": "API key does not belong to the current organization"})
-    else:
-        if fetchedKey.user_id != user_id:
-            return JSONResponse(status_code=403, content={"error": "API key does not belong to the current user"})
 
     fetchedKey.revoked = True
     await db.commit()
