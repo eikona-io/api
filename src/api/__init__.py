@@ -30,6 +30,7 @@ from api.routes import (
     models,
     platform,
     search,
+    form,
 )
 from api.modal import builder
 from api.models import APIKey
@@ -229,6 +230,7 @@ api_router.include_router(files.router)
 api_router.include_router(models.router)
 api_router.include_router(platform.router)
 api_router.include_router(search.router)
+api_router.include_router(form.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)
