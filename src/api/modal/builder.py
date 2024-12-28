@@ -4,7 +4,7 @@ from typing import Optional, Dict, List, Any
 from uuid import uuid4
 
 from api.database import get_db_context
-from sqlalchemy import update
+from sqlalchemy import update, select
 from database import get_clickhouse_client
 from models import Machine
 from routes.utils import select
@@ -214,6 +214,7 @@ def set_machine_always_on(app_name: str, body: KeepWarmBody):
 
 
 class CancelFunctionBody(BaseModel):
+    run_id: Optional[str] = None
     function_id: str
 
 
@@ -226,7 +227,6 @@ def cancel_run(body: CancelFunctionBody):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancel function {str(e)}")
     return {"status": "success"}
-
 
 @router.websocket("/ws/{machine_id}")
 async def websocket_endpoint(
