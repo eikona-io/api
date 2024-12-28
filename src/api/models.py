@@ -475,6 +475,9 @@ class UserSettings(SerializableMixin, Base):
     machine_limit = Column(Float)
     always_on_machine_limit = Column(Integer)
     credit = Column(Float, default=0)
+    
+    max_gpu = Column(Integer, default=0)
+    enable_custom_output_bucket = Column(Boolean, default=False)
     # Optionally, add relationship to User model
     # user = relationship("User", back_populates="settings")
 
