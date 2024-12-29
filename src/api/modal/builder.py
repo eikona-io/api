@@ -857,27 +857,29 @@ async def build_logic(item: BuildMachineItem):
     # Check for errors
     if process.returncode != 0:
         logger.info("An error occurred.")
-        # Send a post request with the json body machine_id to the callback url
         machine_logs.append(
             {"logs": "Unable to build the app image.", "timestamp": time.time()}
         )
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                item.callback_url,
-                headers={
-                    "Content-Type": "application/json",
-                    "bypass-tunnel-reminder": "true",
-                },
-                data=json.dumps(
-                    {
-                        "machine_id": item.machine_id,
-                        "build_log": json.dumps(machine_logs),
-                        "import_failed_logs": json.dumps(import_failed_logs)
-                        if not item.skip_static_assets
-                        else None,
-                    }
-                ).encode("utf-8"),
+        
+        # Direct database update instead of HTTP request
+        async with get_db_context() as db:
+            update_stmt = (
+                update(Machine)
+                .where(Machine.id == item.machine_id)
+                .values(
+                    status="error",
+                    build_log=json.dumps(machine_logs),
+                    import_failed_logs=json.dumps(import_failed_logs)
+                    if not item.skip_static_assets
+                    else None,
+                )
+                .returning(Machine)
             )
+            result = await db.execute(update_stmt)
+            await db.commit()
+            machine = result.scalar_one()
+            await db.refresh(machine)
+
         await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
         return
 
@@ -888,23 +890,25 @@ async def build_logic(item: BuildMachineItem):
                 "timestamp": time.time(),
             }
         )
-        async with aiohttp.ClientSession() as session:
-            await session.post(
-                item.callback_url,
-                headers={
-                    "Content-Type": "application/json",
-                    "bypass-tunnel-reminder": "true",
-                },
-                data=json.dumps(
-                    {
-                        "machine_id": item.machine_id,
-                        "build_log": json.dumps(machine_logs),
-                        "import_failed_logs": json.dumps(import_failed_logs)
-                        if not item.skip_static_assets
-                        else None,
-                    }
-                ).encode("utf-8"),
+        
+        # Direct database update instead of HTTP request
+        async with get_db_context() as db:
+            update_stmt = (
+                update(Machine)
+                .where(Machine.id == item.machine_id)
+                .values(
+                    status="error",
+                    build_log=json.dumps(machine_logs),
+                    import_failed_logs=json.dumps(import_failed_logs)
+                    if not item.skip_static_assets
+                    else None,
+                )
+                .returning(Machine)
             )
+            result = await db.execute(update_stmt)
+            await db.commit()
+            machine = result.scalar_one()
+            await db.refresh(machine)
         await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
         return
 
