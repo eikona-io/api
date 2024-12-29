@@ -21,6 +21,7 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         try:
+            # TODO: Enable this once we fixed the override
             if self.should_check_spend_limit(request):
                 await self.check_spend_limit(request)
             response = await call_next(request)
@@ -56,7 +57,6 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
         redis_key = f"plan:{entity_id}"
         raw_value = await self.redis.get(redis_key)
         
-        
         if not raw_value:
             # Create default plan data with $5 spend limit
             default_plan = PlanInfo(spend_limit=5.0)
@@ -65,21 +65,22 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
         
         plan_data = json.loads(raw_value)
         value = PlanInfo.model_validate(plan_data)
+        
+        if value.plan == "free":
+            if "spend_limit" not in plan_data:
+                updated_data = value.model_dump()
+                await self.redis.set(redis_key, json.dumps(updated_data))
+                logger.info(f"Updated Redis with default spend_limit for {entity_type} {entity_id}")
 
-        if "spend_limit" not in plan_data:
-            updated_data = value.model_dump()
-            await self.redis.set(redis_key, json.dumps(updated_data))
-            logger.info(f"Updated Redis with default spend_limit for {entity_type} {entity_id}")
+            if value.spent is not None and value.spent > value.spend_limit:
+                logger.warning(f"Spend limit exceeded for {entity_type} {entity_id}. Spent: {value.spent}, Limit: {value.spend_limit}")
+                raise HTTPException(
+                    status_code=403,
+                    detail="Spend limit exceeded. Please increase your budget limit or contact support."
+                )
 
-        if value.spent is not None and value.spent > value.spend_limit:
-            logger.warning(f"Spend limit exceeded for {entity_type} {entity_id}. Spent: {value.spent}, Limit: {value.spend_limit}")
-            raise HTTPException(
-                status_code=403,
-                detail="Spend limit exceeded. Please increase your budget limit or contact support."
+            logger.debug(
+                f"{entity_type.capitalize()} {entity_id} - Plan: {value.plan}, Status: {value.status}, "
+                f"Expires: {value.expires_at}, Spent: {value.spent}, "
+                f"Spend limit: {value.spend_limit}"
             )
-
-        logger.debug(
-            f"{entity_type.capitalize()} {entity_id} - Plan: {value.plan}, Status: {value.status}, "
-            f"Expires: {value.expires_at}, Spent: {value.spent}, "
-            f"Spend limit: {value.spend_limit}"
-        )

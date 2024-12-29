@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from uuid import UUID, uuid4
+import uuid
 
 from pydantic import BaseModel
 
@@ -42,7 +43,7 @@ from api.models import (
 )
 from api.database import get_db
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 # from fastapi_pagination import Page, add_pagination, paginate
 
 logger = logging.getLogger(__name__)
@@ -162,7 +163,7 @@ async def clone_workflow(
     # Create new workflow as a clone
     new_workflow = Workflow(
         id=uuid4(),
-        name=f"{workflow.name} (Cloned)", 
+        name=f"{workflow.name} (Cloned)",
         org_id=workflow.org_id,
         user_id=workflow.user_id,
         created_at=datetime.now(timezone.utc),
@@ -186,7 +187,7 @@ async def clone_workflow(
             updated_at=datetime.now(timezone.utc),
             version=1,
             comment="initial version",
-            user_id=workflow.user_id
+            user_id=workflow.user_id,
         )
         db.add(new_version)
 
@@ -573,11 +574,8 @@ async def create_workflow(
     try:
         user_id = request.state.current_user["user_id"]
     except (AttributeError, KeyError):
-        return JSONResponse(
-            status_code=401,
-            content={"error": "Unauthorized access. "}
-        )
-    
+        return JSONResponse(status_code=401, content={"error": "Unauthorized access. "})
+
     # Validate JSON first
     try:
         json.loads(body.workflow_json)
@@ -630,7 +628,7 @@ async def create_workflow(
             version=1,
             comment="initial version",
         )
-        
+
         if body.workflow_api:
             new_version.workflow_api = json.loads(body.workflow_api)
 
@@ -651,3 +649,58 @@ async def create_workflow(
         return JSONResponse(
             status_code=500, content={"error": f"Failed to create workflow: {str(e)}"}
         )
+
+
+class WorkflowVersionCreate(BaseModel):
+    workflow: Dict[str, Any]
+    workflow_api: Dict[str, Any]
+    comment: Optional[str] = None
+
+
+@router.post("/workflow/{workflow_id}/version")
+async def create_workflow_version(
+    request: Request,
+    workflow_id: str,
+    version_data: WorkflowVersionCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        current_user = request.state.current_user
+        user_id = current_user["user_id"]
+        org_id = current_user["org_id"] if "org_id" in current_user else None
+
+        async with db.begin():
+            # Get the next version number
+            version_query = select(
+                func.coalesce(func.max(WorkflowVersion.version), 0) + 1
+            ).where(WorkflowVersion.workflow_id == workflow_id)
+            result = await db.execute(version_query)
+            next_version = result.scalar_one()
+
+            # Create new version
+            new_version = WorkflowVersion(
+                id=str(uuid.uuid4()),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                workflow_id=workflow_id,
+                version=next_version,
+                user_id=user_id,
+                workflow=version_data.workflow,
+                workflow_api=version_data.workflow_api,
+                comment=version_data.comment,
+            )
+            db.add(new_version)
+
+            # Update workflow timestamp
+            workflow = await db.get(Workflow, workflow_id)
+            if not workflow:
+                raise HTTPException(status_code=404, detail="Workflow not found")
+
+            workflow.updated_at = func.now()
+            await db.flush()
+
+        return new_version.to_dict()
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

@@ -71,6 +71,7 @@ import httpx
 from typing import Optional, List
 from uuid import UUID
 import base64
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -388,6 +389,46 @@ async def create_run_stream(
     data.execution_mode = "stream"
     return await _create_run(request, data, background_tasks, db, client)
 
+class CancelFunctionBody(BaseModel):
+    function_id: str
+
+@router.post("/run/{run_id}/cancel")
+async def cancel_run(
+    run_id: str,
+    body: CancelFunctionBody,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        # Cancel the modal function
+        a = modal.functions.FunctionCall.from_id(body.function_id)
+        a.cancel()
+
+        # Update the database if run_id is provided
+        if run_id:
+            # First check if the run is already in an end state
+            query = select(WorkflowRun).where(WorkflowRun.id == run_id)
+            result = await db.execute(query)
+            existing_run = result.scalar_one_or_none()
+
+            if existing_run and existing_run.status not in ["success", "failed", "timeout", "cancelled"]:
+                now = dt.datetime.now(dt.UTC)
+                # Update the run status
+                stmt = (
+                    update(WorkflowRun)
+                    .where(WorkflowRun.modal_function_call_id == body.function_id)
+                    .values(
+                        status="cancelled",
+                        updated_at=now,
+                        ended_at=now
+                    )
+                    .returning(WorkflowRun)
+                )
+                await db.execute(stmt)
+                await db.commit()
+
+        return {"status": "success", "message": "Function cancelled"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error cancel function {str(e)}")
 
 # @router.post(
 #     "/run/workflow",
