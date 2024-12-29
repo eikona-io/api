@@ -43,7 +43,7 @@ async def get_user_meta(
 
 class UserSettingsUpdateRequest(BaseModel):
     api_version: str
-    custom_output_bucket: bool
+    custom_output_bucket: Optional[bool] = None
     hugging_face_token: Optional[str] = None
     output_visibility: str
     s3_access_key_id: Optional[str] = None
@@ -52,7 +52,7 @@ class UserSettingsUpdateRequest(BaseModel):
     s3_region: Optional[str] = None
     spend_limit: Optional[float] = None
 
-@router.patch("/platform/user-settings")
+@router.put("/platform/user-settings")
 async def update_user_settings(
     request: Request,
     body: UserSettingsUpdateRequest,
