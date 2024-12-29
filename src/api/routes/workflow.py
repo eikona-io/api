@@ -372,6 +372,56 @@ async def get_versions(
     return JSONResponse(content=runs_data)
 
 
+@router.post("/workflow/{workflow_id}/version")
+async def post_version(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = request.state.current_user["user_id"]
+    body = await request.json()
+
+    # Check if the user can access this workflow
+    workflow = await db.execute(
+        select(Workflow).where(Workflow.id == workflow_id).apply_org_check(request)
+    )
+    workflow = workflow.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(
+            status_code=404, detail="Workflow not found"
+        )
+    
+    # Create new version
+    workflow_version = WorkflowVersion(
+        id=uuid4(),
+        workflow_id=workflow_id,
+        user_id=user_id,
+        workflow=body.get("workflow"),
+        workflow_api=body.get("workflow_api"),
+        comment=body.get("comment"),
+        version=(
+            select(func.coalesce(func.max(WorkflowVersion.version), 0) + 1)
+            .where(WorkflowVersion.workflow_id == workflow_id)
+            .scalar_subquery()
+        ),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    db.add(workflow_version)
+
+    # Update workflow updated_at timestamp 
+    workflow.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(workflow_version)
+
+    return {
+        "version": workflow_version.version,
+        "id": workflow_version.id,
+        "message": f"Workflow v{workflow_version.version} created",
+    }
+
 from sqlalchemy import text
 
 
