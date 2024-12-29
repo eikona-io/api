@@ -21,8 +21,9 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         try:
-            if self.should_check_spend_limit(request):
-                await self.check_spend_limit(request)
+            # TODO: Enable this once we fixed the override
+            # if self.should_check_spend_limit(request):
+            #     await self.check_spend_limit(request)
             response = await call_next(request)
             return response
         except HTTPException as exc:
