@@ -350,14 +350,9 @@ async def get_api_plan(
     workflow_count = await get_workflow_count(db, request)
     user_settings = await get_user_settings_util(request, db)
 
-    # if plans is None:
-    #     raise HTTPException(status_code=400, detail="Payment issue - No plans found")
-
-    # if plans.get("payment_issue"):
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail="Payment issue - " + plans.get("payment_issue_reason"),
-    #     )
+    # Handle case where plans is None
+    if plans is None:
+        plans = {"plans": []}  # Provide default empty plans
 
     # Check if user has subscription
     has_subscription = any(
