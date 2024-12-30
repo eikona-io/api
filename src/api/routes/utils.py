@@ -598,55 +598,6 @@ async def create_topic_if_not_exists(project_id: str, topic_id: str):
 
 async def send_realtime_update(id: str, data: dict):
     return
-    logging.info(f"Sending updateWorkflow event via POST: {id}")
-
-    # try:
-    #     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
-    #     topic_id = "realtime-updates"  # Single topic for all realtime updates
-
-    #     # Create the topic if it doesn't exist
-    #     # await create_topic_if_not_exists(project_id, topic_id)
-    #     publisher = pubsub_v1.PublisherClient()
-
-    #     # Create a publisher client
-    #     topic_path = publisher.topic_path(project_id, topic_id)
-
-    #     # Prepare the message
-    #     message_data = json.dumps({"id": id, "data": data}).encode("utf-8")
-
-    #     # Publish the message
-    #     # Publish the message asynchronously with the ID as an attribute
-    #     publish_future = publisher.publish(
-    #         topic_path,
-    #         data=message_data,
-    #         id=str(id),  # Add the ID as a message attribute
-    #     )
-    #     # Use asyncio to wait for the future without blocking
-    #     message_id = await asyncio.wrap_future(publish_future)
-
-    #     logging.info(f"Published realtime update message with ID: {message_id}")
-    # except Exception as error:
-    #     print(data)
-    #     logging.error(f"Error sending realtime update event: {error}")
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{os.getenv('NEXT_PUBLIC_REALTIME_SERVER_2')}/update"
-            json_data = json.dumps({"id": id, "data": data})
-            async with session.post(
-                url, data=json_data, headers={"Content-Type": "application/json"}
-            ) as response:
-                if response.status >= 400:
-                    raise aiohttp.ClientResponseError(
-                        response.request_info,
-                        response.history,
-                        status=response.status,
-                        message=f"Failed to send update: {response.reason}",
-                        headers=response.headers,
-                    )
-    except Exception as error:
-        print(data)
-        logging.error(f"Error sending updateWorkflow event: {error}")
 
 
 async def fetch_with_timeout(url, options, timeout=20):
