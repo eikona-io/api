@@ -3,7 +3,7 @@ import json
 import os
 from uuid import UUID, uuid4
 import uuid
-
+from sqlalchemy.orm import defer
 from pydantic import BaseModel
 
 from .workflows import CustomJSONEncoder
@@ -204,6 +204,7 @@ async def get_all_runs(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
     with_outputs: bool = True,
+    with_inputs: bool = True,
 ):
     user_settings = await get_user_settings(request, db)
 
@@ -219,10 +220,8 @@ async def get_all_runs(
 
     query = (
         select(WorkflowRunWithExtra)
-        .options(*query_options)  # Unpack the options list
-        .outerjoin(
-            WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
-        )
+        .options(*query_options)
+        .outerjoin(WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id)
         .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
         .where(WorkflowRun.workflow_id == workflow_id)
         .where(Workflow.deleted == False)
@@ -231,9 +230,16 @@ async def get_all_runs(
         .paginate(limit, offset)
     )
 
+    # Instead of with_only_columns, use column_descriptions to deferred load specific columns
+    if not with_inputs:
+        query = query.options(defer(WorkflowRunWithExtra.workflow_inputs))
+    
+    # Always defer run_log
+    query = query.options(defer(WorkflowRunWithExtra.run_log))
+
     result = await db.execute(query)
     runs = result.unique().scalars().all()
-
+    
     if not runs:
         return []
     for run in runs:

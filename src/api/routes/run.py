@@ -149,8 +149,8 @@ def get_comfy_deploy_runner(machine_id: str, gpu: str):
 )
 async def create_run_all(
     request: Request,
-    data: CreateRunRequest,
     background_tasks: BackgroundTasks,
+    data: CreateRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -169,8 +169,8 @@ async def create_run_all(
 )
 async def queue_deployment_run(
     request: Request,
-    data: DeploymentRunRequest,
     background_tasks: BackgroundTasks,
+    data: DeploymentRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -189,8 +189,8 @@ async def queue_deployment_run(
 )
 async def sync_deployment_run(
     request: Request,
-    data: DeploymentRunRequest,
     background_tasks: BackgroundTasks,
+    data: DeploymentRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -224,8 +224,8 @@ async def sync_deployment_run(
 )
 async def create_run_deployment_stream(
     request: Request,
-    data: DeploymentRunRequest,
     background_tasks: BackgroundTasks,
+    data: DeploymentRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -245,8 +245,8 @@ async def create_run_deployment_stream(
 )
 async def queue_workflow_run(
     request: Request,
-    data: WorkflowRunRequest,
     background_tasks: BackgroundTasks,
+    data: WorkflowRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -265,8 +265,8 @@ async def queue_workflow_run(
 )
 async def sync_workflow_run(
     request: Request,
-    data: WorkflowRunRequest,
     background_tasks: BackgroundTasks,
+    data: WorkflowRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -300,8 +300,8 @@ async def sync_workflow_run(
 )
 async def create_run_workflow_stream(
     request: Request,
-    data: WorkflowRunRequest,
     background_tasks: BackgroundTasks,
+    data: WorkflowRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -323,8 +323,8 @@ async def create_run_workflow_stream(
 )
 async def create_run_queue(
     request: Request,
-    data: CreateRunRequest,
     background_tasks: BackgroundTasks,
+    data: CreateRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -345,8 +345,8 @@ async def create_run_queue(
 )
 async def create_run_sync(
     request: Request,
-    data: CreateRunRequest,
     background_tasks: BackgroundTasks,
+    data: CreateRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
@@ -381,8 +381,8 @@ async def create_run_sync(
 )
 async def create_run_stream(
     request: Request,
-    data: CreateRunRequest,
     background_tasks: BackgroundTasks,
+    data: CreateRunRequest = Body(..., max_length=4_718_592),
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ) -> StreamingResponse:
