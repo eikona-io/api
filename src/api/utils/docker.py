@@ -131,7 +131,9 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
             comfy_ui_override = steps.steps.pop(comfy_ui_index)
         docker_commands = generate_docker_commands_from_docker_steps(steps)
     elif deps:
-        docker_commands = generate_docker_commands(DependencyGraph(**deps))
+        # Convert deps to DependencyGraph if it's a dict
+        deps = DependencyGraph(**deps) if isinstance(deps, dict) else deps
+        docker_commands = generate_docker_commands(deps)
         
     print("log_docker_commands",steps,docker_commands)
         
