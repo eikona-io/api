@@ -565,11 +565,11 @@ class DeploymentModel(BaseModel):
     share_slug: Optional[str]
     description: Optional[str]
     share_options: Optional[Dict[str, Any]]
-    showcase_media: Optional[Dict[str, Any]]
+    showcase_media: Optional[List[Dict[str, Any]]]
     environment: DeploymentEnvironment
     created_at: datetime
     updated_at: datetime
-    workflow: WorkflowWithName
+    workflow: Optional[WorkflowWithName] = None
 
     input_types: Optional[List[InputModel]] = None
     output_types: Optional[List[OutputModel]] = None
