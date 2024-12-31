@@ -292,6 +292,9 @@ class User(SerializableMixin, Base):
 
     id = Column(String, primary_key=True)
     name = Column(String)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+    
     # Add other user fields as needed
 
     # api_keys = relationship("APIKey", back_populates="user")
