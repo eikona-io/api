@@ -203,6 +203,7 @@ current_endpoint = os.getenv("CURRENT_API_URL")
 
 
 async def create_machine_version(
+    request: Request,
     db: AsyncSession,
     machine: Machine,
     user_id: str,
@@ -211,7 +212,17 @@ async def create_machine_version(
     # if the machine builder version is not 4, pass this function
     if machine.machine_builder_version != "4":
         return
-    
+
+    # check if user is free tier, if so, pass this function
+    plan = (
+        request.state.current_user["plan"]
+        if "plan" in request.state.current_user
+        else "free"
+    )
+    print("plan", plan)
+    if plan == "free":
+        return
+
     new_version_id = uuid.uuid4()
 
     # Create new version without transaction (caller manages transaction)
@@ -263,7 +274,7 @@ async def create_serverless_machine(
         await db.flush()
 
         # Create initial version (uses same transaction)
-        await create_machine_version(db, machine, user_id)
+        await create_machine_version(request, db, machine, user_id)
 
     # Transaction automatically commits here if successful
     await db.refresh(machine)  # Only one refresh at the end
@@ -333,7 +344,7 @@ async def update_serverless_machine(
 
     if machine.machine_version_id is None and machine.machine_builder_version == "4":
         # give it a default version 1
-        await create_machine_version(db, machine, user_id)
+        await create_machine_version(request, db, machine, user_id)
         await db.commit()
         await db.refresh(machine)  # Single refresh at the end
 
@@ -393,7 +404,9 @@ async def update_serverless_machine(
             next_version = (current_version.scalar() or 0) + 1
 
             # Create new version
-            await create_machine_version(db, machine, user_id, version=next_version)
+            await create_machine_version(
+                request, db, machine, user_id, version=next_version
+            )
         else:
             machine.machine_version_id = rollback_version_id
 
@@ -406,7 +419,6 @@ async def update_serverless_machine(
             machine_version.updated_at = func.now()
             machine_version.status = machine.status
             await db.commit()
-        
 
         # Prepare build parameters
         volumes = await retrieve_model_volumes(request, db)
