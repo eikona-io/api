@@ -6,7 +6,7 @@ from uuid import uuid4
 from api.database import get_db_context
 from sqlalchemy import update, select
 from database import get_clickhouse_client
-from models import Machine
+from models import Machine, MachineVersion
 from routes.utils import select
 from pydantic import BaseModel, Field, field_validator
 from fastapi import (
@@ -163,6 +163,7 @@ class BuildMachineItem(BaseModel):
     prestart_command: Optional[str] = Field(default="")
     extra_args: Optional[str] = Field(default="")
     modal_app_id: Optional[str] = None
+    machine_version_id: Optional[str] = None
 
     @field_validator("gpu")
     @classmethod
@@ -227,6 +228,7 @@ def cancel_run(body: CancelFunctionBody):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancel function {str(e)}")
     return {"status": "success"}
+
 
 @router.websocket("/ws/{machine_id}")
 async def websocket_endpoint(
@@ -503,6 +505,38 @@ async def insert_to_clickhouse(table: str, data: list):
     await client.insert(table=table, data=data)
 
 
+async def update_machine_version_build_time(
+    db: AsyncSession,
+    machine_version_id: str,
+    status: str,
+    build_log: str,
+    build_time: Optional[float] = None,
+) -> None:
+    if not machine_version_id:
+        return
+
+    machine_version = await db.execute(
+        select(MachineVersion).where(MachineVersion.id == machine_version_id)
+    )
+    machine_version = machine_version.scalar_one_or_none()
+
+    if machine_version:
+        if build_time is not None:
+            # Calculate new updated_at by adding build_time to created_at
+            new_updated_at = machine_version.created_at + dt.timedelta(
+                seconds=build_time
+            )
+        else:
+            # If no build time provided, use current time
+            new_updated_at = dt.datetime.now()
+
+        await db.execute(
+            update(MachineVersion)
+            .where(MachineVersion.id == machine_version_id)
+            .values(updated_at=new_updated_at, status=status, build_log=build_log)
+        )
+
+
 async def build_logic(item: BuildMachineItem):
     # Deploy to modal
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -645,6 +679,8 @@ async def build_logic(item: BuildMachineItem):
 
         import_failed_logs = import_failed_logs_cache[item.machine_id]
 
+        machine_built_time = None
+
         build_info_queue = asyncio.Queue()
 
         # Initialize a buffer for logs
@@ -703,6 +739,10 @@ async def build_logic(item: BuildMachineItem):
                                 {"logs": l, "timestamp": time.time()}
                             )
 
+                        if "App deployed in" in l and "🎉" in l:
+                            time_str = l.split("in ")[1].split("s!")[0]
+                            machine_built_time = float(time_str)
+
                         if l.startswith("APPID="):
                             app_id = l.split("=")[1].strip()
                             await build_info_queue.put(
@@ -753,18 +793,8 @@ async def build_logic(item: BuildMachineItem):
                                         "timestamp": time.time(),
                                     },
                                 )
-                                # await machine_id_websocket_dict[
-                                #     item.machine_id
-                                # ].send_text(
-                                #     json.dumps(
-                                #         {
-                                #             "event": "FINISHED",
-                                #             "data": {
-                                #                 "status": "succuss",
-                                #             },
-                                #         }
-                                #     )
-                                # )
+
+                        # if ()
 
                     else:
                         # is error
@@ -860,9 +890,16 @@ async def build_logic(item: BuildMachineItem):
         machine_logs.append(
             {"logs": "Unable to build the app image.", "timestamp": time.time()}
         )
-        
+
         # Direct database update instead of HTTP request
         async with get_db_context() as db:
+            await update_machine_version_build_time(
+                db=db,
+                machine_version_id=item.machine_version_id,
+                status="error",
+                build_log=json.dumps(machine_logs),
+            )
+
             update_stmt = (
                 update(Machine)
                 .where(Machine.id == item.machine_id)
@@ -890,9 +927,16 @@ async def build_logic(item: BuildMachineItem):
                 "timestamp": time.time(),
             }
         )
-        
+
         # Direct database update instead of HTTP request
         async with get_db_context() as db:
+            await update_machine_version_build_time(
+                db=db,
+                machine_version_id=item.machine_version_id,
+                status="error",
+                build_log=json.dumps(machine_logs),
+            )
+
             update_stmt = (
                 update(Machine)
                 .where(Machine.id == item.machine_id)
@@ -937,6 +981,18 @@ async def build_logic(item: BuildMachineItem):
     #     )
     if url is not None:
         async with get_db_context() as db:
+            # Update machine version build time
+            await update_machine_version_build_time(
+                db=db,
+                machine_version_id=item.machine_version_id,
+                build_time=machine_built_time,
+                status="ready",
+                build_log=json.dumps(machine_logs),
+            )
+            
+            print("machine_logs", machine_logs)
+
+            # Update machine status
             update_stmt = (
                 update(Machine)
                 .where(Machine.id == item.machine_id)
@@ -964,6 +1020,13 @@ async def build_logic(item: BuildMachineItem):
                 )
     else:
         async with get_db_context() as db:
+            await update_machine_version_build_time(
+                db=db,
+                machine_version_id=item.machine_version_id,
+                status="error",
+                build_log=json.dumps(machine_logs),
+            )
+
             update_stmt = (
                 update(Machine)
                 .where(Machine.id == item.machine_id)
