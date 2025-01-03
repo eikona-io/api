@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+
 # from http.client import HTTPException
 from fastapi import Request, HTTPException, Depends
 import os
@@ -28,7 +29,14 @@ from .utils import generate_persistent_token, select, is_valid_uuid
 from sqlalchemy import func, cast, String, or_
 from fastapi.responses import JSONResponse
 
-from api.models import Deployment, GPUEvent, Machine, Workflow
+from api.models import (
+    Deployment,
+    GPUEvent,
+    Machine,
+    Workflow,
+    MachineVersion,
+    get_machine_columns,
+)
 
 # from sqlalchemy import select
 from api.database import get_db
@@ -96,9 +104,7 @@ async def get_all_machines(
             machines_query = machines_query.where(Machine.id == search)
         else:
             # Name search using trigram similarity for better performance
-            machines_query = machines_query.where(
-                Machine.name.ilike(f"%{search}%")
-            )
+            machines_query = machines_query.where(Machine.name.ilike(f"%{search}%"))
 
     if limit:
         machines_query = machines_query.limit(limit)
@@ -147,9 +153,11 @@ async def get_machine_events(
     events = events.scalars().all()
     return JSONResponse(content=[event.to_dict() for event in events])
 
+
 class DockerCommand(BaseModel):
     when: Literal["before", "after"]
     commands: List[str]
+
 
 class ServerlessMachineModel(BaseModel):
     name: str
@@ -168,6 +176,7 @@ class ServerlessMachineModel(BaseModel):
     python_version: Optional[str] = None
     extra_args: Optional[str] = None
     prestart_command: Optional[str] = None
+    keep_warm: Optional[int] = 0
 
 
 class UpdateServerlessMachineModel(BaseModel):
@@ -193,6 +202,38 @@ class UpdateServerlessMachineModel(BaseModel):
 current_endpoint = os.getenv("CURRENT_API_URL")
 
 
+async def create_machine_version(
+    db: AsyncSession,
+    machine: Machine,
+    user_id: str,
+    version: int = 1,
+) -> MachineVersion:
+    # if the machine builder version is not 4, pass this function
+    if machine.machine_builder_version != "4":
+        return
+    
+    new_version_id = uuid.uuid4()
+
+    # Create new version without transaction (caller manages transaction)
+    machine_version = MachineVersion(
+        id=new_version_id,
+        machine_id=machine.id,
+        version=version,
+        user_id=user_id,
+        created_at=func.now(),
+        updated_at=func.now(),
+        **{col: getattr(machine, col) for col in get_machine_columns().keys()},
+    )
+    db.add(machine_version)
+    await db.flush()
+
+    # Update machine with new version
+    machine.machine_version_id = machine_version.id
+    machine.updated_at = func.now()
+
+    return machine_version
+
+
 @router.post("/machine/serverless")
 async def create_serverless_machine(
     request: Request,
@@ -200,29 +241,36 @@ async def create_serverless_machine(
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
+    new_machine_id = uuid.uuid4()
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
 
-    machine = Machine(
-        **machine.model_dump(),
-        id=uuid.uuid4(),
-        type=MachineType.COMFY_DEPLOY_SERVERLESS,
-        user_id=user_id,
-        org_id=org_id,
-        status="building",
-        endpoint="not-ready",
-        created_at=func.now(),
-        updated_at=func.now(),
-    )
+    async with db.begin():  # Single transaction for entire operation
+        # Create initial machine
+        machine = Machine(
+            **machine.model_dump(),
+            id=new_machine_id,
+            type=MachineType.COMFY_DEPLOY_SERVERLESS,
+            user_id=user_id,
+            org_id=org_id,
+            status="building",
+            endpoint="not-ready",
+            created_at=func.now(),
+            updated_at=func.now(),
+        )
+        db.add(machine)
+        await db.flush()
+
+        # Create initial version (uses same transaction)
+        await create_machine_version(db, machine, user_id)
+
+    # Transaction automatically commits here if successful
+    await db.refresh(machine)  # Only one refresh at the end
 
     volumes = await retrieve_model_volumes(request, db)
     docker_commands = generate_all_docker_commands(machine)
     machine_token = generate_persistent_token(user_id, org_id)
-
-    db.add(machine)
-    await db.commit()
-    await db.refresh(machine)
 
     params = BuildMachineItem(
         machine_id=str(machine.id),
@@ -250,6 +298,7 @@ async def create_serverless_machine(
         python_version=machine.python_version,
         prestart_command=machine.prestart_command,
         extra_args=machine.extra_args,
+        machine_version_id=str(machine.machine_version_id),
     )
 
     background_tasks.add_task(build_logic, params)
@@ -262,6 +311,7 @@ async def update_serverless_machine(
     request: Request,
     machine_id: UUID,
     update_machine: UpdateServerlessMachineModel,
+    rollback_version_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
@@ -280,6 +330,12 @@ async def update_serverless_machine(
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    if machine.machine_version_id is None and machine.machine_builder_version == "4":
+        # give it a default version 1
+        await create_machine_version(db, machine, user_id)
+        await db.commit()
+        await db.refresh(machine)  # Single refresh at the end
 
     fields_to_trigger_rebuild = [
         "allow_concurrent_inputs",
@@ -301,7 +357,9 @@ async def update_serverless_machine(
 
     update_machine_dict = update_machine.model_dump()
 
-    rebuild = update_machine_dict.get('is_trigger_rebuild', False) or check_fields_for_changes(
+    rebuild = update_machine_dict.get(
+        "is_trigger_rebuild", False
+    ) or check_fields_for_changes(
         machine, update_machine_dict, fields_to_trigger_rebuild
     )
     keep_warm_changed = check_fields_for_changes(
@@ -323,6 +381,34 @@ async def update_serverless_machine(
     machine.updated_at = func.now()
 
     if rebuild:
+        machine.status = "building"
+
+        # Get next version number
+        if not rollback_version_id:
+            current_version = await db.execute(
+                select(func.max(MachineVersion.version)).where(
+                    MachineVersion.machine_id == machine.id
+                )
+            )
+            next_version = (current_version.scalar() or 0) + 1
+
+            # Create new version
+            await create_machine_version(db, machine, user_id, version=next_version)
+        else:
+            machine.machine_version_id = rollback_version_id
+
+            # update that machine version's created_at to now
+            machine_version = await db.execute(
+                select(MachineVersion).where(MachineVersion.id == rollback_version_id)
+            )
+            machine_version = machine_version.scalars().first()
+            machine_version.created_at = func.now()
+            machine_version.updated_at = func.now()
+            machine_version.status = machine.status
+            await db.commit()
+        
+
+        # Prepare build parameters
         volumes = await retrieve_model_volumes(request, db)
         docker_commands = generate_all_docker_commands(machine)
         machine_token = generate_persistent_token(user_id, org_id)
@@ -345,15 +431,15 @@ async def update_serverless_machine(
             install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
             allow_background_volume_commits=machine.allow_background_volume_commits,
             retrieve_static_assets=machine.retrieve_static_assets,
-            skip_static_assets=update_machine_dict.get('is_trigger_rebuild', False),
+            skip_static_assets=False,
             docker_commands=docker_commands.model_dump()["docker_commands"],
             machine_builder_version=machine.machine_builder_version,
             base_docker_image=machine.base_docker_image,
             python_version=machine.python_version,
             prestart_command=machine.prestart_command,
             extra_args=machine.extra_args,
+            machine_version_id=str(machine.machine_version_id),
         )
-        machine.status = "building"
         background_tasks.add_task(build_logic, params)
 
     if keep_warm_changed and not rebuild:
@@ -366,6 +452,150 @@ async def update_serverless_machine(
     await db.refresh(machine)
 
     return JSONResponse(content=machine.to_dict())
+
+
+@router.get("/machine/serverless/{machine_id}/versions")
+async def get_machine_versions(
+    request: Request,
+    machine_id: UUID,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    # First check if user has access to this machine
+    await get_machine(request, machine_id, db)
+
+    machine_versions = await db.execute(
+        select(MachineVersion)
+        .where(MachineVersion.machine_id == machine_id)
+        .order_by(MachineVersion.version.desc())
+        .paginate(limit, offset)
+    )
+
+    return JSONResponse(
+        content=[version.to_dict() for version in machine_versions.scalars().all()]
+    )
+
+
+@router.get("/machine/serverless/{machine_id}/versions/all")
+async def get_all_machine_versions(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    # First check if user has access to this machine
+    await get_machine(request, machine_id, db)
+
+    machine_versions = await db.execute(
+        select(MachineVersion)
+        .where(MachineVersion.machine_id == machine_id)
+        .order_by(MachineVersion.version.desc())
+    )
+    return JSONResponse(
+        content=[version.to_dict() for version in machine_versions.scalars().all()]
+    )
+
+
+# get specific machine version
+@router.get("/machine/serverless/{machine_id}/versions/{version_id}")
+async def get_machine_version(
+    request: Request,
+    machine_id: UUID,
+    version_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    # First check if user has access to this machine
+    await get_machine(request, machine_id, db)
+
+    machine_version = await db.execute(
+        select(MachineVersion).where(MachineVersion.id == version_id)
+    )
+    machine_version = machine_version.scalars().first()
+    return JSONResponse(content=machine_version.to_dict())
+
+
+class RollbackMachineVersionBody(BaseModel):
+    machine_version_id: Optional[UUID] = None
+    version: Optional[int] = None
+
+
+@router.post("/machine/serverless/{machine_id}/rollback")
+async def rollback_serverless_machine(
+    request: Request,
+    machine_id: UUID,
+    version: RollbackMachineVersionBody,
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+    async def get_machine(machine_id: UUID):
+        machine = await db.execute(
+            select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+        )
+        machine = machine.scalars().first()
+        if not machine:
+            raise HTTPException(status_code=404, detail="Machine not found")
+        return machine
+
+    if version.machine_version_id is None and version.version is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Either machine_version_id or version must be provided",
+        )
+
+    machine = await get_machine(machine_id)
+
+    if version.machine_version_id is not None:
+        if machine.machine_version_id == version.machine_version_id:
+            raise HTTPException(
+                status_code=400, detail="Cannot rollback to current version"
+            )
+
+        machine_version = await db.execute(
+            select(MachineVersion).where(
+                MachineVersion.id == version.machine_version_id
+            )
+        )
+        machine_version = machine_version.scalars().first()
+    else:
+        # Get current version first
+        current_version = await db.execute(
+            select(MachineVersion).where(
+                MachineVersion.id == machine.machine_version_id
+            )
+        )
+        current_version = current_version.scalars().first()
+
+        if current_version and current_version.version == version.version:
+            raise HTTPException(
+                status_code=400, detail="Cannot rollback to current version"
+            )
+
+        # Get target version
+        machine_version = await db.execute(
+            select(MachineVersion)
+            .where(MachineVersion.machine_id == machine_id)
+            .where(MachineVersion.version == version.version)
+        )
+        machine_version = machine_version.scalars().first()
+
+    if machine_version is None:
+        raise HTTPException(status_code=404, detail="Machine version not found")
+
+    # Call update_serverless_machine with rollback flag
+    return await update_serverless_machine(
+        request=request,
+        machine_id=machine_id,
+        update_machine=UpdateServerlessMachineModel(
+            **{
+                col: getattr(machine_version, col)
+                for col in get_machine_columns().keys()
+                if hasattr(machine_version, col)
+            }
+        ),
+        rollback_version_id=machine_version.id,
+        db=db,
+        background_tasks=background_tasks,
+    )
 
 
 @router.delete("/machine/{machine_id}")

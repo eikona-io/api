@@ -210,7 +210,38 @@ class DockerCommand(BaseModel):
     when: Literal["before", "after"]
     commands: List[str]
 
-class MachineModel(BaseModel):
+class MachineSharedFields(BaseModel):
+    comfyui_version: Optional[str] = None
+    gpu: Optional[MachineGPU] = None
+    docker_command_steps: Optional[Dict[str, Any]] = None
+    allow_concurrent_inputs: int = 1
+    concurrency_limit: int = 2
+    install_custom_node_with_gpu: bool = False
+    run_timeout: int = 300
+    idle_timeout: int = 60
+    extra_docker_commands: Optional[List[DockerCommand]] = None
+    machine_builder_version: Optional[str] = "2"
+    base_docker_image: Optional[str] = None
+    python_version: Optional[str] = None
+    extra_args: Optional[str] = None
+    prestart_command: Optional[str] = None
+    keep_warm: int = 0
+
+    status: MachineStatus = MachineStatus.READY
+    build_log: Optional[str]
+
+class MachineVersionModel(MachineSharedFields):
+    id: UUID
+    machine_id: UUID
+    version: int
+    user_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class MachineModel(MachineSharedFields):
     id: UUID
     user_id: str
     name: str
@@ -221,44 +252,28 @@ class MachineModel(BaseModel):
     disabled: bool = False
     auth_token: Optional[str]
     type: MachineType = MachineType.CLASSIC
-    status: MachineStatus = MachineStatus.READY
     static_assets_status: MachineStatus = MachineStatus.NOT_STARTED
     machine_version: Optional[str]
-    machine_builder_version: Optional[str] = "2"
     snapshot: Optional[Dict[str, Any]]
     models: Optional[Dict[str, Any]]
-    gpu: Optional[MachineGPU]
     ws_gpu: Optional[WorkspaceGPU]
     pod_id: Optional[str]
-    base_docker_image: Optional[str]
-    allow_concurrent_inputs: int = 1
-    concurrency_limit: int = 2
     legacy_mode: bool = False
     ws_timeout: int = 2
-    run_timeout: int = 300
-    idle_timeout: int = 60
     build_machine_instance_id: Optional[str]
-    build_log: Optional[str]
     modal_app_id: Optional[str]
     target_workflow_id: Optional[UUID]
     dependencies: Optional[Dict[str, Any]]
-    extra_docker_commands: Optional[List[DockerCommand]]
-    install_custom_node_with_gpu: bool = False
     deleted: bool = False
-    keep_warm: int = 0
     allow_background_volume_commits: bool = False
     gpu_workspace: bool = False
-    docker_command_steps: Optional[Dict[str, Any]]
-    comfyui_version: Optional[str]
-    python_version: Optional[str]
-    extra_args: Optional[str]
-    prestart_command: Optional[str]
     retrieve_static_assets: bool = False
     object_info: Optional[Dict[str, Any]]
     object_info_str: Optional[str]
     filename_list_cache: Optional[Dict[str, Any]]
     extensions: Optional[Dict[str, Any]]
     import_failed_logs: Optional[str]
+    machine_version_id: Optional[UUID]
 
     class Config:
         from_attributes = True

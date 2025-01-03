@@ -50,7 +50,7 @@ class SerializableMixin:
             return str(value)
         # if isinstance(value, datetime):
         #     return value
-            # return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+        # return value.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
         if isinstance(value, datetime):
             # .replace(tzinfo=timezone.utc)
             return value.isoformat()[:-3] + "Z"
@@ -209,6 +209,7 @@ class WorkflowRun(SerializableMixin, Base):
     version = relationship("WorkflowVersion", foreign_keys=[workflow_version_id])
     machine = relationship("Machine", foreign_keys=[machine_id])
 
+
 class WorkflowRunWithExtra(WorkflowRun):
     pass
 
@@ -332,13 +333,88 @@ class Deployment(SerializableMixin, Base):
         ),
         nullable=False,
     )
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
     machine = relationship("Machine")
     version = relationship("WorkflowVersion")
     workflow = relationship("Workflow")
     # user = relationship("User")
+
+
+# Shared column definitions
+def get_machine_columns():
+    return {
+        "comfyui_version": Column(String),
+        "gpu": Column(
+            Enum(
+                "CPU",
+                "T4",
+                "L4",
+                "A10G",
+                "A100",
+                "A100-80GB",
+                "H100",
+                name="machine_gpu",
+            )
+        ),
+        "docker_command_steps": Column(JSON),
+        "allow_concurrent_inputs": Column(Integer, default=1),
+        "concurrency_limit": Column(Integer, default=2),
+        "install_custom_node_with_gpu": Column(Boolean, default=False),
+        "run_timeout": Column(Integer, nullable=False, default=300),
+        "idle_timeout": Column(Integer, nullable=False, default=60),
+        "extra_docker_commands": Column(JSON),
+        "machine_builder_version": Column(
+            Enum("2", "3", "4", name="machine_builder_version"), default="2"
+        ),
+        "base_docker_image": Column(String),
+        "python_version": Column(String),
+        "extra_args": Column(String),
+        "prestart_command": Column(String),
+        "keep_warm": Column(Integer, nullable=False, default=0),
+        "status": Column(
+            Enum(
+                "not-started",
+                "ready", 
+                "building",
+                "error",
+                "running",
+                "paused",
+                "starting",
+                name="machine_status"
+            ),
+            nullable=False,
+            default="ready"
+        ),
+        "build_log": Column(String)
+    }
+
+
+class MachineVersion(SerializableMixin, Base):
+    __tablename__ = "machine_versions"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    machine_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("machines.id", ondelete="cascade"),
+        nullable=False,
+    )
+    version = Column(Integer, nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+    # Add shared columns
+    locals().update(get_machine_columns())
 
 
 class Machine(SerializableMixin, Base):
@@ -367,20 +443,6 @@ class Machine(SerializableMixin, Base):
         nullable=False,
         default="classic",
     )
-    status = Column(
-        Enum(
-            "not-started",
-            "ready",
-            "building",
-            "error",
-            "running",
-            "paused",
-            "starting",
-            name="machine_status",
-        ),
-        nullable=False,
-        default="ready",
-    )
     static_assets_status = Column(
         Enum(
             "not-started",
@@ -396,47 +458,33 @@ class Machine(SerializableMixin, Base):
         default="not-started",
     )
     machine_version = Column(String)
-    machine_builder_version = Column(
-        Enum("2", "3", "4", name="machine_builder_version"), default="2"
-    )
     snapshot = Column(JSON)
     models = Column(JSON)
-    gpu = Column(
-        Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
-    )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     pod_id = Column(String)
-    base_docker_image = Column(String)
-    allow_concurrent_inputs = Column(Integer, default=1)
-    concurrency_limit = Column(Integer, default=2)
     legacy_mode = Column(Boolean, nullable=False, default=False)
     ws_timeout = Column(Integer, default=2)
-    run_timeout = Column(Integer, nullable=False, default=300)
-    idle_timeout = Column(Integer, nullable=False, default=60)
     build_machine_instance_id = Column(String)
-    build_log = Column(String)
     modal_app_id = Column(String)
     target_workflow_id = Column(
         UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="set null")
     )
     dependencies = Column(JSON)
-    extra_docker_commands = Column(JSON)
-    install_custom_node_with_gpu = Column(Boolean, default=False)
     deleted = Column(Boolean, nullable=False, default=False)
-    keep_warm = Column(Integer, nullable=False, default=0)
     allow_background_volume_commits = Column(Boolean, nullable=False, default=False)
     gpu_workspace = Column(Boolean, nullable=False, default=False)
-    docker_command_steps = Column(JSON)
-    comfyui_version = Column(String)
-    python_version = Column(String)
-    extra_args = Column(String)
-    prestart_command = Column(String)
     retrieve_static_assets = Column(Boolean, default=False)
     object_info = Column(JSON)
     object_info_str = Column(String)
     filename_list_cache = Column(JSON)
     extensions = Column(JSON)
     import_failed_logs = Column(String)
+    machine_version_id = Column(
+        UUID(as_uuid=True), ForeignKey("machine_versions.id", ondelete="set null")
+    )
+
+    # Add shared columns
+    locals().update(get_machine_columns())
 
 
 class UserSettings(SerializableMixin, Base):
@@ -465,11 +513,9 @@ class UserSettings(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
-    
-    api_version = Column(
-        Enum("v1", "v2", name="api_version"), default="v2"
-    )
-    
+
+    api_version = Column(Enum("v1", "v2", name="api_version"), default="v2")
+
     spend_limit = Column(Float, default=500)
     max_spend_limit = Column(Float, default=1000)
 
@@ -478,7 +524,7 @@ class UserSettings(SerializableMixin, Base):
     machine_limit = Column(Float)
     always_on_machine_limit = Column(Integer)
     credit = Column(Float, default=0)
-    
+
     max_gpu = Column(Integer, default=0)
     enable_custom_output_bucket = Column(Boolean, default=False)
     # Optionally, add relationship to User model
@@ -556,7 +602,7 @@ class Model(SerializableMixin, Base):
         default="checkpoint",
     )
     error_log = Column(String)
-    
+
     size = Column(BigInteger)
 
     deleted = Column(Boolean, nullable=False, default=False)
@@ -570,17 +616,28 @@ class Model(SerializableMixin, Base):
         nullable=False,
     )
 
+
 class UserVolume(SerializableMixin, Base):
     __tablename__ = "user_volume"
     metadata = metadata
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     user_id = Column(String, ForeignKey("users.id"))
     org_id = Column(String)
     volume_name = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
     disabled = Column(Boolean, nullable=False, default=False)
+
 
 class GPUEvent(SerializableMixin, Base):
     __tablename__ = "gpu_events"
@@ -600,7 +657,9 @@ class GPUEvent(SerializableMixin, Base):
         Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
-    gpu_provider = Column(Enum("runpod", "modal", "fal", name="gpu_provider"), nullable=False)
+    gpu_provider = Column(
+        Enum("runpod", "modal", "fal", name="gpu_provider"), nullable=False
+    )
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -610,15 +669,16 @@ class GPUEvent(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
-    
+
     cost_item_title = Column(String)
     cost = Column(Float, default=0)
-    
+
     session_timeout = Column(Integer)
     session_id = Column(String)
     modal_function_id = Column(String)
     tunnel_url = Column(String)
-    
+
+
 class SubscriptionStatus(SerializableMixin, Base):
     __tablename__ = "subscription_status"
     metadata = metadata
@@ -626,27 +686,57 @@ class SubscriptionStatus(SerializableMixin, Base):
     stripe_customer_id = Column(String, primary_key=True)
     user_id = Column(String)
     org_id = Column(String)
-    plan = Column(Enum("basic", "pro", "enterprise", "creator", "business", "ws_basic", "ws_pro", name="subscription_plan"))
-    status = Column(Enum("active", "deleted", "paused", name="subscription_plan_status"))
+    plan = Column(
+        Enum(
+            "basic",
+            "pro",
+            "enterprise",
+            "creator",
+            "business",
+            "ws_basic",
+            "ws_pro",
+            name="subscription_plan",
+        )
+    )
+    status = Column(
+        Enum("active", "deleted", "paused", name="subscription_plan_status")
+    )
     subscription_id = Column(String)
     subscription_item_plan_id = Column(String)
     subscription_item_api_id = Column(String)
     cancel_at_period_end = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
     trial_end = Column(DateTime(timezone=True))
     trial_start = Column(DateTime(timezone=True))
     last_invoice_timestamp = Column(DateTime(timezone=True))
+
 
 class FormSubmission(SerializableMixin, Base):
     __tablename__ = "form_submissions"
     metadata = metadata
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
     user_id = Column(String, ForeignKey("users.id", ondelete="set null"))
     org_id = Column(String)
     inputs = Column(JSON)
     call_booked = Column(Boolean, nullable=False, default=False)
     discord_thread_id = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
