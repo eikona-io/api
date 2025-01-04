@@ -1115,6 +1115,9 @@ class ComfyDeployRunner:
     status_endpoint = None
     current_input = None
 
+    session_timeout = 0
+    start_time = time.time()
+
     async def timeout_and_exit(self, timeout_seconds: int, soft_exit: bool = False):
         import os
 
@@ -1556,8 +1559,11 @@ class ComfyDeployRunner:
     current_tunnel_url = ""
 
     @modal.method()
-    async def create_tunnel(self, q, status_endpoint):
+    async def create_tunnel(self, q, status_endpoint, timeout):
         self.status_endpoint = status_endpoint
+        self.start_time = time.time()
+        # timeout input is in minutes, so we need to convert it to seconds
+        self.session_timeout = timeout * 60
         print("status_endpoint", status_endpoint)
 
         async for event in check_server_with_log(
@@ -1587,6 +1593,8 @@ class ComfyDeployRunner:
             # Wait for the server process to exit
             try:
                 while True:
+                    if self.start_time + self.session_timeout < time.time():
+                        await self.timeout_and_exit(0, True)
                     await asyncio.sleep(1)  # Che  ck every 1 seconds
             except asyncio.CancelledError:
                 print("cancelled")
@@ -1685,6 +1693,11 @@ class ComfyDeployRunner:
         #     print("Issues when cleaning up", e)
 
         print(f"comfy-modal - cleanup done")
+
+    @modal.method()
+    async def increase_timeout(self, timeout):
+        # timeout input is in minutes, so we need to convert it to seconds
+        self.session_timeout = self.session_timeout + (timeout * 60)
 
     @modal.method()
     async def run(self, input: Input):
