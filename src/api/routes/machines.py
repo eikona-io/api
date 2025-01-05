@@ -219,8 +219,9 @@ async def create_machine_version(
         if "plan" in request.state.current_user
         else "free"
     )
-    print("plan", plan)
-    if plan == "free":
+    
+    # Skip version creation for free plan unless we're in development
+    if plan == "free" and os.getenv("ENV") != "development":
         return
 
     new_version_id = uuid.uuid4()
