@@ -117,7 +117,7 @@ class DockerCommandResponse(BaseModel):
     # deps: DependencyGraph
     
 def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
-    deps = data.dependencies if 'dependencies' in data else None
+    deps = data.dependencies if hasattr(data, 'dependencies') else None
     docker_commands = []
     steps = data.docker_command_steps
     comfy_ui_override = None
@@ -137,7 +137,7 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
         
     print("log_docker_commands",steps,docker_commands)
         
-    if not deps and 'snapshot' in data and data.snapshot:
+    if not deps and hasattr(data, 'snapshot') and data.snapshot:
         snapshot = data.snapshot
         deps = DependencyGraph(
             comfyui=snapshot['comfyui'],
