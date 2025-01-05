@@ -12,7 +12,7 @@ from api.utils.docker import (
     generate_all_docker_commands,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import modal
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
@@ -129,6 +129,10 @@ async def get_machine_sessions(
     )
     return result.scalars().all()
 
+async def increase_timeout_task(machine_id: str, session_id: UUID, timeout: int, gpu: str):
+    runner = get_comfy_runner(machine_id, session_id, 60*24, gpu)
+    await runner.increase_timeout.spawn.aio(timeout)
+
 
 async def create_session_background_task(
     machine_id: str,
@@ -138,10 +142,10 @@ async def create_session_background_task(
     gpu: str,
     status_queue: Optional[asyncio.Queue] = None,
 ):
-    runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
+    runner = get_comfy_runner(machine_id, session_id, 60*24, gpu)
     print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
-        result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
+        result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout)
         modal_function_id = result.object_id
 
         gpuEvent = None
@@ -238,6 +242,38 @@ async def ensure_session_creation_complete(task: asyncio.Task):
         logger.error(f"Session creation failed: {str(e)}")
         # You might want to update the session status in the database here
 
+
+class IncreaseTimeoutBody(BaseModel):
+    machine_id: str
+    session_id: UUID
+    timeout: int
+    gpu: str
+
+@router.post("/session/increase-timeout")
+async def increase_timeout(
+    request: Request,
+    body: IncreaseTimeoutBody,
+    db: AsyncSession = Depends(get_db)
+):
+    gpu_event = (
+        await db.execute(
+            select(GPUEvent)
+            .where(GPUEvent.session_id == str(body.session_id))
+            .where(GPUEvent.end_time.is_(None))
+            .apply_org_check(request)
+        )
+    ).scalar_one_or_none()
+
+    if gpu_event is None:
+        raise HTTPException(status_code=404, detail="GPU event not found")
+    
+    await increase_timeout_task(body.machine_id, body.session_id, body.timeout, body.gpu)
+
+    # in the database we save the timeout in minutes
+    gpu_event.session_timeout = gpu_event.session_timeout + body.timeout
+    await db.commit()        
+
+    return Response(status_code=204)
 
 class CreateSessionResponse(BaseModel):
     session_id: UUID
