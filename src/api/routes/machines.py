@@ -1,5 +1,7 @@
 import asyncio
 from datetime import timedelta
+import hashlib
+import json
 
 # from http.client import HTTPException
 from fastapi import Request, HTTPException, Depends
@@ -14,7 +16,11 @@ from api.modal.builder import (
     set_machine_always_on,
 )
 from api.routes.volumes import retrieve_model_volumes
-from api.utils.docker import generate_all_docker_commands, comfyui_hash
+from api.utils.docker import (
+    DockerCommandResponse,
+    generate_all_docker_commands,
+    comfyui_hash,
+)
 from pydantic import BaseModel
 from .types import (
     GPUEventModel,
@@ -211,7 +217,7 @@ async def create_machine_version(
     # if the machine builder version is not 4, pass this function
     if machine.machine_builder_version != "4":
         return
-    
+
     new_version_id = uuid.uuid4()
 
     # Create new version without transaction (caller manages transaction)
@@ -234,6 +240,10 @@ async def create_machine_version(
     return machine_version
 
 
+def hash_machine_dependencies(docker_commands: DockerCommandResponse):
+    return hashlib.sha256(json.dumps(docker_commands.model_dump()).encode()).hexdigest()
+
+
 @router.post("/machine/serverless")
 async def create_serverless_machine(
     request: Request,
@@ -245,6 +255,9 @@ async def create_serverless_machine(
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    docker_commands = generate_all_docker_commands(machine)
+    docker_commands_hash = hash_machine_dependencies(docker_commands)
 
     async with db.begin():  # Single transaction for entire operation
         # Create initial machine
@@ -258,6 +271,7 @@ async def create_serverless_machine(
             endpoint="not-ready",
             created_at=func.now(),
             updated_at=func.now(),
+            machine_hash=docker_commands_hash,
         )
         db.add(machine)
         await db.flush()
@@ -269,8 +283,21 @@ async def create_serverless_machine(
     await db.refresh(machine)  # Only one refresh at the end
 
     volumes = await retrieve_model_volumes(request, db)
-    docker_commands = generate_all_docker_commands(machine)
+    # docker_commands = generate_all_docker_commands(machine)
     machine_token = generate_persistent_token(user_id, org_id)
+
+    if machine.machine_hash is not None:
+        existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.head(existing_machine_info_url) as response:
+                    skip_static_assets = response.status == 200
+        except Exception as e:
+            logger.warning(f"Error checking static assets: {e}")
+            skip_static_assets = False
+    else:
+        skip_static_assets = False
 
     params = BuildMachineItem(
         machine_id=str(machine.id),
@@ -291,7 +318,7 @@ async def create_serverless_machine(
         install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
         allow_background_volume_commits=machine.allow_background_volume_commits,
         retrieve_static_assets=machine.retrieve_static_assets,
-        skip_static_assets=False,
+        skip_static_assets=skip_static_assets,
         docker_commands=docker_commands.model_dump()["docker_commands"],
         machine_builder_version=machine.machine_builder_version,
         base_docker_image=machine.base_docker_image,
@@ -299,6 +326,7 @@ async def create_serverless_machine(
         prestart_command=machine.prestart_command,
         extra_args=machine.extra_args,
         machine_version_id=str(machine.machine_version_id),
+        machine_hash=docker_commands_hash,
     )
 
     background_tasks.add_task(build_logic, params)
@@ -378,6 +406,10 @@ async def update_serverless_machine(
         if hasattr(machine, key) and value is not None:
             setattr(machine, key, value)
 
+    docker_commands = generate_all_docker_commands(machine)
+    docker_commands_hash = hash_machine_dependencies(docker_commands)
+    machine.machine_hash = docker_commands_hash
+
     machine.updated_at = func.now()
 
     if rebuild:
@@ -406,7 +438,19 @@ async def update_serverless_machine(
             machine_version.updated_at = func.now()
             machine_version.status = machine.status
             await db.commit()
-        
+
+        if machine.machine_hash is not None:
+            existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.head(existing_machine_info_url) as response:
+                        skip_static_assets = response.status == 200
+            except Exception as e:
+                logger.warning(f"Error checking static assets: {e}")
+                skip_static_assets = False
+        else:
+            skip_static_assets = False
 
         # Prepare build parameters
         volumes = await retrieve_model_volumes(request, db)
@@ -431,7 +475,7 @@ async def update_serverless_machine(
             install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
             allow_background_volume_commits=machine.allow_background_volume_commits,
             retrieve_static_assets=machine.retrieve_static_assets,
-            skip_static_assets=False,
+            skip_static_assets=skip_static_assets,
             docker_commands=docker_commands.model_dump()["docker_commands"],
             machine_builder_version=machine.machine_builder_version,
             base_docker_image=machine.base_docker_image,
@@ -439,6 +483,7 @@ async def update_serverless_machine(
             prestart_command=machine.prestart_command,
             extra_args=machine.extra_args,
             machine_version_id=str(machine.machine_version_id),
+            machine_hash=docker_commands_hash,
         )
         background_tasks.add_task(build_logic, params)
 

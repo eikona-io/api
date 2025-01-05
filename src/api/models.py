@@ -394,7 +394,8 @@ def get_machine_columns():
             nullable=False,
             default="ready"
         ),
-        "build_log": Column(String)
+        "build_log": Column(String),
+        "machine_hash": Column(String),
     }
 
 
@@ -740,3 +741,21 @@ class FormSubmission(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class Asset(SerializableMixin, Base):
+    __tablename__ = "assets"
+    metadata = metadata
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"))
+    org_id = Column(String)
+    name = Column(String)
+    is_folder = Column(Boolean, default=False)
+    path = Column(String, default="/")
+    file_size = Column(BigInteger)
+    url = Column(String)
+    mime_type = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    deleted = Column(Boolean, default=False)

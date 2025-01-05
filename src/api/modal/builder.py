@@ -164,6 +164,7 @@ class BuildMachineItem(BaseModel):
     extra_args: Optional[str] = Field(default="")
     modal_app_id: Optional[str] = None
     machine_version_id: Optional[str] = None
+    machine_hash: Optional[str] = None
 
     @field_validator("gpu")
     @classmethod
@@ -608,6 +609,7 @@ async def build_logic(item: BuildMachineItem):
             "python_version": item.python_version,
             "prestart_command": item.prestart_command,
             "extra_args": item.extra_args,
+            "machine_hash": item.machine_hash,
         }
 
         # print("config: ", config)

@@ -321,7 +321,7 @@ folder_paths.get_filename_list = get_filename_list
                 await asyncio.gather(*tasks)
                 print("tasks: Uploaded")
 
-        await upload_to_s3(ext_map, bucket_name, config["machine_id"])
+        await upload_to_s3(ext_map, bucket_name, config.get("machine_hash", config["machine_id"]))
 
     # Reset the file
     with open(main_py_path, "w") as file:
