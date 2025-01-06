@@ -110,7 +110,7 @@ async def get_deployments(
         query = select(Deployment).options(
             joinedload(Deployment.workflow).load_only(Workflow.name),
             joinedload(Deployment.version),
-        ).join(Workflow).where(Workflow.deleted is False)
+        ).join(Workflow).where(Workflow.deleted == False)
 
         if environment is not None:
             query = query.where(Deployment.environment == environment)
