@@ -197,25 +197,32 @@ async def upload_file(
                 )
 
             # TODO: Implement PostHog event capture here if needed
+            
+            return {
+                "message": "File uploaded successfully",
+                "file_id": file_id,
+                "file_name": file.filename,
+                "file_url": file_url,
+            }
 
-            # After successful upload, create asset record
-            new_asset = Asset(
-                id=file_id,
-                name=file.filename,
-                is_folder=False,
-                path=file_path,
-                url=file_url,
-                mime_type=file_type,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
-                file_size=file.size
-            )
+            # # After successful upload, create asset record
+            # new_asset = Asset(
+            #     id=file_id,
+            #     name=file.filename,
+            #     is_folder=False,
+            #     path=file_path,
+            #     url=file_url,
+            #     mime_type=file_type,
+            #     created_at=datetime.utcnow(),
+            #     updated_at=datetime.utcnow(),
+            #     file_size=file.size
+            # )
             
-            db.add(new_asset)
-            await db.commit()
-            await db.refresh(new_asset)
+            # db.add(new_asset)
+            # await db.commit()
+            # await db.refresh(new_asset)
             
-            return new_asset
+            # return new_asset
         except Exception as e:
             logger.error(f"Error uploading file: {str(e)}")
             raise HTTPException(status_code=500, detail="Error uploading file")
