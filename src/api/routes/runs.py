@@ -4,441 +4,205 @@ from .types import WorkflowRunModel
 from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
-from datetime import datetime
+from .utils import select
+from api.models import WorkflowRun, Workflow, WorkflowVersion, Machine
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
-import json
-from decimal import Decimal
-from uuid import UUID
+from .utils import ensure_run_timeout
+from datetime import datetime, timedelta
+from sqlalchemy import func, case
+from sqlalchemy.types import String
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Runs"])
 
 
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, (datetime, UUID)):
-            return str(obj)
-        if isinstance(obj, Decimal):
-            return float(obj)
-        return super().default(obj)
-
-
-def clean_input(value: Optional[str]) -> Optional[str]:
-    return value if value and value.strip() else None
-
-
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
     request: Request,
-    limit: int = 100,
+    limit: int = 30,
     offset: int = 0,
-    # filter time range
-    start_time_unix: int = None,
-    end_time_unix: int = None,
-    # filter workflow
-    workflow_id: Optional[List[str]] = Query(None),
-    # filter status
-    status: Optional[List[str]] = Query(None),
-    # filter gpu
-    gpu: Optional[List[str]] = Query(None),
-    # filter machine
-    machine_id: Optional[List[str]] = Query(None),
-    # filter origin
-    origin: Optional[List[str]] = Query(None),
-    # filter workflow version
-    workflow_version_id: Optional[List[str]] = Query(None),
-    # filter queued duration
-    min_queued_duration: Optional[str] = "0",
-    # filter run duration
-    min_run_duration: Optional[str] = "0",
-    # filter total upload duration
-    min_total_upload_duration: Optional[str] = "0",
+    gpu: Optional[str] = None,
+    status: Optional[str] = None,
+    origin: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    duration: Optional[str] = None,
+    created_at: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        # Convert string to datetime
-        start_time = (
-            datetime.fromtimestamp(max(1, start_time_unix)) if start_time_unix else None
-        )
-        end_time = (
-            datetime.fromtimestamp(max(1, end_time_unix)) if end_time_unix else None
-        )
-
-        current_user = request.state.current_user
-        user_id = current_user["user_id"]
-        org_id = current_user["org_id"] if "org_id" in current_user else None
-
-        # Clean input parameters
-        workflow_id = [clean_input(c) for c in workflow_id] if workflow_id else None
-        status = [clean_input(s) for s in status] if status else None
-        gpu = [clean_input(g) for g in gpu] if gpu else None
-        machine_id = [clean_input(m) for m in machine_id] if machine_id else None
-        origin = [clean_input(o) for o in origin] if origin else None
-        workflow_version_id = (
-            [clean_input(w) for w in workflow_version_id]
-            if workflow_version_id
-            else None
-        )
-
-        if min_queued_duration == "":
-            min_queued_duration = 0
-        if min_run_duration == "":
-            min_run_duration = 0
-        if min_total_upload_duration == "":
-            min_total_upload_duration = 0
-
-        conditions = [
-            ("created_at >= :start_time", start_time),
-            ("created_at <= :end_time", end_time),
-            ("workflow_id = ANY(:workflow_id)", workflow_id),
-            ("status = ANY(:status)", status),
-            ("gpu = ANY(:gpu)", gpu),
-            ("machine_id = ANY(:machine_id)", machine_id),
-            ("origin = ANY(:origin)", origin),
-            ("workflow_version_id = ANY(:workflow_version_id)", workflow_version_id),
-        ]
-
-        # Special handling for org_id and user_id
-        if org_id:
-            conditions.append(("org_id = :org_id", org_id))
-        else:
-            conditions.extend([
-                ("org_id IS NULL", True),
-                ("user_id = :user_id", user_id)
-            ])
-
-        where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
-
-        time_duration_conditions = [
-            ("queued_duration >= :min_queued_duration", min_queued_duration),
-            ("run_duration >= :min_run_duration", min_run_duration),
-            (
-                "total_upload_duration >= :min_total_upload_duration",
-                min_total_upload_duration,
-            ),
-        ]
-
-        where_time_duration_clause = " AND ".join(
-            cond for cond, val in time_duration_conditions if val != 0
-        )
-        where_time_duration_clause = (
-            f" AND {where_time_duration_clause}" if where_time_duration_clause else ""
-        )
-
-        # print("where_time_duration_clause", where_time_duration_clause)
-
-        query = text(f"""
-    WITH filtered_workflow_runs AS (
-      SELECT
-        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id, user_id,
-        CASE
-          WHEN started_at IS NOT NULL AND created_at IS NOT NULL
-          THEN EXTRACT(EPOCH FROM (started_at - created_at))
-          ELSE NULL
-        END AS queued_duration,
-        CASE
-          WHEN ended_at IS NOT NULL AND started_at IS NOT NULL
-          THEN EXTRACT(EPOCH FROM (ended_at - started_at))
-          ELSE NULL
-        END AS run_duration
-      FROM "comfyui_deploy"."workflow_runs"
-      WHERE {where_clause}
-    ),
-    workflow_runs_with_upload_duration AS (
-      SELECT
-        fwr.*,
-        CASE
-          WHEN "comfyui_deploy"."workflow_run_outputs".data IS NOT NULL
-          THEN ROUND(CAST(
-            (SELECT COALESCE(SUM(
-              CASE
-                WHEN jsonb_typeof(value) = 'array' THEN
-                  (SELECT COALESCE(SUM((elem->>'upload_duration')::float), 0)
-                   FROM jsonb_array_elements(value) elem)
-                WHEN jsonb_typeof(value) = 'object' THEN
-                  COALESCE((value->>'upload_duration')::float, 0)
-                ELSE 0
-              END
-            ), 0)
-             FROM jsonb_each("comfyui_deploy"."workflow_run_outputs".data))
-          AS NUMERIC), 5)
-          ELSE NULL
-        END AS total_upload_duration
-      FROM filtered_workflow_runs fwr
-      LEFT JOIN "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
+    # Get total count first (unfiltered)
+    total_count_query = select(func.count()).select_from(
+        select(WorkflowRun)
+        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
+        .apply_org_check(request)
+        .subquery()
     )
-    SELECT DISTINCT
-      fwr.created_at,
-      fwr.queued_at,
-      fwr.started_at,
-      fwr.ended_at,
-      fwr.id AS run_id,
-      fwr.gpu,
-      fwr.origin,
-      fwr.status AS run_status,
-      fwr.workflow_id,
-      "comfyui_deploy"."workflows".name AS workflow_name,
-      "comfyui_deploy"."workflow_versions".version,
-      fwr.machine_id,
-      "comfyui_deploy"."machines".name AS machine_name,
-      fwr.queued_duration,
-      fwr.run_duration,
-      fwr.total_upload_duration,
-      fwr.user_id
-    FROM workflow_runs_with_upload_duration AS fwr
-    LEFT JOIN "comfyui_deploy"."workflows"
-      ON fwr.workflow_id = "comfyui_deploy"."workflows".id
-    LEFT JOIN "comfyui_deploy"."machines"
-      ON fwr.machine_id = "comfyui_deploy"."machines".id
-    LEFT JOIN "comfyui_deploy"."workflow_versions"
-      ON fwr.workflow_version_id = "comfyui_deploy"."workflow_versions".id
-    WHERE
-      TRUE
-      {where_time_duration_clause}
-    ORDER BY fwr.created_at DESC
-    LIMIT :limit OFFSET :offset;
-    """)
+    total_count = await db.scalar(total_count_query)
 
-        params = {
-            key: val
-            for key, val in {
-                "start_time": start_time,
-                "end_time": end_time,
-                "org_id": org_id,
-                "user_id": user_id,
-                "limit": limit,
-                "offset": offset,
-                "workflow_id": workflow_id,
-                "status": status,
-                "gpu": gpu,
-                "machine_id": machine_id,
-                "origin": origin,
-                "workflow_version_id": workflow_version_id,
-                "min_queued_duration": min_queued_duration,
-                "min_run_duration": min_run_duration,
-                "min_total_upload_duration": min_total_upload_duration,
-            }.items()
-            if val is not None
-        }
-
-        result = await db.execute(query, params)
-        runs = result.fetchall()
-
-        runs_data = [
-            {
-                "created_at": run.created_at,
-                "id": run.run_id,
-                "gpu": run.gpu,
-                "origin": run.origin,
-                "status": run.run_status,
-                "workflow": {"id": run.workflow_id, "name": run.workflow_name},
-                "workflow_version": run.version,
-                "machine": {"id": run.machine_id, "name": run.machine_name},
-                "queued_duration": run.queued_duration,
-                "run_duration": run.run_duration,
-                "total_upload_duration": run.total_upload_duration,
-                "user_id": run.user_id,
-            }
-            for run in runs
-        ]
-
-        return JSONResponse(
-            status_code=200,
-            content=json.loads(json.dumps(runs_data, cls=CustomJSONEncoder)),
+    # Create base query with joins
+    base_query = (
+        select(
+            WorkflowRun,
+            Workflow.name.label("workflow_name"),
+            WorkflowVersion.version.label("workflow_version"),
+            Machine.name.label("machine_name"),
+            case(
+                (
+                    (
+                        WorkflowRun.ended_at.isnot(None)
+                        & WorkflowRun.started_at.isnot(None)
+                    ),
+                    func.cast(
+                        func.extract(
+                            "epoch", WorkflowRun.ended_at - WorkflowRun.started_at
+                        ),
+                        String,
+                    ),
+                ),
+                else_=None,
+            ).label("duration"),
         )
-    except Exception as e:
-        logger.error(f"Error getting runs: {e}")
-        return JSONResponse(status_code=500, content={"Error. ": str(e)})
-
-
-@router.get("/runs/timeline", response_model=List[WorkflowRunModel])
-async def get_runs_time_line(
-    request: Request,
-    # filter time range
-    start_time_unix: int = None,
-    end_time_unix: int = None,
-    # filter workflow
-    workflow_id: Optional[List[str]] = Query(None),
-    # filter status
-    status: Optional[List[str]] = Query(None),
-    # filter gpu
-    gpu: Optional[List[str]] = Query(None),
-    # filter machine
-    machine_id: Optional[List[str]] = Query(None),
-    # filter origin
-    origin: Optional[List[str]] = Query(None),
-    # filter workflow version
-    workflow_version_id: Optional[List[str]] = Query(None),
-    # filter queued duration
-    min_queued_duration: Optional[str] = "0",
-    # filter run duration
-    min_run_duration: Optional[str] = "0",
-    # filter total upload duration
-    min_total_upload_duration: Optional[str] = "0",
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        # Convert string to datetime
-        start_time = (
-            datetime.fromtimestamp(max(1, start_time_unix)) if start_time_unix else None
+        .join(
+            Workflow, WorkflowRun.workflow_id == Workflow.id
+        )  # Caution: it will filter the workflow without workflow_id. make it outerjoin if you want to keep empty workflow_id
+        .outerjoin(
+            WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
         )
-        end_time = (
-            datetime.fromtimestamp(max(1, end_time_unix)) if end_time_unix else None
-        )
-
-        current_user = request.state.current_user
-        user_id = current_user["user_id"]
-        org_id = current_user["org_id"] if "org_id" in current_user else None
-
-        # Clean input parameters
-        workflow_id = [clean_input(c) for c in workflow_id] if workflow_id else None
-        status = [clean_input(s) for s in status] if status else None
-        gpu = [clean_input(g) for g in gpu] if gpu else None
-        machine_id = [clean_input(m) for m in machine_id] if machine_id else None
-        origin = [clean_input(o) for o in origin] if origin else None
-        workflow_version_id = (
-            [clean_input(w) for w in workflow_version_id]
-            if workflow_version_id
-            else None
-        )
-
-        if min_queued_duration == "":
-            min_queued_duration = 0
-        if min_run_duration == "":
-            min_run_duration = 0
-        if min_total_upload_duration == "":
-            min_total_upload_duration = 0
-
-        conditions = [
-            ("created_at >= :start_time", start_time),
-            ("created_at <= :end_time", end_time),
-            ("workflow_id = ANY(:workflow_id)", workflow_id),
-            ("status = ANY(:status)", status),
-            ("gpu = ANY(:gpu)", gpu),
-            ("machine_id = ANY(:machine_id)", machine_id),
-            ("origin = ANY(:origin)", origin),
-            ("workflow_version_id = ANY(:workflow_version_id)", workflow_version_id),
-        ]
-
-        # Special handling for org_id and user_id
-        if org_id:
-            conditions.append(("org_id = :org_id", org_id))
-        else:
-            conditions.extend([
-                ("org_id IS NULL", True),
-                ("user_id = :user_id", user_id)
-            ])
-
-        where_clause = " AND ".join(cond for cond, val in conditions if val is not None)
-
-        time_duration_conditions = [
-            ("queued_duration >= :min_queued_duration", min_queued_duration),
-            ("run_duration >= :min_run_duration", min_run_duration),
-            (
-                "total_upload_duration >= :min_total_upload_duration",
-                min_total_upload_duration,
-            ),
-        ]
-
-        where_time_duration_clause = " AND ".join(
-            cond for cond, val in time_duration_conditions if val != 0
-        )
-        where_time_duration_clause = (
-            f" AND {where_time_duration_clause}" if where_time_duration_clause else ""
-        )
-
-        # print("where_time_duration_clause", where_time_duration_clause)
-
-        query = text(f"""
-    WITH filtered_workflow_runs AS (
-      SELECT
-        id, status, created_at, queued_at, started_at, ended_at, gpu, workflow_id, machine_id, origin, workflow_version_id,
-        CASE
-          WHEN started_at IS NOT NULL AND created_at IS NOT NULL
-          THEN EXTRACT(EPOCH FROM (started_at - created_at))
-          ELSE NULL
-        END AS queued_duration,
-        CASE
-          WHEN ended_at IS NOT NULL AND started_at IS NOT NULL
-          THEN EXTRACT(EPOCH FROM (ended_at - started_at))
-          ELSE NULL
-        END AS run_duration
-      FROM "comfyui_deploy"."workflow_runs"
-      WHERE {where_clause}
-    ),
-    workflow_runs_with_upload_duration AS (
-      SELECT
-        fwr.*,
-        CASE
-          WHEN "comfyui_deploy"."workflow_run_outputs".data IS NOT NULL
-          THEN ROUND(CAST(
-            (SELECT COALESCE(SUM(
-              CASE
-                WHEN jsonb_typeof(value) = 'array' THEN
-                  (SELECT COALESCE(SUM((elem->>'upload_duration')::float), 0)
-                   FROM jsonb_array_elements(value) elem)
-                WHEN jsonb_typeof(value) = 'object' THEN
-                  COALESCE((value->>'upload_duration')::float, 0)
-                ELSE 0
-              END
-            ), 0)
-             FROM jsonb_each("comfyui_deploy"."workflow_run_outputs".data))
-          AS NUMERIC), 5)
-          ELSE NULL
-        END AS total_upload_duration
-      FROM filtered_workflow_runs fwr
-      LEFT JOIN "comfyui_deploy"."workflow_run_outputs" ON fwr.id = "comfyui_deploy"."workflow_run_outputs".run_id
+        .outerjoin(Machine, WorkflowRun.machine_id == Machine.id)
+        .apply_org_check(request)
     )
-    SELECT DISTINCT
-      fwr.created_at,
-      fwr.id AS run_id,
-      fwr.status AS run_status
-    FROM 
-      workflow_runs_with_upload_duration fwr
-    WHERE
-      TRUE
-      {where_time_duration_clause}
-    ORDER BY fwr.created_at DESC
-    """)
 
-        params = {
-            key: val
-            for key, val in {
-                "start_time": start_time,
-                "end_time": end_time,
-                "org_id": org_id,
-                "user_id": user_id,
-                "workflow_id": workflow_id,
-                "status": status,
-                "gpu": gpu,
-                "machine_id": machine_id,
-                "origin": origin,
-                "workflow_version_id": workflow_version_id,
-                "min_queued_duration": min_queued_duration,
-                "min_run_duration": min_run_duration,
-                "min_total_upload_duration": min_total_upload_duration,
-            }.items()
-            if val is not None
-        }
+    # Handle filters
+    if gpu:
+        gpu_list = [g.strip() for g in gpu.split(",")]
+        base_query = base_query.filter(WorkflowRun.gpu.in_(gpu_list))
 
-        result = await db.execute(query, params)
-        runs = result.fetchall()
+    if status:
+        status_list = [s.strip().lower() for s in status.split(",")]
+        base_query = base_query.filter(WorkflowRun.status.in_(status_list))
 
-        runs_data = [
-            {
-                "created_at": run.created_at,
-                "id": run.run_id,
-                "status": run.run_status,
-            }
-            for run in runs
-        ]
+    if origin:
+        origin_list = [o.strip() for o in origin.split(",")]
+        base_query = base_query.filter(WorkflowRun.origin.in_(origin_list))
 
+    if workflow_id:
+        base_query = base_query.filter(WorkflowRun.workflow_id == workflow_id)
+
+    if created_at:
+        try:
+            start_time, end_time = created_at.split("-")
+            start_datetime = datetime.fromtimestamp(int(start_time) / 1000)
+            end_datetime = datetime.fromtimestamp(int(end_time) / 1000)
+            base_query = base_query.filter(
+                WorkflowRun.created_at.between(start_datetime, end_datetime)
+            )
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid time range format: {e}")
+
+    # Add duration filter
+    if duration:
+        try:
+            start_duration, end_duration = map(float, duration.split("-"))
+            base_query = base_query.filter(
+                WorkflowRun.ended_at.isnot(None),
+                WorkflowRun.started_at.isnot(None),
+                func.extract(
+                    "epoch", WorkflowRun.ended_at - WorkflowRun.started_at
+                ).between(start_duration, end_duration),
+            )
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid duration range format: {e}")
+
+    # Get filtered count
+    filter_count_query = select(func.count()).select_from(base_query.subquery())
+    filter_count = await db.scalar(filter_count_query)
+
+    # Get paginated data
+    query = base_query.order_by(WorkflowRun.created_at.desc()).paginate(limit, offset)
+    result = await db.execute(query)
+    runs = result.unique().all()
+
+    if not runs:
         return JSONResponse(
-            status_code=200,
-            content=json.loads(json.dumps(runs_data, cls=CustomJSONEncoder)),
+            content={
+                "data": [],
+                "meta": {"totalRowCount": total_count, "filterRowCount": filter_count},
+            }
         )
-    except Exception as e:
-        logger.error(f"Error getting runs: {e}")
-        return JSONResponse(status_code=500, content={"Error. ": str(e)})
+
+    runs_data = []
+    for run, workflow_name, workflow_version, machine_name, duration in runs:
+        ensure_run_timeout(run)
+        run_dict = run.to_dict()
+        run_dict.update(
+            {
+                "workflow": {"id": str(run.workflow_id), "name": workflow_name},
+                "workflow_version": workflow_version,
+                "machine": {
+                    "id": str(run.machine_id) if run.machine_id else None,
+                    "name": machine_name,
+                },
+                "duration": duration,
+            }
+        )
+        runs_data.append(run_dict)
+
+    # Get chart data
+    chart_query = (
+        select(
+            func.date_trunc("hour", WorkflowRun.created_at).label("hour"),
+            WorkflowRun.status,
+            func.count().label("count"),
+        )
+        .select_from(WorkflowRun)
+        .apply_org_check(request)
+    )
+
+    # Apply the same filters as the main query
+    if gpu:
+        chart_query = chart_query.filter(WorkflowRun.gpu.in_(gpu_list))
+    if origin:
+        chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
+    if created_at:
+        try:
+            chart_query = chart_query.filter(
+                WorkflowRun.created_at.between(start_datetime, end_datetime)
+            )
+        except (ValueError, TypeError):
+            pass
+
+    chart_query = chart_query.group_by("hour", WorkflowRun.status).order_by("hour")
+
+    chart_result = await db.execute(chart_query)
+    chart_rows = chart_result.all()
+
+    # Process chart data
+    chart_data = {}
+    for hour, status, count in chart_rows:
+        timestamp = int(hour.timestamp() * 1000)
+        if timestamp not in chart_data:
+            chart_data[timestamp] = {
+                "success": 0,
+                "failed": 0,
+                "others": 0,
+                "timestamp": timestamp,
+            }
+
+        # Categorize the status
+        if status.lower() == "success":
+            chart_data[timestamp]["success"] += count
+        elif status.lower() == "failed":
+            chart_data[timestamp]["failed"] += count
+        else:
+            chart_data[timestamp]["others"] += count
+
+    return JSONResponse(
+        content={
+            "data": runs_data,
+            "meta": {
+                "totalRowCount": total_count,
+                "filterRowCount": filter_count,
+                "chartData": list(chart_data.values()),
+            },
+        }
+    )
