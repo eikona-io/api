@@ -233,8 +233,7 @@ async def get_all_runs(
         EXTRACT(EPOCH FROM (r.queued_at - r.created_at)) as comfy_deploy_cold_start,
         EXTRACT(EPOCH FROM (r.started_at - r.queued_at)) as cold_start_duration,
         EXTRACT(EPOCH FROM (r.started_at - r.created_at)) as cold_start_duration_total,
-        EXTRACT(EPOCH FROM (r.ended_at - r.started_at)) as run_duration,
-        ROW_NUMBER() OVER (ORDER BY r.created_at ASC) as number
+        EXTRACT(EPOCH FROM (r.ended_at - r.started_at)) as run_duration
     FROM comfyui_deploy.workflow_runs r
     INNER JOIN comfyui_deploy.workflows w ON w.id = r.workflow_id
     WHERE r.workflow_id = :workflow_id
