@@ -227,43 +227,67 @@ def select(__ent0: _ColumnsClauseArgument[T], /, *entities: Any) -> OrgAwareSele
 
 
 def ensure_run_timeout(run):
+    # Helper function to safely get attributes from either object or dict
+    def get_value(item, attr):
+        value = item[attr] if isinstance(item, dict) else getattr(item, attr)
+        # Handle datetime string conversion if needed
+        if isinstance(value, str) and attr in ['created_at', 'queued_at', 'started_at', 'updated_at']:
+            try:
+                # Parse ISO format string to datetime with UTC timezone
+                value = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except ValueError:
+                return None
+        # Ensure datetime is timezone aware
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+        return value
+    
+    def set_value(item, attr, value):
+        if isinstance(item, dict):
+            item[attr] = value
+        else:
+            setattr(item, attr, value)
+
     # Apply timeout logic
     timeout_hours = 24
     timeout_delta = timedelta(hours=timeout_hours)
     now = datetime.now(timezone.utc)
 
+    status = get_value(run, "status")
+    
     # Not started for 24 hours
+    created_at = get_value(run, "created_at")
     if (
-        run.status == "not-started"
-        and now - run.created_at.replace(tzinfo=timezone.utc) > timeout_delta
+        status == "not-started"
+        and created_at
+        and now - created_at > timeout_delta
     ):
-        run.status = "timeout"
+        set_value(run, "status", "timeout")
 
     # Queued for 24 hours
-    elif (
-        run.status == "queued"
-        and run.queued_at
-        and now - run.queued_at.replace(tzinfo=timezone.utc) > timeout_delta
+    queued_at = get_value(run, "queued_at")
+    if (
+        status == "queued"
+        and queued_at
+        and now - queued_at > timeout_delta
     ):
-        run.status = "timeout"
+        set_value(run, "status", "timeout")
 
     # Started for 24 hours
-    elif (
-        run.status == "started"
-        and run.started_at
-        and now - run.started_at.replace(tzinfo=timezone.utc) > timeout_delta
+    started_at = get_value(run, "started_at")
+    if (
+        status == "started"
+        and started_at
+        and now - started_at > timeout_delta
     ):
-        run.status = "timeout"
+        set_value(run, "status", "timeout")
 
     # Running and not updated in the last 24 hours
-    elif run.status not in ["success", "failed", "timeout", "cancelled"]:
-        updated_at = (
-            run.updated_at.replace(tzinfo=timezone.utc)
-            if run.updated_at.tzinfo is None
-            else run.updated_at
-        )
-        if now - updated_at > timeout_delta:
-            run.status = "timeout"
+    if status not in ["success", "failed", "timeout", "cancelled"]:
+        updated_at = get_value(run, "updated_at")
+        if updated_at and now - updated_at > timeout_delta:
+            set_value(run, "status", "timeout")
 
 
 def clean_up_outputs(outputs: List):

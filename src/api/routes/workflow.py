@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 import json
 import os
 from uuid import UUID, uuid4
@@ -40,6 +41,7 @@ from api.models import (
     WorkflowRunWithExtra,
     WorkflowVersion,
     WorkflowRunOutput,
+    SerializableMixin,
 )
 from api.database import get_db
 import logging
@@ -194,6 +196,82 @@ async def clone_workflow(
     await db.commit()
 
     return new_workflow
+
+
+def serialize_row(row_data):
+    """Serialize a row of data with proper type conversion"""
+    if isinstance(row_data, uuid.UUID):
+        return str(row_data)
+    if isinstance(row_data, datetime):
+        return row_data.isoformat()[:-3] + "Z"
+    if isinstance(row_data, list):
+        return [serialize_row(item) for item in row_data]
+    if isinstance(row_data, dict):
+        return {k: serialize_row(v) for k, v in row_data.items()}
+    if isinstance(row_data, Decimal):
+        return str(row_data)
+    if hasattr(row_data, "to_dict") and callable(row_data.to_dict):
+        return row_data.to_dict()
+    return row_data
+
+
+@router.get("/v2/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
+async def get_all_runs(
+    request: Request,
+    workflow_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    query = text("""
+    SELECT 
+        r.id, r.status, r.created_at, r.updated_at, r.ended_at, r.queued_at, r.started_at, 
+        r.workflow_id, r.user_id, r.org_id, r.origin, r.gpu, r.machine_version, r.machine_type, 
+        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id,
+        -- Computing timing metrics
+        EXTRACT(EPOCH FROM (r.ended_at - r.created_at)) as duration,
+        EXTRACT(EPOCH FROM (r.queued_at - r.created_at)) as comfy_deploy_cold_start,
+        EXTRACT(EPOCH FROM (r.started_at - r.queued_at)) as cold_start_duration,
+        EXTRACT(EPOCH FROM (r.started_at - r.created_at)) as cold_start_duration_total,
+        EXTRACT(EPOCH FROM (r.ended_at - r.started_at)) as run_duration,
+        ROW_NUMBER() OVER (ORDER BY r.created_at ASC) as number
+    FROM comfyui_deploy.workflow_runs r
+    INNER JOIN comfyui_deploy.workflows w ON w.id = r.workflow_id
+    WHERE r.workflow_id = :workflow_id
+    AND w.deleted = false
+    AND (
+        (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
+        OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
+    )
+    ORDER BY r.created_at DESC
+    LIMIT :limit
+    OFFSET :offset
+    """)
+    
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+    
+    result = await db.execute(
+        query,
+        {
+            "user_id": user_id,
+            "org_id": org_id,
+            "limit": limit,
+            "workflow_id": workflow_id,
+            "offset": offset
+        }
+    )
+    
+    # Convert raw SQL results using our standalone serialization function
+    runs = [serialize_row(dict(row._mapping)) for row in result.fetchall()]
+    
+    if not runs:
+        return []
+    for run in runs:
+        ensure_run_timeout(run)
+
+    return JSONResponse(content=runs)
 
 
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
