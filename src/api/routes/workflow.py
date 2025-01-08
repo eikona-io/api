@@ -227,7 +227,7 @@ async def get_all_runs(
     SELECT 
         r.id, r.status, r.created_at, r.updated_at, r.ended_at, r.queued_at, r.started_at, 
         r.workflow_id, r.user_id, r.org_id, r.origin, r.gpu, r.machine_version, r.machine_type, 
-        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id,
+        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id, r.workflow_version_id,
         -- Computing timing metrics
         EXTRACT(EPOCH FROM (r.ended_at - r.created_at)) as duration,
         EXTRACT(EPOCH FROM (r.queued_at - r.created_at)) as comfy_deploy_cold_start,
@@ -534,6 +534,33 @@ async def get_workflow_version(
         .where(Workflow.deleted == False)
         .apply_org_check_by_type(Workflow, request)
     )
+    workflow_version = workflow_version.scalar_one_or_none()
+
+    if not workflow_version:
+        raise HTTPException(
+            status_code=404,
+            detail="Workflow version not found or you don't have access to it",
+        )
+
+    return JSONResponse(content=workflow_version.to_dict())
+
+
+@router.get("/workflow-version/{version}", response_model=WorkflowModel)
+async def get_workflow_version_by_id(
+    request: Request,
+    version: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    # Build base query
+    query = (
+        select(WorkflowVersion)
+        .join(Workflow, Workflow.id == WorkflowVersion.workflow_id)
+        .where(Workflow.deleted == False)
+        .where(WorkflowVersion.id == version)
+        .apply_org_check_by_type(Workflow, request)
+    )
+
+    workflow_version = await db.execute(query)
     workflow_version = workflow_version.scalar_one_or_none()
 
     if not workflow_version:
