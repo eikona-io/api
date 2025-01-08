@@ -20,7 +20,7 @@ router = APIRouter(tags=["Runs"])
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
     request: Request,
-    limit: int = 30,
+    limit: int = 60,
     offset: int = 0,
     gpu: Optional[str] = None,
     status: Optional[str] = None,
