@@ -221,14 +221,27 @@ async def get_runs(
                 .apply_org_check(request)
             )
 
-            # Apply the same filters
+            # Apply all filters to chart query
             if gpu_list:
                 chart_query = chart_query.filter(WorkflowRun.gpu.in_(gpu_list))
+            if status_list:
+                chart_query = chart_query.filter(WorkflowRun.status.in_(status_list))
             if origin_list:
                 chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
+            if workflow_id:
+                chart_query = chart_query.filter(WorkflowRun.workflow_id == workflow_id)
             if start_datetime and end_datetime:
                 chart_query = chart_query.filter(
                     WorkflowRun.created_at.between(start_datetime, end_datetime)
+                )
+            if duration:
+                start_duration, end_duration = map(float, duration.split("-"))
+                chart_query = chart_query.filter(
+                    WorkflowRun.ended_at.isnot(None),
+                    WorkflowRun.started_at.isnot(None),
+                    func.extract(
+                        "epoch", WorkflowRun.ended_at - WorkflowRun.started_at
+                    ).between(start_duration, end_duration),
                 )
 
             chart_query = chart_query.group_by("hour", WorkflowRun.status).order_by(
