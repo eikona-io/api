@@ -3,6 +3,7 @@ from typing import AsyncGenerator
 import clickhouse_connect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import asyncio
@@ -17,7 +18,17 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and not DATABASE_URL.startswith("postgresql+asyncpg://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
 
-engine = create_async_engine(DATABASE_URL)
+# Configure engine with larger pool size and longer timeout
+engine = create_async_engine(
+    DATABASE_URL,
+    poolclass=AsyncAdaptedQueuePool,
+    pool_size=20,  # Increased from default 5
+    max_overflow=30,  # Increased from default 10
+    pool_timeout=60,  # Increased from default 30
+    pool_pre_ping=True,  # Enable connection health checks
+    pool_recycle=3600,  # Recycle connections after 1 hour
+)
+
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 big_pool_mgr = httputil.get_pool_manager(maxsize=16, num_pools=12)
