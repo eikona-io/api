@@ -985,11 +985,11 @@ async def _create_run(
         }
 
         # Get the count of runs for this workflow
-        run_count_query = select(func.count(WorkflowRun.id)).where(
-            WorkflowRun.workflow_id == workflow_id
-        )
-        result = await db.execute(run_count_query)
-        run_count = result.scalar_one()
+        # run_count_query = select(func.count(WorkflowRun.id)).where(
+        #     WorkflowRun.workflow_id == workflow_id
+        # )
+        # result = await db.execute(run_count_query)
+        # run_count = result.scalar_one()
 
         new_run_data = new_run.to_dict()
         new_run_data["version"] = {
@@ -998,13 +998,13 @@ async def _create_run(
         new_run_data["machine"] = {
             "name": machine.name if machine else None,
         }
-        new_run_data["number"] = run_count
-        background_tasks.add_task(
-            send_workflow_update, str(new_run.workflow_id), new_run_data
-        )
-        background_tasks.add_task(
-            send_realtime_update, str(new_run.id), new_run.to_dict()
-        )
+        # new_run_data["number"] = run_count
+        # background_tasks.add_task(
+        #     send_workflow_update, str(new_run.workflow_id), new_run_data
+        # )
+        # background_tasks.add_task(
+        #     send_realtime_update, str(new_run.id), new_run.to_dict()
+        # )
 
         # Sending to clickhouse
         progress_data = [
