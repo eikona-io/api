@@ -1,16 +1,15 @@
 import logging
 from typing import List, Optional
 from .types import WorkflowRunModel
-from fastapi import APIRouter, Depends, Request, Query
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
 from .utils import select
 from api.models import WorkflowRun, Workflow, WorkflowVersion, Machine
 from fastapi.responses import JSONResponse
-from .utils import ensure_run_timeout
-from datetime import datetime, timedelta
+from datetime import datetime
 from sqlalchemy import func, case
-from sqlalchemy.types import String
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -30,41 +29,75 @@ async def get_runs(
     created_at: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    # Process filter lists upfront
+    gpu_list = [g.strip() for g in gpu.split(",")] if gpu else []
+    status_list = [s.strip().lower() for s in status.split(",")] if status else []
+    origin_list = [o.strip() for o in origin.split(",")] if origin else []
+
+    # Process datetime variables upfront
+    start_datetime = None
+    end_datetime = None
+    if created_at:
+        try:
+            # Validate format
+            if "-" not in created_at:
+                raise ValueError("Time range must be in format 'start-end'")
+
+            start_time, end_time = created_at.split("-")
+
+            # Convert to timestamps
+            start_datetime = datetime.fromtimestamp(int(start_time) / 1000)
+            end_datetime = datetime.fromtimestamp(int(end_time) / 1000)
+
+            # Validate time range
+            if start_datetime > end_datetime:
+                raise ValueError("Start time cannot be later than end time")
+
+        except (ValueError, TypeError) as e:
+            # Return error response instead of just logging
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Invalid time range format: {str(e)}"},
+            )
+
     # Get total count first (unfiltered)
-    total_count_query = select(func.count()).select_from(
-        select(WorkflowRun)
+    total_count_query = (
+        select(func.count(WorkflowRun.id))
+        .select_from(WorkflowRun)
         .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
         .apply_org_check(request)
-        .subquery()
     )
     total_count = await db.scalar(total_count_query)
 
     # Create base query with joins
     base_query = (
         select(
-            WorkflowRun,
+            WorkflowRun.id,
+            WorkflowRun.status,
+            WorkflowRun.created_at,
+            WorkflowRun.started_at,
+            WorkflowRun.ended_at,
+            WorkflowRun.workflow_id,
+            WorkflowRun.machine_id,
+            WorkflowRun.gpu,
+            WorkflowRun.origin,
+            WorkflowRun.user_id,
             Workflow.name.label("workflow_name"),
             WorkflowVersion.version.label("workflow_version"),
             Machine.name.label("machine_name"),
             case(
                 (
-                    (
-                        WorkflowRun.ended_at.isnot(None)
-                        & WorkflowRun.started_at.isnot(None)
-                    ),
-                    func.cast(
-                        func.extract(
-                            "epoch", WorkflowRun.ended_at - WorkflowRun.started_at
-                        ),
-                        String,
+                    WorkflowRun.ended_at.isnot(None)
+                    & WorkflowRun.started_at.isnot(None),
+                    func.extract(
+                        "epoch", WorkflowRun.ended_at - WorkflowRun.started_at
                     ),
                 ),
                 else_=None,
             ).label("duration"),
         )
-        .join(
-            Workflow, WorkflowRun.workflow_id == Workflow.id
-        )  # Caution: it will filter the workflow without workflow_id. make it outerjoin if you want to keep empty workflow_id
+        .select_from(WorkflowRun)
+        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
         .outerjoin(
             WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
         )
@@ -73,31 +106,22 @@ async def get_runs(
     )
 
     # Handle filters
-    if gpu:
-        gpu_list = [g.strip() for g in gpu.split(",")]
+    if gpu_list:
         base_query = base_query.filter(WorkflowRun.gpu.in_(gpu_list))
 
-    if status:
-        status_list = [s.strip().lower() for s in status.split(",")]
+    if status_list:
         base_query = base_query.filter(WorkflowRun.status.in_(status_list))
 
-    if origin:
-        origin_list = [o.strip() for o in origin.split(",")]
+    if origin_list:
         base_query = base_query.filter(WorkflowRun.origin.in_(origin_list))
 
     if workflow_id:
         base_query = base_query.filter(WorkflowRun.workflow_id == workflow_id)
 
-    if created_at:
-        try:
-            start_time, end_time = created_at.split("-")
-            start_datetime = datetime.fromtimestamp(int(start_time) / 1000)
-            end_datetime = datetime.fromtimestamp(int(end_time) / 1000)
-            base_query = base_query.filter(
-                WorkflowRun.created_at.between(start_datetime, end_datetime)
-            )
-        except (ValueError, TypeError) as e:
-            logger.error(f"Invalid time range format: {e}")
+    if start_datetime and end_datetime:
+        base_query = base_query.filter(
+            WorkflowRun.created_at.between(start_datetime, end_datetime)
+        )
 
     # Add duration filter
     if duration:
@@ -113,9 +137,23 @@ async def get_runs(
         except (ValueError, TypeError) as e:
             logger.error(f"Invalid duration range format: {e}")
 
-    # Get filtered count
-    filter_count_query = select(func.count()).select_from(base_query.subquery())
-    filter_count = await db.scalar(filter_count_query)
+    # Check if any filters are applied
+    has_filters = any([
+        gpu_list,
+        status_list,
+        origin_list,
+        workflow_id,
+        start_datetime and end_datetime,  # Only count if both dates are present
+        duration
+    ])
+
+    # Get filtered count only if filters are applied
+    if has_filters:
+        filter_count_query = select(func.count()).select_from(base_query.subquery())
+        filter_count = await db.scalar(filter_count_query)
+    else:
+        # If no filters, filtered count equals total count
+        filter_count = total_count
 
     # Get paginated data
     query = base_query.order_by(WorkflowRun.created_at.desc()).paginate(limit, offset)
@@ -131,20 +169,45 @@ async def get_runs(
         )
 
     runs_data = []
-    for run, workflow_name, workflow_version, machine_name, duration in runs:
-        ensure_run_timeout(run)
-        run_dict = run.to_dict()
-        run_dict.update(
-            {
-                "workflow": {"id": str(run.workflow_id), "name": workflow_name},
-                "workflow_version": workflow_version,
-                "machine": {
-                    "id": str(run.machine_id) if run.machine_id else None,
-                    "name": machine_name,
-                },
-                "duration": duration,
-            }
-        )
+    # Unpack all columns we selected
+    for (
+        id,
+        status,
+        created_at,
+        started_at,
+        ended_at,
+        workflow_id,
+        machine_id,
+        gpu,
+        origin,
+        user_id,
+        workflow_name,
+        workflow_version,
+        machine_name,
+        duration,
+    ) in runs:
+        run_dict = {
+            "id": str(id),
+            "status": status,
+            "created_at": created_at.isoformat() if created_at else None,
+            "started_at": started_at.isoformat() if started_at else None,
+            "ended_at": ended_at.isoformat() if ended_at else None,
+            "workflow_id": str(workflow_id),
+            "machine_id": str(machine_id) if machine_id else None,
+            "gpu": gpu,
+            "origin": origin,
+            "user_id": str(user_id) if user_id else None,
+            "workflow": {
+                "id": str(workflow_id),
+                "name": workflow_name,
+            },
+            "workflow_version": workflow_version,
+            "machine": {
+                "id": str(machine_id) if machine_id else None,
+                "name": machine_name,
+            },
+            "duration": str(duration) if duration else None,
+        }
         runs_data.append(run_dict)
 
     # Get chart data
@@ -159,34 +222,28 @@ async def get_runs(
     )
 
     # Apply the same filters as the main query
-    if gpu:
+    if gpu_list:
         chart_query = chart_query.filter(WorkflowRun.gpu.in_(gpu_list))
-    if origin:
+    if origin_list:
         chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
-    if created_at:
-        try:
-            chart_query = chart_query.filter(
-                WorkflowRun.created_at.between(start_datetime, end_datetime)
-            )
-        except (ValueError, TypeError):
-            pass
+    if start_datetime and end_datetime:
+        chart_query = chart_query.filter(
+            WorkflowRun.created_at.between(start_datetime, end_datetime)
+        )
 
     chart_query = chart_query.group_by("hour", WorkflowRun.status).order_by("hour")
 
     chart_result = await db.execute(chart_query)
     chart_rows = chart_result.all()
 
-    # Process chart data
-    chart_data = {}
+    # Process chart data using defaultdict
+    chart_data = defaultdict(
+        lambda: {"success": 0, "failed": 0, "others": 0, "timestamp": None}
+    )
+
     for hour, status, count in chart_rows:
         timestamp = int(hour.timestamp() * 1000)
-        if timestamp not in chart_data:
-            chart_data[timestamp] = {
-                "success": 0,
-                "failed": 0,
-                "others": 0,
-                "timestamp": timestamp,
-            }
+        chart_data[timestamp]["timestamp"] = timestamp
 
         # Categorize the status
         if status.lower() == "success":
