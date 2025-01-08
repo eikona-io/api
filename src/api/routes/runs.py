@@ -3,13 +3,14 @@ from typing import List, Optional
 from .types import WorkflowRunModel
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from api.database import get_db
+from api.database import get_db, AsyncSessionLocal
 from .utils import select
 from api.models import WorkflowRun, Workflow, WorkflowVersion, Machine
 from fastapi.responses import JSONResponse
 from datetime import datetime
 from sqlalchemy import func, case
 from collections import defaultdict
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -138,14 +139,16 @@ async def get_runs(
             logger.error(f"Invalid duration range format: {e}")
 
     # Check if any filters are applied
-    has_filters = any([
-        gpu_list,
-        status_list,
-        origin_list,
-        workflow_id,
-        start_datetime and end_datetime,  # Only count if both dates are present
-        duration
-    ])
+    has_filters = any(
+        [
+            gpu_list,
+            status_list,
+            origin_list,
+            workflow_id,
+            start_datetime and end_datetime,  # Only count if both dates are present
+            duration,
+        ]
+    )
 
     # Get filtered count only if filters are applied
     if has_filters:
@@ -155,103 +158,105 @@ async def get_runs(
         # If no filters, filtered count equals total count
         filter_count = total_count
 
-    # Get paginated data
-    query = base_query.order_by(WorkflowRun.created_at.desc()).paginate(limit, offset)
-    result = await db.execute(query)
-    runs = result.unique().all()
+    async def fetch_runs_data():
+        async with AsyncSessionLocal() as runs_db:
+            # Get paginated data
+            query = base_query.order_by(WorkflowRun.created_at.desc()).paginate(
+                limit, offset
+            )
+            result = await runs_db.execute(query)
+            runs = result.unique().all()
 
-    if not runs:
-        return JSONResponse(
-            content={
-                "data": [],
-                "meta": {"totalRowCount": total_count, "filterRowCount": filter_count},
-            }
-        )
+            if not runs:
+                return []
 
-    runs_data = []
-    # Unpack all columns we selected
-    for (
-        id,
-        status,
-        created_at,
-        started_at,
-        ended_at,
-        workflow_id,
-        machine_id,
-        gpu,
-        origin,
-        user_id,
-        workflow_name,
-        workflow_version,
-        machine_name,
-        duration,
-    ) in runs:
-        run_dict = {
-            "id": str(id),
-            "status": status,
-            "created_at": created_at.isoformat() if created_at else None,
-            "started_at": started_at.isoformat() if started_at else None,
-            "ended_at": ended_at.isoformat() if ended_at else None,
-            "workflow_id": str(workflow_id),
-            "machine_id": str(machine_id) if machine_id else None,
-            "gpu": gpu,
-            "origin": origin,
-            "user_id": str(user_id) if user_id else None,
-            "workflow": {
-                "id": str(workflow_id),
-                "name": workflow_name,
-            },
-            "workflow_version": workflow_version,
-            "machine": {
-                "id": str(machine_id) if machine_id else None,
-                "name": machine_name,
-            },
-            "duration": str(duration) if duration else None,
-        }
-        runs_data.append(run_dict)
+            runs_data = []
+            for (
+                id,
+                status,
+                created_at,
+                started_at,
+                ended_at,
+                workflow_id,
+                machine_id,
+                gpu,
+                origin,
+                user_id,
+                workflow_name,
+                workflow_version,
+                machine_name,
+                duration,
+            ) in runs:
+                run_dict = {
+                    "id": str(id),
+                    "status": status,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "started_at": started_at.isoformat() if started_at else None,
+                    "ended_at": ended_at.isoformat() if ended_at else None,
+                    "workflow_id": str(workflow_id),
+                    "machine_id": str(machine_id) if machine_id else None,
+                    "gpu": gpu,
+                    "origin": origin,
+                    "workflow": {"id": str(workflow_id), "name": workflow_name},
+                    "user_id": str(user_id) if user_id else None,
+                    "workflow_version": workflow_version,
+                    "machine": {
+                        "id": str(machine_id) if machine_id else None,
+                        "name": machine_name,
+                    },
+                    "duration": str(duration) if duration else None,
+                }
+                runs_data.append(run_dict)
+            return runs_data
 
-    # Get chart data
-    chart_query = (
-        select(
-            func.date_trunc("hour", WorkflowRun.created_at).label("hour"),
-            WorkflowRun.status,
-            func.count().label("count"),
-        )
-        .select_from(WorkflowRun)
-        .apply_org_check(request)
-    )
+    async def fetch_chart_data():
+        async with AsyncSessionLocal() as chart_db:
+            chart_query = (
+                select(
+                    func.date_trunc("hour", WorkflowRun.created_at).label("hour"),
+                    WorkflowRun.status,
+                    func.count().label("count"),
+                )
+                .select_from(WorkflowRun)
+                .apply_org_check(request)
+            )
 
-    # Apply the same filters as the main query
-    if gpu_list:
-        chart_query = chart_query.filter(WorkflowRun.gpu.in_(gpu_list))
-    if origin_list:
-        chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
-    if start_datetime and end_datetime:
-        chart_query = chart_query.filter(
-            WorkflowRun.created_at.between(start_datetime, end_datetime)
-        )
+            # Apply the same filters
+            if gpu_list:
+                chart_query = chart_query.filter(WorkflowRun.gpu.in_(gpu_list))
+            if origin_list:
+                chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
+            if start_datetime and end_datetime:
+                chart_query = chart_query.filter(
+                    WorkflowRun.created_at.between(start_datetime, end_datetime)
+                )
 
-    chart_query = chart_query.group_by("hour", WorkflowRun.status).order_by("hour")
+            chart_query = chart_query.group_by("hour", WorkflowRun.status).order_by(
+                "hour"
+            )
+            chart_result = await chart_db.execute(chart_query)
+            chart_rows = chart_result.all()
 
-    chart_result = await db.execute(chart_query)
-    chart_rows = chart_result.all()
+            # Process chart data using defaultdict
+            chart_data = defaultdict(
+                lambda: {"success": 0, "failed": 0, "others": 0, "timestamp": None}
+            )
 
-    # Process chart data using defaultdict
-    chart_data = defaultdict(
-        lambda: {"success": 0, "failed": 0, "others": 0, "timestamp": None}
-    )
+            for hour, status, count in chart_rows:
+                timestamp = int(hour.timestamp() * 1000)
+                chart_data[timestamp]["timestamp"] = timestamp
 
-    for hour, status, count in chart_rows:
-        timestamp = int(hour.timestamp() * 1000)
-        chart_data[timestamp]["timestamp"] = timestamp
+                if status.lower() == "success":
+                    chart_data[timestamp]["success"] += count
+                elif status.lower() == "failed":
+                    chart_data[timestamp]["failed"] += count
+                else:
+                    chart_data[timestamp]["others"] += count
 
-        # Categorize the status
-        if status.lower() == "success":
-            chart_data[timestamp]["success"] += count
-        elif status.lower() == "failed":
-            chart_data[timestamp]["failed"] += count
-        else:
-            chart_data[timestamp]["others"] += count
+            return list(chart_data.values())
+
+    # Run both queries in parallel
+    runs_data, chart_data = await asyncio.gather(fetch_runs_data(), fetch_chart_data())
 
     return JSONResponse(
         content={
@@ -259,7 +264,7 @@ async def get_runs(
             "meta": {
                 "totalRowCount": total_count,
                 "filterRowCount": filter_count,
-                "chartData": list(chart_data.values()),
+                "chartData": chart_data,
             },
         }
     )
