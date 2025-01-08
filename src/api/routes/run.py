@@ -1090,6 +1090,9 @@ async def _create_run(
 
                     async with httpx.AsyncClient() as _client:
                         try:
+                            # Proxy the update run back to v1 endpoints
+                            params["file_upload_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/file-upload"
+                            params["status_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/update-run"
                             payload = {"input": params}
                             response = await _client.post(
                                 f"{machine.endpoint}/run",
