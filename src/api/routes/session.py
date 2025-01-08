@@ -58,7 +58,10 @@ class Session(BaseModel):
     session_id: str
     gpu_event_id: str
     url: str
-
+    gpu: str
+    created_at: datetime
+    timeout: int
+    machine_id: str
 
 # Return the session tunnel url
 @router.get(
@@ -97,6 +100,10 @@ async def get_session(
         "session_id": session_id,
         "url": gpuEvent.tunnel_url,
         "gpu_event_id": str(gpuEvent.id),
+        "gpu": gpuEvent.gpu,
+        "created_at": gpuEvent.created_at,
+        "timeout": gpuEvent.session_timeout,
+        "machine_id": str(gpuEvent.machine_id),
     }
     # with logfire.span("spawn-run"):
     #     result = ComfyDeployRunner().run.spawn(params)
@@ -282,7 +289,7 @@ async def increase_timeout(
     gpu_event.session_timeout = gpu_event.session_timeout + body.timeout
     await db.commit()        
 
-    return Response(status_code=204)
+    return JSONResponse(status_code=200, content={"message": "Timeout increased successfully"})
 
 class CreateSessionResponse(BaseModel):
     session_id: UUID
