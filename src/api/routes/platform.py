@@ -276,8 +276,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                 if discount.coupon.percent_off:
                     final_amount = final_amount * (1 - discount.coupon.percent_off / 100)
                 elif discount.coupon.amount_off:
-                    # Get total number of items in subscription
-                    total_items = len(stripe_plan.items.get('data', []))
+                    total_items = len(stripe_plan.get("items", {}).get("data", []))
                     final_amount = max(0, final_amount - (discount.coupon.amount_off / total_items))
 
         charges.append(round(final_amount))
