@@ -1,4 +1,5 @@
 import os
+import logfire
 from pydantic import BaseModel
 from api.database import get_db
 from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent
@@ -166,6 +167,7 @@ async def get_current_plan(
             )
         )
         .order_by(SubscriptionStatus.created_at.desc())
+        .limit(1)
     )
 
     result = await db.execute(query)
