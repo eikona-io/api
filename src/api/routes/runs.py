@@ -28,7 +28,7 @@ async def get_runs(
     workflow_id: Optional[str] = None,
     duration: Optional[str] = None,
     created_at: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    machine_id: Optional[str] = None,
 ):
     # Process filter lists upfront
     gpu_list = [g.strip() for g in gpu.split(",")] if gpu else []
@@ -112,6 +112,9 @@ async def get_runs(
     if workflow_id:
         base_query = base_query.filter(WorkflowRun.workflow_id == workflow_id)
 
+    if machine_id:
+        base_query = base_query.filter(WorkflowRun.machine_id == machine_id)
+
     if start_datetime and end_datetime:
         base_query = base_query.filter(
             WorkflowRun.created_at.between(start_datetime, end_datetime)
@@ -138,6 +141,7 @@ async def get_runs(
             status_list,
             origin_list,
             workflow_id,
+            machine_id,
             start_datetime and end_datetime,  # Only count if both dates are present
             duration,
         ]
@@ -221,6 +225,8 @@ async def get_runs(
                 chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
             if workflow_id:
                 chart_query = chart_query.filter(WorkflowRun.workflow_id == workflow_id)
+            if machine_id:
+                chart_query = chart_query.filter(WorkflowRun.machine_id == machine_id)
             if start_datetime and end_datetime:
                 chart_query = chart_query.filter(
                     WorkflowRun.created_at.between(start_datetime, end_datetime)
