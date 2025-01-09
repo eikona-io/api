@@ -169,7 +169,7 @@ async def get_current_plan(
     )
 
     result = await db.execute(query)
-    subscription = result.scalar_one_or_none()
+    subscription = result.first()
 
     if subscription:
         return {
