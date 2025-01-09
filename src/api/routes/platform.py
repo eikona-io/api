@@ -1,4 +1,5 @@
 import os
+import logfire
 from pydantic import BaseModel
 from api.database import get_db
 from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent
@@ -172,6 +173,7 @@ async def get_current_plan(
     subscription = result.first()
 
     if subscription:
+        logfire.info(subscription)
         return {
             "stripe_customer_id": subscription.stripe_customer_id,
             "user_id": subscription.user_id,
