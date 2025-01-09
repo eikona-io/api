@@ -65,10 +65,9 @@ async def get_runs(
     total_count_query = (
         select(func.count(WorkflowRun.id))
         .select_from(WorkflowRun)
-        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
+        .filter(WorkflowRun.workflow_id.isnot(None))
         .apply_org_check(request)
     )
-    total_count = await db.scalar(total_count_query)
 
     # Create base query with joins
     base_query = (
@@ -96,6 +95,7 @@ async def get_runs(
             ).label("duration"),
         )
         .select_from(WorkflowRun)
+        .filter(WorkflowRun.workflow_id.isnot(None))
         .apply_org_check(request)
     )
 
@@ -143,13 +143,16 @@ async def get_runs(
         ]
     )
 
-    # Get filtered count only if filters are applied
-    if has_filters:
-        filter_count_query = select(func.count()).select_from(base_query.subquery())
-        filter_count = await db.scalar(filter_count_query)
-    else:
-        # If no filters, filtered count equals total count
-        filter_count = total_count
+    async def fetch_total_count():
+        async with AsyncSessionLocal() as count_db:
+            return await count_db.scalar(total_count_query)
+
+    async def fetch_filter_count():
+        if not has_filters:
+            return None  # Will use total_count instead if no filters
+        async with AsyncSessionLocal() as count_db:
+            filter_count_query = select(func.count()).select_from(base_query.subquery())
+            return await count_db.scalar(filter_count_query)
 
     async def fetch_runs_data():
         async with AsyncSessionLocal() as runs_db:
@@ -256,15 +259,18 @@ async def get_runs(
 
             return list(chart_data.values())
 
-    # Run both queries in parallel
-    runs_data, chart_data = await asyncio.gather(fetch_runs_data(), fetch_chart_data())
+    # Run all four queries in parallel
+    total_count, filter_count, runs_data, chart_data = await asyncio.gather(
+        fetch_total_count(), fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
+    )
 
     return JSONResponse(
         content={
             "data": runs_data,
             "meta": {
                 "totalRowCount": total_count,
-                "filterRowCount": filter_count,
+                "filterRowCount": filter_count
+                or total_count,  # Use total_count as fallback
                 "chartData": chart_data,
             },
         }
