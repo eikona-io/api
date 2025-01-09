@@ -167,13 +167,13 @@ async def get_current_plan(
             )
         )
         .order_by(SubscriptionStatus.created_at.desc())
+        .limit(1)
     )
 
     result = await db.execute(query)
-    subscription = result.first()
+    subscription = result.scalar_one_or_none()
 
     if subscription:
-        logfire.info(subscription)
         return {
             "stripe_customer_id": subscription.stripe_customer_id,
             "user_id": subscription.user_id,
