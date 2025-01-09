@@ -1030,7 +1030,7 @@ async def _create_run(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
 
-        token = generate_temporary_token(request.state.current_user["user_id"], org_id)
+        token = generate_temporary_token(request.state.current_user["user_id"], org_id, expires_in="6h")
         # logger.info(token)
         # logger.info("machine type " + machine.type)
 
