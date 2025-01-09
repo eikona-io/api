@@ -79,13 +79,11 @@ async def get_runs(
             WorkflowRun.started_at,
             WorkflowRun.ended_at,
             WorkflowRun.workflow_id,
+            WorkflowRun.workflow_version_id,
             WorkflowRun.machine_id,
             WorkflowRun.gpu,
             WorkflowRun.origin,
             WorkflowRun.user_id,
-            Workflow.name.label("workflow_name"),
-            WorkflowVersion.version.label("workflow_version"),
-            Machine.name.label("machine_name"),
             case(
                 (
                     WorkflowRun.ended_at.isnot(None)
@@ -98,11 +96,6 @@ async def get_runs(
             ).label("duration"),
         )
         .select_from(WorkflowRun)
-        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
-        .outerjoin(
-            WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
-        )
-        .outerjoin(Machine, WorkflowRun.machine_id == Machine.id)
         .apply_org_check(request)
     )
 
@@ -178,13 +171,11 @@ async def get_runs(
                 started_at,
                 ended_at,
                 workflow_id,
+                workflow_version_id,
                 machine_id,
                 gpu,
                 origin,
                 user_id,
-                workflow_name,
-                workflow_version,
-                machine_name,
                 duration,
             ) in runs:
                 run_dict = {
@@ -194,16 +185,13 @@ async def get_runs(
                     "started_at": started_at.isoformat() if started_at else None,
                     "ended_at": ended_at.isoformat() if ended_at else None,
                     "workflow_id": str(workflow_id),
+                    "workflow_version_id": str(workflow_version_id)
+                    if workflow_version_id
+                    else None,
                     "machine_id": str(machine_id) if machine_id else None,
                     "gpu": gpu,
                     "origin": origin,
-                    "workflow": {"id": str(workflow_id), "name": workflow_name},
                     "user_id": str(user_id) if user_id else None,
-                    "workflow_version": workflow_version,
-                    "machine": {
-                        "id": str(machine_id) if machine_id else None,
-                        "name": machine_name,
-                    },
                     "duration": str(duration) if duration else None,
                 }
                 runs_data.append(run_dict)
