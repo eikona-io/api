@@ -166,6 +166,8 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
                 files={}
             )
         else:
+            # Convert deps to DependencyGraph if it's still a dict
+            deps = DependencyGraph(**deps) if isinstance(deps, dict) else deps
             deps.comfyui = data.comfyui_version
     
     if docker_commands and data.extra_docker_commands:
