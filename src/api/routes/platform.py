@@ -937,6 +937,7 @@ async def get_usage(
             )
         )
         .order_by(SubscriptionStatus.created_at.desc())
+        .limit(1)
     )
     result = await db.execute(query)
     subscription = result.scalar_one_or_none()
