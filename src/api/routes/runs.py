@@ -28,7 +28,7 @@ async def get_runs(
     workflow_id: Optional[str] = None,
     duration: Optional[str] = None,
     created_at: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    machine_id: Optional[str] = None,
 ):
     # Process filter lists upfront
     gpu_list = [g.strip() for g in gpu.split(",")] if gpu else []
@@ -65,10 +65,9 @@ async def get_runs(
     total_count_query = (
         select(func.count(WorkflowRun.id))
         .select_from(WorkflowRun)
-        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
+        .filter(WorkflowRun.workflow_id.isnot(None))
         .apply_org_check(request)
     )
-    total_count = await db.scalar(total_count_query)
 
     # Create base query with joins
     base_query = (
@@ -79,13 +78,11 @@ async def get_runs(
             WorkflowRun.started_at,
             WorkflowRun.ended_at,
             WorkflowRun.workflow_id,
+            WorkflowRun.workflow_version_id,
             WorkflowRun.machine_id,
             WorkflowRun.gpu,
             WorkflowRun.origin,
             WorkflowRun.user_id,
-            Workflow.name.label("workflow_name"),
-            WorkflowVersion.version.label("workflow_version"),
-            Machine.name.label("machine_name"),
             case(
                 (
                     WorkflowRun.ended_at.isnot(None)
@@ -98,11 +95,7 @@ async def get_runs(
             ).label("duration"),
         )
         .select_from(WorkflowRun)
-        .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
-        .outerjoin(
-            WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
-        )
-        .outerjoin(Machine, WorkflowRun.machine_id == Machine.id)
+        .filter(WorkflowRun.workflow_id.isnot(None))
         .apply_org_check(request)
     )
 
@@ -118,6 +111,9 @@ async def get_runs(
 
     if workflow_id:
         base_query = base_query.filter(WorkflowRun.workflow_id == workflow_id)
+
+    if machine_id:
+        base_query = base_query.filter(WorkflowRun.machine_id == machine_id)
 
     if start_datetime and end_datetime:
         base_query = base_query.filter(
@@ -145,18 +141,22 @@ async def get_runs(
             status_list,
             origin_list,
             workflow_id,
+            machine_id,
             start_datetime and end_datetime,  # Only count if both dates are present
             duration,
         ]
     )
 
-    # Get filtered count only if filters are applied
-    if has_filters:
-        filter_count_query = select(func.count()).select_from(base_query.subquery())
-        filter_count = await db.scalar(filter_count_query)
-    else:
-        # If no filters, filtered count equals total count
-        filter_count = total_count
+    async def fetch_total_count():
+        async with AsyncSessionLocal() as count_db:
+            return await count_db.scalar(total_count_query)
+
+    async def fetch_filter_count():
+        if not has_filters:
+            return None  # Will use total_count instead if no filters
+        async with AsyncSessionLocal() as count_db:
+            filter_count_query = select(func.count()).select_from(base_query.subquery())
+            return await count_db.scalar(filter_count_query)
 
     async def fetch_runs_data():
         async with AsyncSessionLocal() as runs_db:
@@ -178,13 +178,11 @@ async def get_runs(
                 started_at,
                 ended_at,
                 workflow_id,
+                workflow_version_id,
                 machine_id,
                 gpu,
                 origin,
                 user_id,
-                workflow_name,
-                workflow_version,
-                machine_name,
                 duration,
             ) in runs:
                 run_dict = {
@@ -194,16 +192,13 @@ async def get_runs(
                     "started_at": started_at.isoformat() if started_at else None,
                     "ended_at": ended_at.isoformat() if ended_at else None,
                     "workflow_id": str(workflow_id),
+                    "workflow_version_id": str(workflow_version_id)
+                    if workflow_version_id
+                    else None,
                     "machine_id": str(machine_id) if machine_id else None,
                     "gpu": gpu,
                     "origin": origin,
-                    "workflow": {"id": str(workflow_id), "name": workflow_name},
                     "user_id": str(user_id) if user_id else None,
-                    "workflow_version": workflow_version,
-                    "machine": {
-                        "id": str(machine_id) if machine_id else None,
-                        "name": machine_name,
-                    },
                     "duration": str(duration) if duration else None,
                 }
                 runs_data.append(run_dict)
@@ -230,6 +225,8 @@ async def get_runs(
                 chart_query = chart_query.filter(WorkflowRun.origin.in_(origin_list))
             if workflow_id:
                 chart_query = chart_query.filter(WorkflowRun.workflow_id == workflow_id)
+            if machine_id:
+                chart_query = chart_query.filter(WorkflowRun.machine_id == machine_id)
             if start_datetime and end_datetime:
                 chart_query = chart_query.filter(
                     WorkflowRun.created_at.between(start_datetime, end_datetime)
@@ -268,15 +265,18 @@ async def get_runs(
 
             return list(chart_data.values())
 
-    # Run both queries in parallel
-    runs_data, chart_data = await asyncio.gather(fetch_runs_data(), fetch_chart_data())
+    # Run all four queries in parallel
+    total_count, filter_count, runs_data, chart_data = await asyncio.gather(
+        fetch_total_count(), fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
+    )
 
     return JSONResponse(
         content={
             "data": runs_data,
             "meta": {
                 "totalRowCount": total_count,
-                "filterRowCount": filter_count,
+                "filterRowCount": filter_count
+                or total_count,  # Use total_count as fallback
                 "chartData": chart_data,
             },
         }
