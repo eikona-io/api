@@ -651,7 +651,9 @@ async def handle_clerk_webhook(
             new_user = User(
                 id=user_data["id"],
                 username=username_fallback,
-                name=name_fallback
+                name=name_fallback,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc)
             )
 
             db.add(new_user)
@@ -682,6 +684,7 @@ async def handle_clerk_webhook(
             
             user.username = username_fallback
             user.name = name_fallback
+            user.updated_at = datetime.now(timezone.utc)
             
             await db.commit()
             await db.refresh(user)
