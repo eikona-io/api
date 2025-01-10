@@ -43,7 +43,14 @@ from .utils import (
 from sqlalchemy import update, case
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
-from api.models import Machine, UserSettings, Workflow, WorkflowRun, WorkflowRunOutput
+from api.models import (
+    Machine,
+    UserSettings,
+    Workflow,
+    WorkflowRun,
+    WorkflowRunOutput,
+    User,
+)
 
 from fastapi import Query
 from datetime import datetime, timezone
@@ -348,7 +355,7 @@ async def update_run(
         # If the run is already cancelled, don't update it
         if body.status == "cancelled":
             return {"status": "success"}
-        
+
         # If the run is already timed out, don't update it
         if workflow_run.status == "timeout":
             return {"status": "success"}
@@ -446,19 +453,23 @@ async def create_gpu_event(request: Request, data: Any = Body(...)):
     headers = dict(request.headers)
     # Remove host header as it will be set by aiohttp
     headers.pop("host", None)
-    
+
     async with aiohttp.ClientSession() as session:
         # Remove any existing encoding headers and set to just gzip
-        headers['Accept-Encoding'] = 'gzip, deflate'
-        if 'content-encoding' in headers:
-            del headers['content-encoding']
-            
+        headers["Accept-Encoding"] = "gzip, deflate"
+        if "content-encoding" in headers:
+            del headers["content-encoding"]
+
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
+                headers={
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "content-encoding"
+                },
             )
 
     # async with aiohttp.ClientSession(
@@ -491,16 +502,20 @@ async def machine_built(request: Request, data: Any = Body(...)):
 
     async with aiohttp.ClientSession() as session:
         # Remove any existing encoding headers and set to just gzip
-        headers['Accept-Encoding'] = 'gzip, deflate'
-        if 'content-encoding' in headers:
-            del headers['content-encoding']
-            
+        headers["Accept-Encoding"] = "gzip, deflate"
+        if "content-encoding" in headers:
+            del headers["content-encoding"]
+
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
+                headers={
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "content-encoding"
+                },
             )
 
 
@@ -516,16 +531,20 @@ async def fal_webhook(request: Request, data: Any = Body(...)):
 
     async with aiohttp.ClientSession() as session:
         # Remove any existing encoding headers and set to just gzip
-        headers['Accept-Encoding'] = 'gzip, deflate'
-        if 'content-encoding' in headers:
-            del headers['content-encoding']
-            
+        headers["Accept-Encoding"] = "gzip, deflate"
+        if "content-encoding" in headers:
+            del headers["content-encoding"]
+
         async with session.post(new_url, json=data, headers=headers) as response:
             content = await response.read()
             return Response(
                 content=content,
                 status_code=response.status,
-                headers={k: v for k, v in response.headers.items() if k.lower() != 'content-encoding'}
+                headers={
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "content-encoding"
+                },
             )
 
 
@@ -593,4 +612,52 @@ async def get_file_upload_url(
             "is_public": public,
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class EmailAddress(BaseModel):
+    email_address: str
+    id: str
+    verification: dict
+
+
+class ClerkWebhookData(BaseModel):
+    data: dict
+    type: str
+    timestamp: int
+
+
+@router.post("/clerk/webhook", include_in_schema=False)
+async def handle_clerk_webhook(
+    webhook_data: ClerkWebhookData,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        if webhook_data.type == "user.created":
+            user_data = webhook_data.data
+
+            # Create new user
+            new_user = User(
+                id=user_data["id"],
+                name=user_data["first_name"] + " " + user_data["last_name"]
+                if user_data["first_name"] and user_data["last_name"]
+                else None,
+                created_at=datetime.fromtimestamp(
+                    user_data["created_at"] / 1000
+                ),  # Convert from milliseconds
+                updated_at=datetime.fromtimestamp(
+                    user_data["updated_at"] / 1000
+                ),  # Convert from milliseconds
+            )
+
+            db.add(new_user)
+            await db.commit()
+            await db.refresh(new_user)
+
+            return {"status": "success", "message": "User created successfully"}
+
+        return {"status": "success", "message": "Event processed"}
+
+    except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

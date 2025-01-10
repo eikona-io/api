@@ -16,6 +16,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/machine-built",
             "/api/fal-webhook",
             "/api/models",
+            "/api/clerk/webhook",
         ]
         # print("AuthMiddleware initialized")  # Test print
 
