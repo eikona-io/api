@@ -636,6 +636,13 @@ async def handle_clerk_webhook(
         user_data = webhook_data.data
         
         if webhook_data.type == "user.created":
+            # Check if user already exists
+            existing_user = await db.execute(
+                select(User).where(User.id == user_data["id"])
+            )
+            if existing_user.scalar_one_or_none():
+                return {"status": "success", "message": "User already exists"}
+
             # Get username fallback (username or first_name + last_name)
             username_fallback = user_data.get("username") or (
                 (user_data.get("first_name") or "") + 
