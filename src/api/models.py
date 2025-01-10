@@ -292,6 +292,7 @@ class User(SerializableMixin, Base):
     metadata = metadata
 
     id = Column(String, primary_key=True)
+    username = Column(String)
     name = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)

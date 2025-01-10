@@ -636,19 +636,22 @@ async def handle_clerk_webhook(
         user_data = webhook_data.data
         
         if webhook_data.type == "user.created":
+            # Get username fallback (username or first_name + last_name)
+            username_fallback = user_data.get("username") or (
+                (user_data.get("first_name") or "") + 
+                (user_data.get("last_name") or "")
+            )
+
+            # Get name fallback
+            name_fallback = (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
+            if not name_fallback:
+                name_fallback = username_fallback
+
             # Create new user
             new_user = User(
                 id=user_data["id"],
-                name=user_data["first_name"] + " " + user_data["last_name"]
-                if user_data["first_name"] and user_data["last_name"]
-                else None,
-                email=user_data["email_addresses"][0]["email_address"] if user_data.get("email_addresses") else None,
-                created_at=datetime.fromtimestamp(
-                    user_data["created_at"] / 1000
-                ),  # Convert from milliseconds
-                updated_at=datetime.fromtimestamp(
-                    user_data["updated_at"] / 1000
-                ),  # Convert from milliseconds
+                username=username_fallback,
+                name=name_fallback
             )
 
             db.add(new_user)
@@ -667,14 +670,18 @@ async def handle_clerk_webhook(
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
             
-            # Update user fields
-            user.name = (user_data["first_name"] + " " + user_data["last_name"] 
-                        if user_data["first_name"] and user_data["last_name"] 
-                        else None)
-            user.email = (user_data["email_addresses"][0]["email_address"] 
-                         if user_data.get("email_addresses") 
-                         else None)
-            user.updated_at = datetime.fromtimestamp(user_data["updated_at"] / 1000)
+            # Update username and name with same fallback logic
+            username_fallback = user_data.get("username") or (
+                (user_data.get("first_name") or "") + 
+                (user_data.get("last_name") or "")
+            )
+
+            name_fallback = (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
+            if not name_fallback:
+                name_fallback = username_fallback
+            
+            user.username = username_fallback
+            user.name = name_fallback
             
             await db.commit()
             await db.refresh(user)
