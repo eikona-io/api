@@ -28,6 +28,7 @@ import aiohttp
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
+import logfire
 
 from .utils import (
     async_lru_cache,
@@ -89,6 +90,10 @@ async def send_webhook(workflow_run, updatedAt: datetime, run_id: str):
     else:
         logging.info(
             f"Webhook failed with status {response.status}",
+        )
+        logfire.error(
+            f"Webhook failed with status {response.status}",
+            attributes={"workflow_run_id": workflow_run["id"]},
         )
         return {
             "status": "error",
