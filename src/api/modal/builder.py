@@ -237,7 +237,6 @@ async def websocket_endpoint(
     websocket: WebSocket,
     machine_id: str,
     client: AsyncClient = Depends(get_clickhouse_client),
-    db: AsyncSession = Depends(get_db),
 ):
     await websocket.accept()
     # machine_id_websocket_dict[machine_id] = websocket
@@ -245,12 +244,13 @@ async def websocket_endpoint(
     try:
         last_update_time = None
 
-        machine = (
-            await db.execute(
-                select(Machine).where(Machine.id == machine_id)
-                # .apply_org_check(request)
-            )
-        ).scalar_one_or_none()
+        async with get_db_context() as db:
+            machine = (
+                await db.execute(
+                    select(Machine).where(Machine.id == machine_id)
+                    # .apply_org_check(request)
+                )
+            ).scalar_one_or_none()
 
         if not machine:
             raise HTTPException(status_code=404, detail="Machine not found")
