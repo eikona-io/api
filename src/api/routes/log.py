@@ -230,7 +230,7 @@ async def stream_progress(
 
         if not has_permission:
             raise HTTPException(
-                status_code=403, detail="Not authorized to access this progress"
+                status_code=403, detail="Not auxhorized to access this progress"
             )
 
         # Stream progress updates from ClickHouse
