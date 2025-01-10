@@ -633,15 +633,16 @@ async def handle_clerk_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        user_data = webhook_data.data
+        
         if webhook_data.type == "user.created":
-            user_data = webhook_data.data
-
             # Create new user
             new_user = User(
                 id=user_data["id"],
                 name=user_data["first_name"] + " " + user_data["last_name"]
                 if user_data["first_name"] and user_data["last_name"]
                 else None,
+                email=user_data["email_addresses"][0]["email_address"] if user_data.get("email_addresses") else None,
                 created_at=datetime.fromtimestamp(
                     user_data["created_at"] / 1000
                 ),  # Convert from milliseconds
@@ -655,6 +656,30 @@ async def handle_clerk_webhook(
             await db.refresh(new_user)
 
             return {"status": "success", "message": "User created successfully"}
+            
+        elif webhook_data.type == "user.updated":
+            # Get existing user
+            existing_user = await db.execute(
+                select(User).where(User.id == user_data["id"])
+            )
+            user = existing_user.scalar_one_or_none()
+            
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            # Update user fields
+            user.name = (user_data["first_name"] + " " + user_data["last_name"] 
+                        if user_data["first_name"] and user_data["last_name"] 
+                        else None)
+            user.email = (user_data["email_addresses"][0]["email_address"] 
+                         if user_data.get("email_addresses") 
+                         else None)
+            user.updated_at = datetime.fromtimestamp(user_data["updated_at"] / 1000)
+            
+            await db.commit()
+            await db.refresh(user)
+            
+            return {"status": "success", "message": "User updated successfully"}
 
         return {"status": "success", "message": "Event processed"}
 
