@@ -7,7 +7,7 @@ from api.database import get_db, AsyncSessionLocal
 from .utils import select
 from api.models import WorkflowRun, Workflow, WorkflowVersion, Machine
 from fastapi.responses import JSONResponse
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import func, case
 from collections import defaultdict
 import asyncio
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Runs"])
 
+MAX_DAYS = 30
 
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
@@ -66,6 +67,7 @@ async def get_runs(
         select(func.count(WorkflowRun.id))
         .select_from(WorkflowRun)
         .filter(WorkflowRun.workflow_id.isnot(None))
+        .filter(WorkflowRun.created_at >= datetime.now() - timedelta(days=MAX_DAYS))
         .apply_org_check(request)
     )
 
@@ -96,6 +98,7 @@ async def get_runs(
         )
         .select_from(WorkflowRun)
         .filter(WorkflowRun.workflow_id.isnot(None))
+        .filter(WorkflowRun.created_at >= datetime.now() - timedelta(days=MAX_DAYS))
         .apply_org_check(request)
     )
 
@@ -213,6 +216,7 @@ async def get_runs(
                     func.count().label("count"),
                 )
                 .select_from(WorkflowRun)
+                .filter(WorkflowRun.created_at >= datetime.now() - timedelta(days=MAX_DAYS))
                 .apply_org_check(request)
             )
 
