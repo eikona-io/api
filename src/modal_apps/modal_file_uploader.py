@@ -3,6 +3,7 @@ from typing import Annotated
 import uuid
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 import modal
+from fastapi.middleware.cors import CORSMiddleware
 
 modal_file_uploader_app = modal.App("volume-file-uploader")
 
@@ -48,6 +49,19 @@ async def upload(
         )
 
     return {"message": "File uploaded successfully", "path": str(file_location)}
+
+
+origins = [
+   "*"
+]
+
+web_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @modal_file_uploader_app.function(
     timeout=3600,
