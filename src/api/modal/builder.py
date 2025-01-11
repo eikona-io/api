@@ -128,6 +128,7 @@ class GPUType(str, Enum):
     CPU = "CPU"
     T4 = "T4"
     A10G = "A10G"
+    L40S = "L40S"
     A100 = "A100"
     A100_80GB = "A100-80GB"
     H100 = "H100"

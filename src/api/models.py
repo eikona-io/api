@@ -174,7 +174,7 @@ class WorkflowRun(SerializableMixin, Base):
     started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
     gpu = Column(
-        Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum("CPU", "T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     machine_version = Column(String)
     machine_type = Column(
@@ -360,6 +360,7 @@ def get_machine_columns():
                 "T4",
                 "L4",
                 "A10G",
+                "L40S",
                 "A100",
                 "A100-80GB",
                 "H100",
@@ -656,7 +657,7 @@ class GPUEvent(SerializableMixin, Base):
     start_time = Column(DateTime(timezone=True))
     end_time = Column(DateTime(timezone=True))
     gpu = Column(
-        Enum("CPU", "T4", "L4", "A10G", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum("CPU", "T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", name="machine_gpu")
     )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     gpu_provider = Column(
