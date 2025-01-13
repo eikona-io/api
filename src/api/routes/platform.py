@@ -44,10 +44,10 @@ async def get_user_meta(
 
 
 class UserSettingsUpdateRequest(BaseModel):
-    api_version: str
+    api_version: Optional[str] = None
     custom_output_bucket: Optional[bool] = None
     hugging_face_token: Optional[str] = None
-    output_visibility: str
+    output_visibility: Optional[str] = None
     s3_access_key_id: Optional[str] = None
     s3_secret_access_key: Optional[str] = None
     s3_bucket_name: Optional[str] = None
