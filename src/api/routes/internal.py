@@ -2,7 +2,6 @@ import json
 import os
 from urllib.parse import urlparse, quote
 from api.sqlmodels import WorkflowRunStatus
-from api.middleware.auth import parse_jwt
 from fastapi import (
     APIRouter,
     Body,
@@ -46,7 +45,9 @@ from sqlalchemy import update, case, and_
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import (
-    GPUEvent,
+    Machine,
+    UserSettings,
+    Workflow,
     WorkflowRun,
     WorkflowRunOutput,
     User,
@@ -452,47 +453,27 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     new_url = f"{legacy_api_url}/api/end_gpu_event"
 
-    # Extract data from request body
-    machine_id = data.get("machine_id")
-    timestamp = data.get("timestamp") 
-    gpu_type = data.get("gpuType")
-    ws_gpu_type = data.get("wsGpuType")
-    event_type = data.get("eventType")
-    gpu_provider = data.get("gpu_provider")
-    event_id = data.get("event_id")
-    user_id = data.get("user_id")
-    org_id = data.get("org_id")
-    session_id = data.get("session_id")
-    modal_function_id = data.get("modal_function_id")
-   
-    # Get token data from request
-    token = request.headers.get("authorization", "").replace("Bearer ", "")
-    if not token:
-        return {"error": "user_id required"}, 404
+    # Get headers from the incoming request
+    headers = dict(request.headers)
+    # Remove host header as it will be set by aiohttp
+    headers.pop("host", None)
 
-    token_data = await parse_jwt(token)
+    async with aiohttp.ClientSession() as session:
+        # Remove any existing encoding headers and set to just gzip
+        headers["Accept-Encoding"] = "gzip, deflate"
+        if "content-encoding" in headers:
+            del headers["content-encoding"]
 
-    if not token_data.get("user_id"):
-        return {"error": "user_id required"}, 404
-
-    final_user_id = user_id or token_data["user_id"] 
-    final_org_id = org_id if user_id else token_data["org_id"]
-
-
-    try:
-        if event_type == "gpu_start":
-            # Insert new GPU event
-            gpu_event = GPUEvent(
-                id=uuid4(),
-                user_id=final_user_id,
-                org_id=final_org_id,
-                start_time=datetime.fromisoformat(timestamp),
-                machine_id=machine_id,
-                gpu=gpu_type,
-                ws_gpu=ws_gpu_type,
-                gpu_provider=gpu_provider,
-                session_id=session_id,
-                modal_function_id=modal_function_id
+        async with session.post(new_url, json=data, headers=headers) as response:
+            content = await response.read()
+            return Response(
+                content=content,
+                status_code=response.status,
+                headers={
+                    k: v
+                    for k, v in response.headers.items()
+                    if k.lower() != "content-encoding"
+                },
             )
 
             db.add(gpu_event)
