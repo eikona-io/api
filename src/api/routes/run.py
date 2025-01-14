@@ -943,6 +943,7 @@ async def _create_run(
         if is_native_run:
             new_run.queued_at = dt.datetime.now(dt.UTC)
             new_run.started_at = dt.datetime.now(dt.UTC)
+            new_run.gpu_event_id = data.gpu_event_id
 
         print(
             f"Debug - model_id being saved: {new_run.model_id}"
