@@ -42,7 +42,7 @@ class CustomNode(BaseModel):
     
 class DependencyGraph(BaseModel):
     comfyui: str
-    models: Dict[str, str]
+    models: Any
     missing_nodes: List[str]
     custom_nodes: Dict[str, CustomNode]
     files: Dict[str, str]
