@@ -105,18 +105,6 @@ wheels = [
 ]
 
 [[package]]
-name = "aiostream"
-version = "0.5.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/60/0b46dfd568d1e22ff587ff0b00829a11411bc34be1b6497c8783cbd9ec82/aiostream-0.5.2.tar.gz", hash = "sha256:b71b519a2d66c38f0872403ab86417955b77352f08d9ad02ad46fc3926b389f4", size = 35339 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/2a/4140da24a81adce23b79e4fdc3fc722c9ff698460c1b9f8f7bd3742eb02e/aiostream-0.5.2-py3-none-any.whl", hash = "sha256:054660370be9d37f6fe3ece3851009240416bd082e469fd90cc8673d3818cf71", size = 39486 },
-]
-
-[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -197,7 +185,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=0.26.0" },
     { name = "logfire", extras = ["fastapi"], specifier = "==2.4.1" },
-    { name = "modal", specifier = "==0.65.5" },
+    { name = "modal", specifier = "==0.72.0" },
     { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
     { name = "protobuf", specifier = ">=4.25.4" },
@@ -902,11 +890,10 @@ wheels = [
 
 [[package]]
 name = "modal"
-version = "0.65.5"
+version = "0.72.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "aiostream" },
     { name = "certifi" },
     { name = "click" },
     { name = "fastapi" },
@@ -922,7 +909,7 @@ dependencies = [
     { name = "watchfiles" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/77/90/5f240e4c1c1424756bfdfecdc4820d3311fd4512c69cd44535aeae0b49b1/modal-0.65.5-py3-none-any.whl", hash = "sha256:f144b766883ca0e6a14c3977e9632f9b5ab7a417b35096a68303f7ba1aa8d901", size = 431762 },
+    { url = "https://files.pythonhosted.org/packages/bc/59/289dd657516f4088e36e8d1a6b92541f29369b5a705c97fcba0e1efebe0a/modal-0.72.0-py3-none-any.whl", hash = "sha256:d09952ac907357d30a314fbf0b759c781ab24677aaf338f5775c9bcab26e4b78", size = 513231 },
 ]
 
 [[package]]
@@ -1620,14 +1607,15 @@ wheels = [
 
 [[package]]
 name = "synchronicity"
-version = "0.8.3"
+version = "0.9.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "sigtools" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/67/78c5fa3d30502a88cc2eef9c672d64274c81d98aef58e814d36cf44f5039/synchronicity-0.9.8.tar.gz", hash = "sha256:f8246a2cd0c2658e260234be27eaaf3c461e11e2a80ab60b698a43c078359471", size = 47574 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/f3/ba98004110352ceb0f6f10a3dde61a138251bf17297018ec07c8fbd3dbba/synchronicity-0.8.3-py3-none-any.whl", hash = "sha256:1a64e75b527edb2cfe3a4e3891b5c736ba0164979d1369c9d74917871dd4913a", size = 32194 },
+    { url = "https://files.pythonhosted.org/packages/6b/89/544bfc8de1304d46d289581dd4623f318e6edf78c16370ae77a1a095e95b/synchronicity-0.9.8-py3-none-any.whl", hash = "sha256:ff1c1bec769ba8a6ded8298a30282fd32992e900a3270837d9256fd60e61862b", size = 34634 },
 ]
 
 [[package]]
