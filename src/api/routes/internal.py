@@ -42,7 +42,7 @@ from .utils import (
     send_realtime_update,
     send_workflow_update,
 )
-from sqlalchemy import update, case
+from sqlalchemy import update, case, and_
 
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import (
@@ -136,6 +136,7 @@ async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
 #     # Perform batch insert
 #     result = await client.insert(table=table, data=values, column_names=columns)
 #     print("result", result)
+endStatuses = ["success", "failed", "timeout", "cancelled"]
 
 
 @async_lru_cache(maxsize=1000)
@@ -450,8 +451,8 @@ async def update_run(
 
 @router.post("/gpu_event", include_in_schema=False)
 async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSession = Depends(get_db)):
-    # legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    # new_url = f"{legacy_api_url}/api/gpu_event"
+    legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
+    new_url = f"{legacy_api_url}/api/end_gpu_event"
 
     # Extract data from request body
     machine_id = data.get("machine_id")
@@ -517,27 +518,47 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             result = await db.execute(stmt)
             event = result.scalar_one()
 
-            await db.commit()
+            # Cancel all executing runs associated with the GPU event
+            if event.session_id is  not None:
+                updateExecutingRuns = (
+                    update(WorkflowRun)
+                    .where(
+                    and_(
+                        WorkflowRun.gpu_event_id == event.session_id,
+                        ~WorkflowRun.status.in_(endStatuses)
+                    )
+                    )
+                    .values(status='cancelled')
+                )
+
+                await db.execute(updateExecutingRuns)
+                await db.commit()
+
+            # Get headers from the incoming request
+            headers = dict(request.headers) 
+            # Remove host header as it will be set by aiohttp
+            headers.pop("host", None)
+            # Send a POST request to the legacy API to update the user spent usage.
+            async with aiohttp.ClientSession() as session:
+                # Remove any existing encoding headers and set to just gzip
+                headers["Accept-Encoding"] = "gzip, deflate"
+                if "content-encoding" in headers:
+                    del headers["content-encoding"]
+
+                async with session.post(new_url, json=data, headers=headers) as response:
+                    content = await response.read()
+                    return Response(
+                        content=content,
+                        status_code=response.status,
+                        headers={
+                            k: v
+                            for k, v in response.headers.items()
+                            if k.lower() != "content-encoding"
+                        },
+                    )
 
             logging.info(f"end_time added to gpu_event: {event.id}")
 
-            #  # Get headers from the incoming request
-            # headers = dict(request.headers)
-            # # Remove host header as it will be set by aiohttp
-            # headers.pop("host", None)
-            
-            # async with aiohttp.ClientSession() as session:
-            #     # Remove any existing encoding headers and set to just gzip
-            #     headers['Accept-Encoding'] = 'gzip, deflate'
-            #     if 'content-encoding' in headers:
-            #         del headers['content-encoding']
-                    
-            #     async with session.post(new_url, headers=headers) as response:
-            #         if response.status >= 400:
-            #             raise HTTPException(status_code=response.status, detail="Error updating monthly spent")
-            #         return {"event_id": event_id}
-
-            return {"event_id": event_id}
 
     except Exception as e:
         logging.error(f"Error: {e}")
