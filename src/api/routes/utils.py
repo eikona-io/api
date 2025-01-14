@@ -420,7 +420,7 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
     return JSONResponse(content=user_settings.to_dict())
 
 async def get_user_settings(request: Request, db: AsyncSession):
-    user_query = select(UserSettings).apply_org_check(request)
+    user_query = select(UserSettings).apply_org_check(request).order_by(UserSettings.created_at.desc()).limit(1)
     user_settings = await db.execute(user_query)
     user_settings = user_settings.scalar_one_or_none()
     user_settings = cast(Optional[UserSettings], user_settings)
