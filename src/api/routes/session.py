@@ -122,22 +122,19 @@ class GetSessionsBody(BaseModel):
     },
 )
 async def get_machine_sessions(
-    request: Request, 
-    machine_id: Optional[str] = None, 
-    db: AsyncSession = Depends(get_db)
+    request: Request, machine_id: str, db: AsyncSession = Depends(get_db)
 ) -> List[GPUEventModel]:
-    query = (
-        select(GPUEvent)
-        .where(GPUEvent.end_time.is_(None))
-        .where(GPUEvent.session_id.isnot(None))
-        .order_by(GPUEvent.start_time.desc())
-        .apply_org_check(request)
+    result = await db.execute(
+        (
+            select(GPUEvent)
+            .where(GPUEvent.machine_id == machine_id)
+            .where(GPUEvent.end_time.is_(None))
+            .where(GPUEvent.session_id.isnot(None))
+            .order_by(GPUEvent.start_time.desc())
+            .apply_org_check(request)
+        )
     )
     
-    if machine_id:
-        query = query.where(GPUEvent.machine_id == machine_id)
-    
-    result = await db.execute(query)
     return result.scalars().all()
 
 async def increase_timeout_task(machine_id: str, session_id: UUID, timeout: int, gpu: str):
