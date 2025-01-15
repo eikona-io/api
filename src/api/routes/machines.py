@@ -11,6 +11,7 @@ import uuid
 
 from api.modal.builder import (
     BuildMachineItem,
+    GPUType,
     KeepWarmBody,
     build_logic,
     set_machine_always_on,
@@ -490,7 +491,8 @@ async def update_serverless_machine(
     if keep_warm_changed and not rebuild:
         print("Keep warm changed", machine.keep_warm)
         set_machine_always_on(
-            machine.id, KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu)
+            str(machine.id),
+            KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=GPUType(machine.gpu)),
         )
 
     await db.commit()
