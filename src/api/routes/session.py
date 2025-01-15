@@ -151,14 +151,13 @@ async def create_session_background_task(
     status_queue: Optional[asyncio.Queue] = None,
 ):
     runner = get_comfy_runner(machine_id, session_id, 60*24, gpu)
+   
     # The increase_timeout method is only available in the new machine
     # builds, but we still need to support the old v4 machines
     has_increase_timeout = hasattr(runner, 'increase_timeout')
-    print("runner: ", runner)
 
     if not has_increase_timeout:
         runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
-        print("not has_increase_timeout runner: ", runner)
 
     print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
@@ -170,7 +169,6 @@ async def create_session_background_task(
        
         modal_function_id = result.object_id
 
-        print("before gpu event creation")
         gpuEvent = None
         while gpuEvent is None:
             async with get_db_context() as db:
@@ -190,7 +188,6 @@ async def create_session_background_task(
 
             if gpuEvent is None:
                 await asyncio.sleep(1)
-        print("gpu created gpuEvent: ", gpuEvent)
 
         print("async_creation", status_queue)
         if status_queue is not None:
@@ -323,7 +320,6 @@ async def create_session(
     #     raise HTTPException(status_code=400, detail="Spend limit reached")
 
     machine_id = body.machine_id
-    print("machine_id: ", machine_id)
     machine = cast(
         Optional[Machine],
         (
@@ -336,7 +332,6 @@ async def create_session(
             )
         ).scalar_one_or_none(),
     )
-    print("machine: ", machine)
 
     if machine is None:
         raise HTTPException(status_code=404, detail="Machine not found")
@@ -354,7 +349,6 @@ async def create_session(
         )
 
     session_id = uuid4()
-    print("session_id: ", session_id)
     # Add the background task
     try:
         if not body.wait_for_server:
