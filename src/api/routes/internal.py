@@ -231,13 +231,13 @@ async def update_run(
         workflow_run = cast(WorkflowRun, workflow_run)
         await db.refresh(workflow_run)
 
-        # Sending a real-time update to connected clients
-        background_tasks.add_task(
-            send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
-        )
-        background_tasks.add_task(
-            send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
-        )
+        # # Sending a real-time update to connected clients
+        # background_tasks.add_task(
+        #     send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
+        # )
+        # background_tasks.add_task(
+        #     send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
+        # )
 
         # Sending to clickhouse
         progress_data = [
@@ -305,7 +305,7 @@ async def update_run(
         await db.commit()
         # return {"status": "success"}
 
-    ended = body.status in ["success", "failed", "timeout", "cancelled"]
+    ended = body.status in endStatuses
     if body.output_data is not None:
         # Sending to postgres
         newOutput = WorkflowRunOutput(
@@ -370,6 +370,35 @@ async def update_run(
         if ended and fixed_time is not None:
             update_data["ended_at"] = fixed_time
 
+        update_values = {
+            "status": body.status,
+            "ended_at": updated_at if ended else None,
+            "updated_at": updated_at,
+        }
+
+        # Add modal_function_call_id if it's provided and the existing value is empty
+        if body.modal_function_call_id:
+            update_values["modal_function_call_id"] = body.modal_function_call_id
+
+        update_stmt = (
+            update(WorkflowRun)
+            .where(
+                and_(
+                    WorkflowRun.id == body.run_id,
+                    ~WorkflowRun.status.in_(endStatuses)
+                )
+            )
+            .values(**update_values)
+        )
+        await db.execute(update_stmt)
+        await db.commit()
+        await db.refresh(workflow_run)
+
+        # Get the updated workflow run
+        existing_run = await db.execute(select(WorkflowRun).where(WorkflowRun.id == body.run_id))
+        workflow_run = existing_run.scalar_one_or_none()
+        workflow_run = cast(WorkflowRun, workflow_run)
+
         # Sending to clickhouse
         progress_data = [
             (
@@ -389,28 +418,6 @@ async def update_run(
         background_tasks.add_task(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
-
-        update_values = {
-            "status": body.status,
-            "ended_at": updated_at if ended else None,
-            "updated_at": updated_at,
-        }
-
-        # Add modal_function_call_id if it's provided and the existing value is empty
-        if body.modal_function_call_id:
-            update_values["modal_function_call_id"] = body.modal_function_call_id
-
-        update_stmt = (
-            update(WorkflowRun)
-            .where(WorkflowRun.id == body.run_id)
-            .values(**update_values)
-            .returning(WorkflowRun)
-        )
-        result = await db.execute(update_stmt)
-        await db.commit()
-        workflow_run = result.scalar_one_or_none()
-        workflow_run = cast(WorkflowRun, workflow_run)
-        await db.refresh(workflow_run)
 
         # Get all outputs for the workflow run
         outputs_query = select(WorkflowRunOutput).where(
