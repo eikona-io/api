@@ -516,6 +516,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             
             result = await db.execute(stmt)
             event = result.scalar_one()
+            await db.commit()
 
             # Cancel all executing runs associated with the GPU event
             if event.session_id is  not None:
