@@ -516,19 +516,16 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             
             result = await db.execute(stmt)
             event = result.scalar_one()
-            await db.commit()  # Make sure to commit the GPU event update
-
-            logging.info(f"end_time added to gpu_event: {event.id}")
 
             # Cancel all executing runs associated with the GPU event
-            if event.session_id is not None:
+            if event.session_id is  not None:
                 updateExecutingRuns = (
                     update(WorkflowRun)
                     .where(
-                        and_(
-                            WorkflowRun.gpu_event_id == event.session_id,
-                            ~WorkflowRun.status.in_(endStatuses)
-                        )
+                    and_(
+                        WorkflowRun.gpu_event_id == event.session_id,
+                        ~WorkflowRun.status.in_(endStatuses)
+                    )
                     )
                     .values(status='cancelled')
                 )
@@ -536,23 +533,18 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 await db.execute(updateExecutingRuns)
                 await db.commit()
 
-            # Prepare data for legacy API call
-            legacy_data = {
-                **data,
-                "start_time": event.start_time.isoformat(),
-                "end_time": event.end_time.isoformat()
-            }
-
             # Get headers from the incoming request
             headers = dict(request.headers) 
+            # Remove host header as it will be set by aiohttp
             headers.pop("host", None)
-            headers["Accept-Encoding"] = "gzip, deflate"
-            if "content-encoding" in headers:
-                del headers["content-encoding"]
-
-            # Send a POST request to the legacy API to update the user spent usage
+            # Send a POST request to the legacy API to update the user spent usage.
             async with aiohttp.ClientSession() as session:
-                async with session.post(new_url, json=legacy_data, headers=headers) as response:
+                # Remove any existing encoding headers and set to just gzip
+                headers["Accept-Encoding"] = "gzip, deflate"
+                if "content-encoding" in headers:
+                    del headers["content-encoding"]
+
+                async with session.post(new_url, json=data, headers=headers) as response:
                     content = await response.read()
                     return Response(
                         content=content,
@@ -563,6 +555,8 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                             if k.lower() != "content-encoding"
                         },
                     )
+
+            logging.info(f"end_time added to gpu_event: {event.id}")
 
 
     except Exception as e:
