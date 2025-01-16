@@ -151,10 +151,12 @@ async def create_session_background_task(
     status_queue: Optional[asyncio.Queue] = None,
 ):
     runner = get_comfy_runner(machine_id, session_id, 60*24, gpu)
-   
-    # The increase_timeout method is only available in the new machine
-    # builds, but we still need to support the old v4 machines
-    has_increase_timeout = hasattr(runner, 'increase_timeout')
+
+    try:
+        runner.increase_timeout
+        has_increase_timeout = True
+    except (AttributeError, modal.exception.Error):
+        has_increase_timeout = False
 
     if not has_increase_timeout:
         runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
