@@ -48,6 +48,7 @@ public:
   inpaint: inpaint
   LLavacheckpoints: LLavacheckpoints
   BiRefNet: BiRefNet
+  diffusion_models: diffusion_models
 
 private:
   base_path: /private_models/
@@ -99,3 +100,4 @@ private:
   inpaint: inpaint
   LLavacheckpoints: LLavacheckpoints
   BiRefNet: BiRefNet
+  diffusion_models: diffusion_models
