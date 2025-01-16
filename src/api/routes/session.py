@@ -57,11 +57,12 @@ def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu:
 class Session(BaseModel):
     session_id: str
     gpu_event_id: str
-    url: str
+    url: Optional[str]
     gpu: str
     created_at: datetime
     timeout: int
     machine_id: str
+
 
 # Return the session tunnel url
 @router.get(
@@ -122,23 +123,29 @@ class GetSessionsBody(BaseModel):
     },
 )
 async def get_machine_sessions(
-    request: Request, machine_id: str, db: AsyncSession = Depends(get_db)
+    request: Request,
+    machine_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
 ) -> List[GPUEventModel]:
-    result = await db.execute(
-        (
-            select(GPUEvent)
-            .where(GPUEvent.machine_id == machine_id)
-            .where(GPUEvent.end_time.is_(None))
-            .where(GPUEvent.session_id.isnot(None))
-            .order_by(GPUEvent.start_time.desc())
-            .apply_org_check(request)
-        )
+    query = (
+        select(GPUEvent)
+        .where(GPUEvent.end_time.is_(None))
+        .where(GPUEvent.session_id.isnot(None))
+        .order_by(GPUEvent.start_time.desc())
+        .apply_org_check(request)
     )
-    
+
+    if machine_id:
+        query = query.where(GPUEvent.machine_id == machine_id)
+
+    result = await db.execute(query)
     return result.scalars().all()
 
-async def increase_timeout_task(machine_id: str, session_id: UUID, timeout: int, gpu: str):
-    runner = get_comfy_runner(machine_id, session_id, 60*24, gpu)
+
+async def increase_timeout_task(
+    machine_id: str, session_id: UUID, timeout: int, gpu: str
+):
+    runner = get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
     await runner.increase_timeout.spawn.aio(timeout)
 
 
@@ -150,51 +157,50 @@ async def create_session_background_task(
     gpu: str,
     status_queue: Optional[asyncio.Queue] = None,
 ):
-    runner = get_comfy_runner(machine_id, session_id, 60*24, gpu)
 
     try:
         runner.increase_timeout
         has_increase_timeout = True
     except (AttributeError, modal.exception.Error):
         has_increase_timeout = False
+    runner = get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
 
     if not has_increase_timeout:
         runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
 
     print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
-       
         if has_increase_timeout:
             result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout)
         else:
             result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
-       
+
         modal_function_id = result.object_id
 
-        gpuEvent = None
-        while gpuEvent is None:
-            async with get_db_context() as db:
-                gpuEvent = cast(
-                    Optional[GPUEvent],
-                    (
-                        await db.execute(
-                            (
-                                select(GPUEvent)
-                                .where(GPUEvent.session_id == str(session_id))
-                                .where(GPUEvent.end_time.is_(None))
-                                .apply_org_check(request)
-                            )
-                        )
-                    ).scalar_one_or_none(),
-                )
+        # gpuEvent = None
+        # while gpuEvent is None:
+        # async with get_db_context() as db:
+        #     gpuEvent = cast(
+        #         Optional[GPUEvent],
+        #         (
+        #             await db.execute(
+        #                 (
+        #                     select(GPUEvent)
+        #                     .where(GPUEvent.session_id == str(session_id))
+        #                     .where(GPUEvent.end_time.is_(None))
+        #                     .apply_org_check(request)
+        #                 )
+        #             )
+        #         ).scalar_one_or_none(),
+        #     )
 
-            if gpuEvent is None:
-                await asyncio.sleep(1)
+        # if gpuEvent is None:
+        #     await asyncio.sleep(1)
 
         print("async_creation", status_queue)
         if status_queue is not None:
-            await status_queue.put(gpuEvent.modal_function_id)
-        print("async_creation", gpuEvent)
+            await status_queue.put(modal_function_id)
+        print("async_creation", modal_function_id)
 
         async with get_db_context() as db:
             result = await db.execute(
@@ -239,11 +245,11 @@ class CreateSessionBody(BaseModel):
 
 
 class CreateDynamicSessionBody(BaseModel):
-    machine_id: str
-    gpu: MachineGPU = Field(None, description="The GPU to use")
+    gpu: MachineGPU = Field("A10G", description="The GPU to use")
+    machine_id: Optional[str] = Field(None, description="The machine id to use")
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
-        None,
+        [],
         description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
         examples=[
             [
@@ -272,11 +278,10 @@ class IncreaseTimeoutBody(BaseModel):
     timeout: int
     gpu: str
 
+
 @router.post("/session/increase-timeout")
 async def increase_timeout(
-    request: Request,
-    body: IncreaseTimeoutBody,
-    db: AsyncSession = Depends(get_db)
+    request: Request, body: IncreaseTimeoutBody, db: AsyncSession = Depends(get_db)
 ):
     gpu_event = (
         await db.execute(
@@ -289,14 +294,19 @@ async def increase_timeout(
 
     if gpu_event is None:
         raise HTTPException(status_code=404, detail="GPU event not found")
-    
-    await increase_timeout_task(body.machine_id, body.session_id, body.timeout, body.gpu)
+
+    await increase_timeout_task(
+        body.machine_id, body.session_id, body.timeout, body.gpu
+    )
 
     # in the database we save the timeout in minutes
     gpu_event.session_timeout = gpu_event.session_timeout + body.timeout
-    await db.commit()        
+    await db.commit()
 
-    return JSONResponse(status_code=200, content={"message": "Timeout increased successfully"})
+    return JSONResponse(
+        status_code=200, content={"message": "Timeout increased successfully"}
+    )
+
 
 class CreateSessionResponse(BaseModel):
     session_id: UUID
@@ -316,6 +326,8 @@ async def create_session(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
     # if exceed_spend_limit:
@@ -351,6 +363,20 @@ async def create_session(
         )
 
     session_id = uuid4()
+
+    gpu_event = GPUEvent(
+        id=uuid4(),
+        user_id=user_id,
+        org_id=org_id,
+        machine_id=machine_id,
+        gpu=body.gpu.value if body.gpu is not None else machine.gpu,
+        gpu_provider="modal",
+        session_id=str(session_id),
+    )
+
+    db.add(gpu_event)
+    await db.commit()
+
     # Add the background task
     try:
         if not body.wait_for_server:
@@ -430,71 +456,77 @@ def extract_url(dependency_string):
 
 
 async def create_dynamic_sesssion_background_task(
+    request: Request,
     session_id: UUID,
     body: CreateDynamicSessionBody,
     status_queue: Optional[asyncio.Queue] = None,
 ):
     app = modal.App(str(session_id))
+    # app = modal.App.lookup("dynamic-comfyui", create_if_missing=True)
 
-    # gpu_event_id = uuid4()
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
 
+    gpu_event_id = str(uuid4())
+    
+    logger.info("creating dynamic session")
+    
+    if isinstance(body.dependencies, list):
+        # Handle shorthand dependencies
+        deps_body = DepsBody(
+            docker_command_steps=DockerSteps(
+                steps=[
+                    DockerStep(
+                        type="custom-node",
+                        data=CustomNode(
+                            install_type="git-clone",
+                            url=extract_url(dep),
+                            hash=extract_hash(dep),
+                            name=dep.split("/")[-1],
+                        ),
+                    )
+                    for dep in body.dependencies
+                ]
+            )
+        )
+        converted = generate_all_docker_commands(deps_body)
+    else:
+        converted = generate_all_docker_commands(body.dependencies)
+
+    # pprint(converted)
+    
+    dockerfile_image = modal.Image.debian_slim(python_version="3.11")
+
+    docker_commands = converted.docker_commands
+    if docker_commands is not None:
+        for commands in docker_commands:
+            dockerfile_image = dockerfile_image.dockerfile_commands(
+                commands,
+            )
+            
+    # dockerfile_image = dockerfile_image.dockerfile_commands(
+    #     [
+    #         "COPY ../modal/v4/data/extra_model_paths.yaml /comfyui/extra_model_paths.yaml",
+    #     ]
+    # )
+    
+    # current_directory = os.path.dirname(os.path.realpath(__file__))
+    
+    dockerfile_image = dockerfile_image.copy_local_file(
+        "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
+    )
+    
+    dockerfile_image = dockerfile_image.run_commands(
+        [
+            "rm -rf /private_models",
+            "rm -rf /comfyui/models",
+            "ln -s /private_models /comfyui/models",
+            "rm -rf /public_models",
+        ]
+    )
+    
     try:
         async with app.run.aio():
-            # async with get_db_context() as db:
-            #     # Insert GPU event
-            #     new_gpu_event = GPUEvent(
-            #         id=gpu_event_id,
-            #         session_id=str(session_id),
-            #         machine_id=body.machine_id,
-            #         gpu=body.gpu.value if body.gpu is not None else "CPU",
-            #         session_timeout=body.timeout or 15,
-            #         gpu_provider="modal",
-            #         start_time=datetime.now(),
-            #         # Add other necessary fields here
-            #     )
-            #     db.add(new_gpu_event)
-            #     await db.commit()
-            #     await db.refresh(new_gpu_event)
-
-            dockerfile_image = modal.Image.debian_slim(python_version="3.11")
-
-            if body.dependencies:
-                if isinstance(body.dependencies, list):
-                    # Handle shorthand dependencies
-                    deps_body = DepsBody(
-                        docker_command_steps=DockerSteps(
-                            steps=[
-                                DockerStep(
-                                    type="custom-node",
-                                    data=CustomNode(
-                                        install_type="git-clone",
-                                        url=extract_url(dep),
-                                        hash=extract_hash(dep),
-                                        name=dep.split("/")[-1],
-                                    ),
-                                )
-                                for dep in body.dependencies
-                            ]
-                        )
-                    )
-                    converted = generate_all_docker_commands(deps_body)
-                else:
-                    converted = generate_all_docker_commands(body.dependencies)
-
-                pprint(converted)
-
-                # return {
-                #     "session_id": session_id,
-                #     "url": "",
-                # }
-
-                docker_commands = converted.docker_commands
-                if docker_commands is not None:
-                    for commands in docker_commands:
-                        dockerfile_image = dockerfile_image.dockerfile_commands(
-                            commands,
-                        )
-
             sb = await modal.Sandbox.create.aio(
                 "bash",
                 "-c",
@@ -507,10 +539,38 @@ async def create_dynamic_sesssion_background_task(
                 app=app,
                 workdir="/comfyui",
                 encrypted_ports=[8188],
+                volumes={
+                    "/public_models": modal.Volume.from_name(os.environ.get("SHARED_MODEL_VOLUME_NAME")),
+                    "/private_models": modal.Volume.from_name("models_" + org_id if org_id is not None else user_id),
+                }
             )
-
+            
+            async with get_db_context() as db:
+                # Insert GPU event
+                new_gpu_event = GPUEvent(
+                    id=gpu_event_id,
+                    user_id=user_id,
+                    org_id=org_id,
+                    session_id=str(session_id),
+                    machine_id=body.machine_id,
+                    gpu=body.gpu.value if body.gpu is not None else "CPU",
+                    session_timeout=body.timeout or 15,
+                    gpu_provider="modal",
+                    start_time=datetime.now(),
+                    modal_function_id=sb.object_id
+                )
+                db.add(new_gpu_event)
+                await db.commit()
+                await db.refresh(new_gpu_event)
+            
             logger.info(sb.tunnels())
             tunnel = sb.tunnels()[8188]
+            
+            async with get_db_context() as db:
+                await db.execute(
+                    update(GPUEvent).where(GPUEvent.id == gpu_event_id).values(tunnel_url=tunnel.url)
+                )
+                await db.commit()
 
             await status_queue.put(tunnel.url)
 
@@ -518,13 +578,16 @@ async def create_dynamic_sesssion_background_task(
 
             await sb.wait.aio()
     except Exception as e:
-        # async with get_db_context() as db:
-        #     new_gpu_event.end_time = datetime.now()
-        #     new_gpu_event.error = str(e)
-        #     await db.commit()
-        #     await db.refresh(new_gpu_event)
-
-        raise e
+        pass
+    finally:
+        async with get_db_context() as db:
+            gpu_event = await db.execute(
+                select(GPUEvent).where(GPUEvent.id == gpu_event_id)
+            )
+            gpu_event = gpu_event.scalar_one_or_none()
+            gpu_event.end_time = datetime.now()
+            await db.commit()
+            await db.refresh(gpu_event)
 
 
 @beta_router.post(
@@ -543,7 +606,7 @@ async def create_dynamic_session(
     q = asyncio.Queue()
 
     task = asyncio.create_task(
-        create_dynamic_sesssion_background_task(session_id, body, q)
+        create_dynamic_sesssion_background_task(request, session_id, body, q)
     )
 
     background_tasks.add_task(
@@ -597,7 +660,10 @@ async def delete_session(
     modal_function_id = gpuEvent.modal_function_id
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
-
-    modal.functions.FunctionCall.from_id(modal_function_id).cancel()
+    
+    if (modal_function_id.startswith("sb-")):
+        await modal.Sandbox.from_id(modal_function_id).terminate.aio()
+    else:
+        await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
 
     return {"success": True}
