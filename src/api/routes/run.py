@@ -1214,6 +1214,7 @@ async def _create_run(
                 outputs = result.scalars().all()
 
                 user_settings = await get_user_settings(request, db)
+                clean_up_outputs(outputs)
                 post_process_outputs(outputs, user_settings)
 
                 return [output.to_dict() for output in outputs]
