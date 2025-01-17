@@ -39,9 +39,9 @@ beta_router = APIRouter(tags=["Beta"])
 status_endpoint = os.environ.get("CURRENT_API_URL") + "/api/update-run"
 
 
-def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu: str):
+async def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu: str):
     logger.info(machine_id)
-    ComfyDeployRunner = modal.Cls.from_name(str(machine_id), "ComfyDeployRunner")
+    ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunner")
     runner = ComfyDeployRunner.with_options(
         concurrency_limit=1,
         allow_concurrent_inputs=1000,
@@ -60,8 +60,8 @@ class Session(BaseModel):
     url: Optional[str]
     gpu: str
     created_at: datetime
-    timeout: int
-    machine_id: str
+    timeout: Optional[int]
+    machine_id: Optional[str]
 
 
 # Return the session tunnel url
@@ -145,7 +145,7 @@ async def get_machine_sessions(
 async def increase_timeout_task(
     machine_id: str, session_id: UUID, timeout: int, gpu: str
 ):
-    runner = get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
+    runner = await get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
     await runner.increase_timeout.spawn.aio(timeout)
 
 
@@ -157,7 +157,7 @@ async def create_session_background_task(
     gpu: str,
     status_queue: Optional[asyncio.Queue] = None,
 ):
-    runner = get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
+    runner = await get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
 
     try:
         runner.increase_timeout
@@ -166,7 +166,7 @@ async def create_session_background_task(
         has_increase_timeout = False
 
     if not has_increase_timeout:
-        runner = get_comfy_runner(machine_id, session_id, timeout, gpu)
+        runner = await get_comfy_runner(machine_id, session_id, timeout, gpu)
 
     print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
@@ -176,6 +176,7 @@ async def create_session_background_task(
             result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
 
         modal_function_id = result.object_id
+        print("modal_function_id", modal_function_id)
 
         # gpuEvent = None
         # while gpuEvent is None:
@@ -372,6 +373,7 @@ async def create_session(
         gpu=body.gpu.value if body.gpu is not None else machine.gpu,
         gpu_provider="modal",
         session_id=str(session_id),
+        session_timeout=body.timeout or 15,
     )
 
     db.add(gpu_event)

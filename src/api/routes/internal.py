@@ -490,6 +490,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 )
                 gpu_event = gpu_event.scalar_one_or_none()
                 gpu_event.start_time = datetime.fromisoformat(timestamp)
+                # gpu_event.modal_function_id = modal_function_id
                 await db.commit()
             else:
                 # Insert new GPU event
