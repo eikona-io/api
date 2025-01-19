@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
-comfydeploy_hash = "230cee40d2b7d2437d8e00665c0c0277b14585b9"
+comfydeploy_hash = "ce3b0dbe849ed58285adfca49d42a7a1e3370589"
 comfyui_hash = "8ce2a1052ca03183768da0aaa483024e58b8008c"
 
 
