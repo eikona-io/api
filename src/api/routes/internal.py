@@ -482,24 +482,35 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
 
     try:
         if event_type == "gpu_start":
-            # Insert new GPU event
-            gpu_event = GPUEvent(
-                id=uuid4(),
-                user_id=final_user_id,
-                org_id=final_org_id,
-                start_time=datetime.fromisoformat(timestamp),
-                machine_id=machine_id,
-                gpu=gpu_type,
-                ws_gpu=ws_gpu_type,
-                gpu_provider=gpu_provider,
-                session_id=session_id,
-                modal_function_id=modal_function_id
-            )
-
-            db.add(gpu_event)
-            logging.info(f"gpu_event: {gpu_event.id}")
-            await db.commit()
             
+            if (session_id is not None):
+                # find the gpu event with the session_id and update the start time
+                gpu_event = await db.execute(
+                    select(GPUEvent).where(GPUEvent.session_id == session_id)
+                )
+                gpu_event = gpu_event.scalar_one_or_none()
+                gpu_event.start_time = datetime.fromisoformat(timestamp)
+                # gpu_event.modal_function_id = modal_function_id
+                await db.commit()
+            else:
+                # Insert new GPU event
+                gpu_event = GPUEvent(
+                    id=uuid4(),
+                    user_id=final_user_id,
+                    org_id=final_org_id,
+                    start_time=datetime.fromisoformat(timestamp),
+                    machine_id=machine_id,
+                    gpu=gpu_type,
+                    ws_gpu=ws_gpu_type,
+                    gpu_provider=gpu_provider,
+                    session_id=session_id,
+                    modal_function_id=modal_function_id
+                )
+
+                db.add(gpu_event)
+                await db.commit()
+            
+            logging.info(f"gpu_event: {gpu_event.id}")
             return {"event_id": gpu_event.id}
 
         elif event_type == "gpu_end":

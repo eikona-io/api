@@ -87,7 +87,7 @@ class MediaItem(BaseModel):
 class WorkflowRunOutputModel(BaseModel):
     id: UUID
     run_id: UUID
-    data: Dict[str, List[Union[MediaItem, str]]]
+    data: Dict[str, List[Union[MediaItem, str, bool]]]
     node_meta: Optional[Any]
     created_at: datetime
     updated_at: datetime
