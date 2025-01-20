@@ -255,7 +255,7 @@ class CreateDynamicSessionBody(BaseModel):
     machine_id: Optional[str] = Field(None, description="The machine id to use")
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
-        None,
+        [],
         description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
         examples=[
             [
@@ -569,6 +569,10 @@ async def create_dynamic_sesssion_background_task(
             status_code=400, detail="No dependencies or modal image id provided"
         )
 
+    gpu_event_id = str(uuid4())
+
+    logger.info("creating dynamic session")
+
     try:
         async with app.run.aio():
             sb = await modal.Sandbox.create.aio(
@@ -611,8 +615,8 @@ async def create_dynamic_sesssion_background_task(
                 await db.commit()
                 await db.refresh(new_gpu_event)
 
-            logger.info(sb.tunnels())
-            tunnel = sb.tunnels()[8188]
+            # logger.info(sb.tunnels())
+            tunnel = await sb.tunnels.aio()[8188]
 
             async with get_db_context() as db:
                 await db.execute(
@@ -623,7 +627,7 @@ async def create_dynamic_sesssion_background_task(
                 await db.commit()
 
             await status_queue.put(tunnel.url)
-            
+
             p = await sb.exec.aio(
                 "bash", "-c", comfyui_cmd(cpu=True if body.gpu == "CPU" else False)
             )
@@ -644,14 +648,12 @@ async def create_dynamic_sesssion_background_task(
                             line,
                         )
                     ]
-                    asyncio.create_task(
-                        insert_to_clickhouse("log_entries", data)
-                    )
+                    asyncio.create_task(insert_to_clickhouse("log_entries", data))
 
             # Create tasks for both stdout and stderr
             stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
             stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
-            
+
             # Wait for both streams to complete
             await asyncio.gather(stdout_task, stderr_task)
             await sb.wait.aio()
