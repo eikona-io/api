@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 import os
 from pprint import pprint
+from api.modal.builder import insert_to_clickhouse
 from api.routes.types import GPUEventModel, MachineGPU
 from api.utils.docker import (
     CustomNode,
@@ -22,13 +23,15 @@ from pydantic import BaseModel, Field
 from api.models import (
     GPUEvent,
     Machine,
+    MachineVersion,
+    get_machine_columns,
 )
-from api.database import get_db, get_db_context
+from api.database import get_clickhouse_client, get_db, get_db_context
 from typing import Any, Dict, List, Optional, cast, Union
 from uuid import UUID, uuid4
 import logging
 from typing import Optional
-from sqlalchemy import update
+from sqlalchemy import update, func
 from fastapi import BackgroundTasks
 
 logger = logging.getLogger(__name__)
@@ -39,7 +42,9 @@ beta_router = APIRouter(tags=["Beta"])
 status_endpoint = os.environ.get("CURRENT_API_URL") + "/api/update-run"
 
 
-async def get_comfy_runner(machine_id: str, session_id: str | UUID, timeout: int, gpu: str):
+async def get_comfy_runner(
+    machine_id: str, session_id: str | UUID, timeout: int, gpu: str
+):
     logger.info(machine_id)
     ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunner")
     runner = ComfyDeployRunner.with_options(
@@ -250,7 +255,7 @@ class CreateDynamicSessionBody(BaseModel):
     machine_id: Optional[str] = Field(None, description="The machine id to use")
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
-        [],
+        None,
         description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
         examples=[
             [
@@ -469,70 +474,107 @@ async def create_dynamic_sesssion_background_task(
     org_id = request.state.current_user.get("org_id")
     user_id = request.state.current_user.get("user_id")
 
-    gpu_event_id = str(uuid4())
-    
-    logger.info("creating dynamic session")
-    
-    if isinstance(body.dependencies, list):
-        # Handle shorthand dependencies
-        deps_body = DepsBody(
-            docker_command_steps=DockerSteps(
-                steps=[
-                    DockerStep(
-                        type="custom-node",
-                        data=CustomNode(
-                            install_type="git-clone",
-                            url=extract_url(dep),
-                            hash=extract_hash(dep),
-                            name=dep.split("/")[-1],
-                        ),
+    # Get machine and its version info
+    modal_image_id = None
+    if body.machine_id is not None:
+        async with get_db_context() as db:
+            machine = await db.execute(
+                select(Machine)
+                .where(Machine.id == body.machine_id)
+                .apply_org_check(request)
+            )
+            machine = machine.scalars().first()
+
+            if not machine:
+                raise HTTPException(status_code=404, detail="Machine not found")
+
+            # Get machine version if it exists
+            if machine.machine_version_id:
+                machine_version = await db.execute(
+                    select(MachineVersion).where(
+                        MachineVersion.id == machine.machine_version_id
                     )
-                    for dep in body.dependencies
-                ]
+                )
+                machine_version = machine_version.scalars().first()
+
+                if machine_version and machine_version.modal_image_id:
+                    # Use existing modal image ID from version
+                    modal_image_id = machine_version.modal_image_id
+
+            if not modal_image_id:
+                logger.info("No dependencies, using machine current settings")
+                body.dependencies = DepsBody(
+                    comfyui_version=machine.comfyui_version,
+                    docker_command_steps=machine.docker_command_steps,
+                )
+
+    logger.info("Dependencies configuration " + str(body.dependencies))
+
+    gpu_event_id = str(uuid4())
+
+    logger.info("creating dynamic session")
+
+    if not modal_image_id and body.dependencies is not None:
+        if isinstance(body.dependencies, list):
+            # Handle shorthand dependencies
+            deps_body = DepsBody(
+                docker_command_steps=DockerSteps(
+                    steps=[
+                        DockerStep(
+                            type="custom-node",
+                            data=CustomNode(
+                                install_type="git-clone",
+                                url=extract_url(dep),
+                                hash=extract_hash(dep),
+                                name=dep.split("/")[-1],
+                            ),
+                        )
+                        for dep in body.dependencies
+                    ]
+                )
             )
+            converted = generate_all_docker_commands(deps_body)
+        else:
+            converted = generate_all_docker_commands(body.dependencies)
+
+        # pprint(converted)
+
+        dockerfile_image = modal.Image.debian_slim(python_version="3.11")
+
+        docker_commands = converted.docker_commands
+        if docker_commands is not None:
+            for commands in docker_commands:
+                dockerfile_image = dockerfile_image.dockerfile_commands(
+                    commands,
+                )
+
+        dockerfile_image = dockerfile_image.copy_local_file(
+            "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
         )
-        converted = generate_all_docker_commands(deps_body)
+
+        dockerfile_image = dockerfile_image.run_commands(
+            [
+                "rm -rf /private_models",
+                "rm -rf /comfyui/models",
+                "ln -s /private_models /comfyui/models",
+                "rm -rf /public_models",
+            ]
+        )
     else:
-        converted = generate_all_docker_commands(body.dependencies)
+        logger.info(f"Using existing modal image {modal_image_id}")
+        dockerfile_image = modal.Image.from_id(modal_image_id)
 
-    # pprint(converted)
-    
-    dockerfile_image = modal.Image.debian_slim(python_version="3.11")
+    if not modal_image_id and body.dependencies is None:
+        raise HTTPException(
+            status_code=400, detail="No dependencies or modal image id provided"
+        )
 
-    docker_commands = converted.docker_commands
-    if docker_commands is not None:
-        for commands in docker_commands:
-            dockerfile_image = dockerfile_image.dockerfile_commands(
-                commands,
-            )
-            
-    # dockerfile_image = dockerfile_image.dockerfile_commands(
-    #     [
-    #         "COPY ../modal/v4/data/extra_model_paths.yaml /comfyui/extra_model_paths.yaml",
-    #     ]
-    # )
-    
-    # current_directory = os.path.dirname(os.path.realpath(__file__))
-    
-    dockerfile_image = dockerfile_image.copy_local_file(
-        "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
-    )
-    
-    dockerfile_image = dockerfile_image.run_commands(
-        [
-            "rm -rf /private_models",
-            "rm -rf /comfyui/models",
-            "ln -s /private_models /comfyui/models",
-            "rm -rf /public_models",
-        ]
-    )
-    
     try:
         async with app.run.aio():
             sb = await modal.Sandbox.create.aio(
-                "bash",
-                "-c",
-                comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
+                # "bash",
+                # "-c",
+                # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
                 image=dockerfile_image,
                 timeout=(body.timeout or 15) * 60,
                 gpu=body.gpu.value
@@ -542,11 +584,15 @@ async def create_dynamic_sesssion_background_task(
                 workdir="/comfyui",
                 encrypted_ports=[8188],
                 volumes={
-                    "/public_models": modal.Volume.from_name(os.environ.get("SHARED_MODEL_VOLUME_NAME")),
-                    "/private_models": modal.Volume.from_name("models_" + org_id if org_id is not None else user_id),
-                }
+                    "/public_models": modal.Volume.from_name(
+                        os.environ.get("SHARED_MODEL_VOLUME_NAME")
+                    ),
+                    "/private_models": modal.Volume.from_name(
+                        "models_" + org_id if org_id is not None else user_id
+                    ),
+                },
             )
-            
+
             async with get_db_context() as db:
                 # Insert GPU event
                 new_gpu_event = GPUEvent(
@@ -559,25 +605,55 @@ async def create_dynamic_sesssion_background_task(
                     session_timeout=body.timeout or 15,
                     gpu_provider="modal",
                     start_time=datetime.now(),
-                    modal_function_id=sb.object_id
+                    modal_function_id=sb.object_id,
                 )
                 db.add(new_gpu_event)
                 await db.commit()
                 await db.refresh(new_gpu_event)
-            
+
             logger.info(sb.tunnels())
             tunnel = sb.tunnels()[8188]
-            
+
             async with get_db_context() as db:
                 await db.execute(
-                    update(GPUEvent).where(GPUEvent.id == gpu_event_id).values(tunnel_url=tunnel.url)
+                    update(GPUEvent)
+                    .where(GPUEvent.id == gpu_event_id)
+                    .values(tunnel_url=tunnel.url)
                 )
                 await db.commit()
 
             await status_queue.put(tunnel.url)
-
+            
+            p = await sb.exec.aio(
+                "bash", "-c", comfyui_cmd(cpu=True if body.gpu == "CPU" else False)
+            )
             logger.info(tunnel.url)
 
+            # async with await get_clickhouse_client() as client:
+            async def log_stream(stream, stream_type: str):
+                async for line in stream:
+                    print(line, end="")
+                    data = [
+                        (
+                            uuid4(),
+                            session_id,
+                            None,
+                            body.machine_id,
+                            datetime.now(),
+                            stream_type,
+                            line,
+                        )
+                    ]
+                    asyncio.create_task(
+                        insert_to_clickhouse("log_entries", data)
+                    )
+
+            # Create tasks for both stdout and stderr
+            stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
+            stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
+            
+            # Wait for both streams to complete
+            await asyncio.gather(stdout_task, stderr_task)
             await sb.wait.aio()
     except Exception as e:
         pass
@@ -602,7 +678,7 @@ async def create_dynamic_session(
     request: Request,
     body: CreateDynamicSessionBody,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    # db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
     session_id = uuid4()
     q = asyncio.Queue()
@@ -626,6 +702,96 @@ async def create_dynamic_session(
         "session_id": session_id,
         "url": tunnel_url,
     }
+
+
+# You can only snapshot a new machine
+@router.post("/session/{session_id}/snapshot")
+async def snapshot_session(
+    request: Request, session_id: str, db: AsyncSession = Depends(get_db)
+):
+    gpuEvent = cast(
+        Optional[GPUEvent],
+        (
+            await db.execute(
+                (
+                    select(GPUEvent)
+                    .where(GPUEvent.session_id == session_id)
+                    .where(GPUEvent.end_time.is_(None))
+                    .apply_org_check(request)
+                )
+            )
+        ).scalar_one_or_none(),
+    )
+
+    if gpuEvent is None:
+        raise HTTPException(status_code=404, detail="GPUEvent not found")
+
+    modal_function_id = gpuEvent.modal_function_id
+
+    if gpuEvent.machine_id is None:
+        raise HTTPException(status_code=400, detail="Machine id not found")
+
+    if modal_function_id is None:
+        raise HTTPException(status_code=400, detail="Modal function id not found")
+
+    if not modal_function_id.startswith("sb-"):
+        raise HTTPException(
+            status_code=400, detail="Modal function id is not a sandbox"
+        )
+
+    # Get the sandbox and create snapshot
+    sb = await modal.Sandbox.from_id.aio(modal_function_id)
+    image = sb.snapshot_filesystem()
+    image_id = image.object_id
+
+    print("image_id", image_id, image)
+
+    # Get current user info
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+
+    machine = await db.execute(
+        select(Machine)
+        .where(Machine.id == gpuEvent.machine_id)
+        .apply_org_check(request)
+    )
+    machine = machine.scalar_one()
+
+    # Get next version number
+    current_version = await db.execute(
+        select(func.max(MachineVersion.version)).where(
+            MachineVersion.machine_id == machine.id
+        )
+    )
+    next_version = (current_version.scalar() or 0) + 1
+
+    # Create new version with image_id
+    machine_version = MachineVersion(
+        id=uuid4(),
+        machine_id=machine.id,
+        version=next_version,
+        user_id=user_id,
+        created_at=func.now(),
+        updated_at=func.now(),
+        modal_image_id=image_id,
+        **{col: getattr(machine, col) for col in get_machine_columns().keys()},
+    )
+    db.add(machine_version)
+
+    # Update machine with new version id
+    machine.machine_version_id = machine_version.id
+    machine.updated_at = func.now()
+
+    await db.commit()
+
+    return JSONResponse(
+        content={
+            "message": "Session snapshot created successfully",
+            "version_id": str(machine_version.id),
+            "version": next_version,
+            "image_id": image_id,
+        }
+    )
 
 
 class DeleteSessionResponse(BaseModel):
@@ -662,8 +828,8 @@ async def delete_session(
     modal_function_id = gpuEvent.modal_function_id
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
-    
-    if (modal_function_id.startswith("sb-")):
+
+    if modal_function_id.startswith("sb-"):
         await modal.Sandbox.from_id(modal_function_id).terminate.aio()
     else:
         await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()

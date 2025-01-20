@@ -415,6 +415,8 @@ class MachineVersion(SerializableMixin, Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
+    
+    modal_image_id = Column(String)
 
     # Add shared columns
     locals().update(get_machine_columns())
