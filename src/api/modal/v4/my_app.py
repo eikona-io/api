@@ -58,7 +58,6 @@ print("Modal Version: ", modal.__version__)
 
 app = App(name=config["name"])
 
-legacy_mode = config["legacy_mode"]
 skip_static_assets = config["skip_static_assets"]
 
 if os.getenv("MODAL_ENVIRONMENT") == "dev":
@@ -70,9 +69,7 @@ compile_with_gpu = config["install_custom_node_with_gpu"] == "True"
 final_gpu_param = config["gpu"] if config["gpu"] != "CPU" else None
 gpu_param = final_gpu_param if compile_with_gpu else None
 # deps = config["deps"]
-docker_commands = config["docker_commands"]
 
-base_docker_image = config["base_docker_image"]
 python_version = (
     config["python_version"]
     if config["python_version"] is not None and config["python_version"] != ""
@@ -82,7 +79,7 @@ prestart_command = config["prestart_command"]
 global_extra_args = config["extra_args"]
 modal_image_id = config["modal_image_id"]
 
-print(base_docker_image, python_version, prestart_command, global_extra_args)
+# print(base_docker_image, python_version, prestart_command, global_extra_args)
 
 async def get_static_assets(
     get_object_info=True,
@@ -314,10 +311,13 @@ if modal_image_id is not None:
 else:
     dockerfile_image = modal.Image.debian_slim(python_version=python_version)
 
+    base_docker_image = config["base_docker_image"]
     if base_docker_image is not None and base_docker_image != "":
         dockerfile_image = modal.Image.from_registry(
             base_docker_image, add_python=python_version
         )
+        
+    docker_commands = config["docker_commands"]
 
     # dockerfile_image = (
     #     dockerfile_image
@@ -353,6 +353,7 @@ else:
             # .pip_install("pydantic==1.10.14")  # NOTE: modal needs this pydantic version, custom nodes might install another version
         )
 
+    legacy_mode = config["legacy_mode"]
     if legacy_mode == "False":
         dockerfile_image = dockerfile_image.run_commands(
             [

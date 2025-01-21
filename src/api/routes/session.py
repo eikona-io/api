@@ -648,41 +648,45 @@ async def create_dynamic_sesssion_background_task(
             )
             logger.info(tunnel.url)
 
-            # # async with await get_clickhouse_client() as client:
-            # async def log_stream(stream, stream_type: str):
-            #     async for line in stream:
-            #         try:
-            #             # Try to decode as UTF-8, replace invalid characters
-            #             if isinstance(line, bytes):
-            #                 # Use 'ignore' instead of 'replace' to skip problematic characters
-            #                 line = line.decode('utf-8', errors='ignore')
-                            
-            #                 # Skip progress bar lines that contain these special characters
-            #                 if any(char in line for char in ['█', '▮', '▯', '▏', '▎', '▍', '▌', '▋', '▊', '▉']):
-            #                     continue
+            # async with await get_clickhouse_client() as client:
+            try:
+                async def log_stream(stream, stream_type: str):
+                    async for line in stream:
+                        try:
+                            # Try to decode as UTF-8, replace invalid characters
+                            if isinstance(line, bytes):
+                                # Use 'ignore' instead of 'replace' to skip problematic characters
+                                line = line.decode('utf-8', errors='ignore')
                                 
-            #             print(line, end="")
-            #             data = [
-            #                 (
-            #                     uuid4(),
-            #                     session_id,
-            #                     None,
-            #                     body.machine_id,
-            #                     datetime.now(),
-            #                     stream_type,
-            #                     line,
-            #                 )
-            #             ]
-            #             asyncio.create_task(insert_to_clickhouse("log_entries", data))
-            #         except Exception as e:
-            #             logger.error(f"Error processing log line: {str(e)}")
+                                # Skip progress bar lines that contain these special characters
+                                if any(char in line for char in ['█', '▮', '▯', '▏', '▎', '▍', '▌', '▋', '▊', '▉']):
+                                    continue
+                                    
+                            print(line, end="")
+                            data = [
+                                (
+                                    uuid4(),
+                                    session_id,
+                                    None,
+                                    body.machine_id,
+                                    datetime.now(),
+                                    stream_type,
+                                    line,
+                                )
+                            ]
+                            asyncio.create_task(insert_to_clickhouse("log_entries", data))
+                        except Exception as e:
+                            logger.error(f"Error processing log line: {str(e)}")
 
-            # # Create tasks for both stdout and stderr
-            # stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
-            # stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
+                # Create tasks for both stdout and stderr
+                stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
+                stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
 
-            # Wait for both streams to complete
-            # await asyncio.gather(stdout_task, stderr_task)
+                # Wait for both streams to complete
+                await asyncio.gather(stdout_task, stderr_task)
+            except Exception as e:
+                logger.error(f"Error creating tasks: {str(e)}")
+                
             await sb.wait.aio()
     except Exception as e:
         pass
@@ -812,6 +816,8 @@ async def snapshot_session(
     machine.updated_at = func.now()
 
     await db.commit()
+    await db.refresh(machine)
+    await db.refresh(machine_version)
     
     await redeploy_machine(request, db, background_tasks, machine, machine_version)
 

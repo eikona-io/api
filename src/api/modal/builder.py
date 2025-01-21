@@ -673,8 +673,8 @@ async def build_logic(item: BuildMachineItem):
 
         url = None
 
-        if item.machine_id not in machine_logs_cache:
-            machine_logs_cache[item.machine_id] = []
+        # if item.machine_id not in machine_logs_cache:
+        machine_logs_cache[item.machine_id] = []
 
         machine_logs = machine_logs_cache[item.machine_id]
 
