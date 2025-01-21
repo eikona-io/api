@@ -513,8 +513,13 @@ async def create_dynamic_sesssion_background_task(
     gpu_event_id = str(uuid4())
 
     logger.info("creating dynamic session")
-
-    if not modal_image_id and body.dependencies is not None:
+    
+    if (not modal_image_id and body.dependencies is not None) or body.machine_id is None:
+        print(body.machine_id)
+        
+        if body.dependencies is None:
+            body.dependencies = []
+            
         if isinstance(body.dependencies, list):
             # Handle shorthand dependencies
             deps_body = DepsBody(
@@ -533,11 +538,13 @@ async def create_dynamic_sesssion_background_task(
                     ]
                 )
             )
+            print("deps_body 1", deps_body)
             converted = generate_all_docker_commands(deps_body)
         else:
+            print("deps_body 2" , body.dependencies)
             converted = generate_all_docker_commands(body.dependencies)
 
-        # pprint(converted)
+        pprint(converted)
 
         dockerfile_image = modal.Image.debian_slim(python_version="3.11")
 
@@ -548,10 +555,6 @@ async def create_dynamic_sesssion_background_task(
                     commands,
                 )
 
-        dockerfile_image = dockerfile_image.copy_local_file(
-            "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
-        )
-
         dockerfile_image = dockerfile_image.run_commands(
             [
                 "rm -rf /private_models",
@@ -560,11 +563,15 @@ async def create_dynamic_sesssion_background_task(
                 "rm -rf /public_models",
             ]
         )
+        
+        dockerfile_image = dockerfile_image.copy_local_file(
+            "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
+        )
     else:
         logger.info(f"Using existing modal image {modal_image_id}")
         dockerfile_image = modal.Image.from_id(modal_image_id)
 
-    if not modal_image_id and body.dependencies is None:
+    if not dockerfile_image and body.dependencies is None:
         raise HTTPException(
             status_code=400, detail="No dependencies or modal image id provided"
         )
@@ -575,6 +582,8 @@ async def create_dynamic_sesssion_background_task(
 
     try:
         async with app.run.aio():
+            print("creating sandbox")
+            print(dockerfile_image)
             sb = await modal.Sandbox.create.aio(
                 # "bash",
                 # "-c",
@@ -596,6 +605,8 @@ async def create_dynamic_sesssion_background_task(
                     ),
                 },
             )
+            
+            logger.info("creating gpu event")
 
             async with get_db_context() as db:
                 # Insert GPU event
@@ -616,7 +627,8 @@ async def create_dynamic_sesssion_background_task(
                 await db.refresh(new_gpu_event)
 
             # logger.info(sb.tunnels())
-            tunnel = await sb.tunnels.aio()[8188]
+            tunnels = await sb.tunnels.aio()
+            tunnel = tunnels[8188]  # Access the tunnel after awaiting
 
             async with get_db_context() as db:
                 await db.execute(
@@ -699,7 +711,7 @@ async def create_dynamic_session(
     except asyncio.TimeoutError:
         print("Timed out waiting for tunnel_url")
         tunnel_url = None
-
+ 
     return {
         "session_id": session_id,
         "url": tunnel_url,
