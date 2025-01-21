@@ -166,7 +166,7 @@ class BuildMachineItem(BaseModel):
     modal_app_id: Optional[str] = None
     machine_version_id: Optional[str] = None
     machine_hash: Optional[str] = None
-
+    modal_image_id: Optional[str] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -611,6 +611,7 @@ async def build_logic(item: BuildMachineItem):
             "prestart_command": item.prestart_command,
             "extra_args": item.extra_args,
             "machine_hash": item.machine_hash,
+            "modal_image_id": item.modal_image_id,
         }
 
         # print("config: ", config)
@@ -655,7 +656,7 @@ async def build_logic(item: BuildMachineItem):
         # process = subprocess.Popen(f"modal deploy {folder_path}/app.py", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
         final_env = {
             **os.environ,
-            "COLUMNS": "5000",
+            # "COLUMNS": "5000",
         }
         if to_modal_deps_version[version_to_file]:
             final_env["MODAL_IMAGE_BUILDER_VERSION"] = to_modal_deps_version[

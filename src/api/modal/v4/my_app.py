@@ -80,39 +80,9 @@ python_version = (
 )
 prestart_command = config["prestart_command"]
 global_extra_args = config["extra_args"]
+modal_image_id = config["modal_image_id"]
 
 print(base_docker_image, python_version, prestart_command, global_extra_args)
-
-dockerfile_image = modal.Image.debian_slim(python_version=python_version)
-
-if base_docker_image is not None and base_docker_image != "":
-    dockerfile_image = modal.Image.from_registry(
-        base_docker_image, add_python=python_version
-    )
-
-# dockerfile_image = (
-#     dockerfile_image
-#     .run_commands("python --version")
-#     .apt_install("git", "wget", "curl")
-#     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
-#     # For uv local path
-#     .env({"VIRTUAL_ENV": "/usr/local/"})
-#     .pip_install("boto3", "aioboto3")
-# )
-
-# Install all custom nodes
-if docker_commands is not None:
-    # print("docker_commands: ", docker_commands)
-    for commands in docker_commands:
-        dockerfile_image = dockerfile_image.dockerfile_commands(
-            commands,
-            gpu=gpu_param,
-        )
-
-dockerfile_image = dockerfile_image.copy_local_file(
-    f"{current_directory}/data/extra_model_paths.yaml", "/comfyui"
-)
-
 
 async def get_static_assets(
     get_object_info=True,
@@ -336,25 +306,62 @@ folder_paths.get_filename_list = get_filename_list
     # }
 
 
-if skip_static_assets != "True":
-    dockerfile_image = (
-        dockerfile_image.workdir("/").run_function(
-            get_static_assets,
-            secrets=[modal.Secret.from_name("aws-s3-js-assets-user")],
-            gpu=gpu_param,
+dockerfile_image = None
+
+if modal_image_id is not None:
+    print("using modal image id", modal_image_id)
+    dockerfile_image = modal.Image.from_id(modal_image_id)
+else:
+    dockerfile_image = modal.Image.debian_slim(python_version=python_version)
+
+    if base_docker_image is not None and base_docker_image != "":
+        dockerfile_image = modal.Image.from_registry(
+            base_docker_image, add_python=python_version
         )
-        # .pip_install("pydantic==1.10.14")  # NOTE: modal needs this pydantic version, custom nodes might install another version
+
+    # dockerfile_image = (
+    #     dockerfile_image
+    #     .run_commands("python --version")
+    #     .apt_install("git", "wget", "curl")
+    #     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
+    #     # For uv local path
+    #     .env({"VIRTUAL_ENV": "/usr/local/"})
+    #     .pip_install("boto3", "aioboto3")
+    # )
+
+    # Install all custom nodes
+    if docker_commands is not None:
+        # print("docker_commands: ", docker_commands)
+        for commands in docker_commands:
+            dockerfile_image = dockerfile_image.dockerfile_commands(
+                commands,
+                gpu=gpu_param,
+            )
+
+    dockerfile_image = dockerfile_image.copy_local_file(
+        f"{current_directory}/data/extra_model_paths.yaml", "/comfyui"
     )
 
-if legacy_mode == "False":
-    dockerfile_image = dockerfile_image.run_commands(
-        [
-            f"rm -rf {PRIVATE_BASEMODEL_DIR_SYM}",
-            "rm -rf /comfyui/models",
-            f"ln -s {PRIVATE_BASEMODEL_DIR_SYM} /comfyui/models",
-            f"rm -rf {PUBLIC_BASEMODEL_DIR}",
-        ]
-    )
+
+    if skip_static_assets != "True":
+        dockerfile_image = (
+            dockerfile_image.workdir("/").run_function(
+                get_static_assets,
+                secrets=[modal.Secret.from_name("aws-s3-js-assets-user")],
+                gpu=gpu_param,
+            )
+            # .pip_install("pydantic==1.10.14")  # NOTE: modal needs this pydantic version, custom nodes might install another version
+        )
+
+    if legacy_mode == "False":
+        dockerfile_image = dockerfile_image.run_commands(
+            [
+                f"rm -rf {PRIVATE_BASEMODEL_DIR_SYM}",
+                "rm -rf /comfyui/models",
+                f"ln -s {PRIVATE_BASEMODEL_DIR_SYM} /comfyui/models",
+                f"rm -rf {PUBLIC_BASEMODEL_DIR}",
+            ]
+        )
 
 # Start and check comfyui
 # Skip checking comfyui

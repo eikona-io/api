@@ -3,6 +3,7 @@ from datetime import datetime
 import os
 from pprint import pprint
 from api.modal.builder import insert_to_clickhouse
+from api.routes.machines import UpdateServerlessMachineModel, redeploy_machine, update_serverless_machine
 from api.routes.types import GPUEventModel, MachineGPU
 from api.utils.docker import (
     CustomNode,
@@ -513,13 +514,15 @@ async def create_dynamic_sesssion_background_task(
     gpu_event_id = str(uuid4())
 
     logger.info("creating dynamic session")
-    
-    if (not modal_image_id and body.dependencies is not None) or body.machine_id is None:
+
+    if (
+        not modal_image_id and body.dependencies is not None
+    ) or body.machine_id is None:
         print(body.machine_id)
-        
+
         if body.dependencies is None:
             body.dependencies = []
-            
+
         if isinstance(body.dependencies, list):
             # Handle shorthand dependencies
             deps_body = DepsBody(
@@ -541,7 +544,7 @@ async def create_dynamic_sesssion_background_task(
             print("deps_body 1", deps_body)
             converted = generate_all_docker_commands(deps_body)
         else:
-            print("deps_body 2" , body.dependencies)
+            print("deps_body 2", body.dependencies)
             converted = generate_all_docker_commands(body.dependencies)
 
         pprint(converted)
@@ -563,7 +566,7 @@ async def create_dynamic_sesssion_background_task(
                 "rm -rf /public_models",
             ]
         )
-        
+
         dockerfile_image = dockerfile_image.copy_local_file(
             "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
         )
@@ -605,7 +608,7 @@ async def create_dynamic_sesssion_background_task(
                     ),
                 },
             )
-            
+
             logger.info("creating gpu event")
 
             async with get_db_context() as db:
@@ -645,29 +648,41 @@ async def create_dynamic_sesssion_background_task(
             )
             logger.info(tunnel.url)
 
-            # async with await get_clickhouse_client() as client:
-            async def log_stream(stream, stream_type: str):
-                async for line in stream:
-                    print(line, end="")
-                    data = [
-                        (
-                            uuid4(),
-                            session_id,
-                            None,
-                            body.machine_id,
-                            datetime.now(),
-                            stream_type,
-                            line,
-                        )
-                    ]
-                    asyncio.create_task(insert_to_clickhouse("log_entries", data))
+            # # async with await get_clickhouse_client() as client:
+            # async def log_stream(stream, stream_type: str):
+            #     async for line in stream:
+            #         try:
+            #             # Try to decode as UTF-8, replace invalid characters
+            #             if isinstance(line, bytes):
+            #                 # Use 'ignore' instead of 'replace' to skip problematic characters
+            #                 line = line.decode('utf-8', errors='ignore')
+                            
+            #                 # Skip progress bar lines that contain these special characters
+            #                 if any(char in line for char in ['█', '▮', '▯', '▏', '▎', '▍', '▌', '▋', '▊', '▉']):
+            #                     continue
+                                
+            #             print(line, end="")
+            #             data = [
+            #                 (
+            #                     uuid4(),
+            #                     session_id,
+            #                     None,
+            #                     body.machine_id,
+            #                     datetime.now(),
+            #                     stream_type,
+            #                     line,
+            #                 )
+            #             ]
+            #             asyncio.create_task(insert_to_clickhouse("log_entries", data))
+            #         except Exception as e:
+            #             logger.error(f"Error processing log line: {str(e)}")
 
-            # Create tasks for both stdout and stderr
-            stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
-            stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
+            # # Create tasks for both stdout and stderr
+            # stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
+            # stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
 
             # Wait for both streams to complete
-            await asyncio.gather(stdout_task, stderr_task)
+            # await asyncio.gather(stdout_task, stderr_task)
             await sb.wait.aio()
     except Exception as e:
         pass
@@ -711,7 +726,7 @@ async def create_dynamic_session(
     except asyncio.TimeoutError:
         print("Timed out waiting for tunnel_url")
         tunnel_url = None
- 
+
     return {
         "session_id": session_id,
         "url": tunnel_url,
@@ -721,7 +736,7 @@ async def create_dynamic_session(
 # You can only snapshot a new machine
 @router.post("/session/{session_id}/snapshot")
 async def snapshot_session(
-    request: Request, session_id: str, db: AsyncSession = Depends(get_db)
+    request: Request, session_id: str, db: AsyncSession = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     gpuEvent = cast(
         Optional[GPUEvent],
@@ -797,6 +812,8 @@ async def snapshot_session(
     machine.updated_at = func.now()
 
     await db.commit()
+    
+    await redeploy_machine(request, db, background_tasks, machine, machine_version)
 
     return JSONResponse(
         content={
