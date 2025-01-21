@@ -185,7 +185,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=0.26.0" },
     { name = "logfire", extras = ["fastapi"], specifier = "==2.4.1" },
-    { name = "modal", specifier = "==0.72.0" },
+    { name = "modal", specifier = "==0.72.33" },
     { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
     { name = "protobuf", specifier = ">=4.25.4" },
@@ -890,7 +890,7 @@ wheels = [
 
 [[package]]
 name = "modal"
-version = "0.72.0"
+version = "0.72.33"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -909,7 +909,7 @@ dependencies = [
     { name = "watchfiles" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/59/289dd657516f4088e36e8d1a6b92541f29369b5a705c97fcba0e1efebe0a/modal-0.72.0-py3-none-any.whl", hash = "sha256:d09952ac907357d30a314fbf0b759c781ab24677aaf338f5775c9bcab26e4b78", size = 513231 },
+    { url = "https://files.pythonhosted.org/packages/d3/f0/fdc0eb55812dfe772ec73683a5e1b1f7a85187ff3b3bf6d4f45b60f4c23b/modal-0.72.33-py3-none-any.whl", hash = "sha256:ce8ac919c4ae81563ea8a122b1d9cd23c98335b2795b82cb16b9fe96c3d9fd4b", size = 521661 },
 ]
 
 [[package]]
