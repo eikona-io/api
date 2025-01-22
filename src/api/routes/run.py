@@ -781,7 +781,7 @@ async def retry_post_request(client: httpx.AsyncClient, url: str, json: Dict, he
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 500 and attempt < max_retries - 1:
                 # Log retry attempt
-                logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
+                logger.info(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
                 await asyncio.sleep(delay)
                 continue
             raise
