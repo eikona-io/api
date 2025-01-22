@@ -767,6 +767,29 @@ async def run_model_async(
     }
 
 
+# Add a new helper function for retrying
+async def retry_post_request(client: httpx.AsyncClient, url: str, json: Dict, headers: Dict, max_retries: int = 3, delay: int = 5) -> httpx.Response:
+    for attempt in range(max_retries):
+        try:
+            response = await client.post(
+                url,
+                json=json,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 500 and attempt < max_retries - 1:
+                # Log retry attempt
+                logger.warning(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
+                await asyncio.sleep(delay)
+                continue
+            raise
+        except Exception as e:
+            # For any other exceptions, raise immediately
+            raise
+
+
 async def _create_run(
     request: Request,
     data: CreateRunRequest,
@@ -1095,15 +1118,18 @@ async def _create_run(
                             params["file_upload_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/file-upload"
                             params["status_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/update-run"
                             payload = {"input": params}
-                            response = await _client.post(
+                            
+                            # Use the retry function instead of direct post
+                            response = await retry_post_request(
+                                _client,
                                 f"{machine.endpoint}/run",
                                 json=payload,
                                 headers={
                                     "Content-Type": "application/json",
                                     "Authorization": f"Bearer {machine.auth_token}",
-                                },
+                                }
                             )
-                            response.raise_for_status()
+                            
                         except httpx.HTTPStatusError as e:
                             raise HTTPException(
                                 status_code=e.response.status_code,
