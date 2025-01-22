@@ -1114,13 +1114,16 @@ async def _create_run(
 
                     async with httpx.AsyncClient() as _client:
                         try:
-                            # For testing - point to our test endpoint instead of actual runpod
-                            test_url = f"{os.environ.get('CURRENT_API_URL')}/api/test-retry"
+                            # Proxy the update run back to v1 endpoints
+                            params["file_upload_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/file-upload"
+                            params["status_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/update-run"
+                            payload = {"input": params}
                             
+                            # Use the retry function instead of direct post
                             response = await retry_post_request(
                                 _client,
-                                test_url,  # Use test endpoint instead of machine.endpoint
-                                json={"test": "data"},
+                                f"{machine.endpoint}/run",
+                                json=payload,
                                 headers={
                                     "Content-Type": "application/json",
                                     "Authorization": f"Bearer {machine.auth_token}",
@@ -1133,6 +1136,7 @@ async def _create_run(
                                 detail=f"Error creating run: {e.response.text}",
                             )
 
+                    # Update the run with the RunPod job ID if available
                     runpod_response = response.json()
                 case "classic":
                     # comfyui_endpoint = f"{machine.endpoint}/comfyui-deploy/run"
@@ -1369,19 +1373,3 @@ async def _create_run(
         return await run(
             data.inputs,
         )
-
-@router.post("/test-retry")
-async def test_retry():
-    # Create a counter to track number of attempts
-    if not hasattr(test_retry, "counter"):
-        test_retry.counter = 0
-    
-    test_retry.counter += 1
-    
-    # Fail the first 2 attempts, succeed on the 3rd
-    if test_retry.counter < 3:
-        raise HTTPException(status_code=500, detail="Simulated failure")
-    
-    # Reset counter for next test
-    test_retry.counter = 0
-    return {"message": "Success after retries!", "attempts": test_retry.counter}
