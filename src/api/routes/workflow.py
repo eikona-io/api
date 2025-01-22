@@ -31,8 +31,6 @@ from fastapi.responses import JSONResponse
 from pprint import pprint
 from sqlalchemy import desc
 from sqlalchemy import text
-
-
 from api.models import (
     Deployment,
     Machine,
@@ -443,21 +441,17 @@ async def get_versions(
     if not runs:
         return []
 
-    runs_data = [
-        {
-            **run.to_dict(),
-            "user_icon": user_icons.get(run.user_id).image_url
-            if user_icons.get(run.user_id)
-            else None,
-        }
-        for run in runs
-    ]
+    runs_data = []
+    for run in runs:
+        run_dict = run.to_dict()
+        if run.user_id:
+            user_icon = user_icons.get(str(run.user_id))
+            run_dict["user_icon"] = user_icon.image_url if user_icon else None
+        else:
+            run_dict["user_icon"] = None
+        runs_data.append(run_dict)
 
     return JSONResponse(content=runs_data)
-
-
-from sqlalchemy import text
-
 
 @router.get("/workflow/{workflow_id}", response_model=WorkflowModel)
 async def get_workflow(
