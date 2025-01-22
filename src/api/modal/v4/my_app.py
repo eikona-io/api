@@ -1,40 +1,27 @@
-import sys
 from config import config
 import modal
 from time import time
 from modal import (
     Image,
-    Mount,
     App,
-    web_endpoint,
-    Stub,
-    asgi_app,
-    method,
     enter,
     exit,
-    forward,
-    Dict,
-    Queue,
-    functions,
 )
-from typing import Union, Optional, Dict, List, Any, Annotated, cast
+from typing import Optional, Annotated, cast
 import json
 import urllib.request
 import urllib.parse
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, Request, HTTPException, WebSocket
-from fastapi import UploadFile, File, Form
+from fastapi import UploadFile, Form
 from pathlib import Path
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from volume_setup import (
     volumes,
-    INPUT_DIR,
-    OUTPUT_DIR,
     PRIVATE_BASEMODEL_DIR_SYM,
     PUBLIC_BASEMODEL_DIR,
     public_model_volume,
-    private_volume,
 )
 from datetime import datetime, timezone
 import aiohttp
@@ -42,11 +29,9 @@ from aiohttp import TCPConnector
 import os
 import uuid
 from enum import Enum
-import subprocess
 import asyncio
-from pprint import pprint
 import time
-from collections import defaultdict, deque
+from collections import deque
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 
@@ -80,6 +65,7 @@ global_extra_args = config["extra_args"]
 modal_image_id = config["modal_image_id"]
 
 # print(base_docker_image, python_version, prestart_command, global_extra_args)
+
 
 async def get_static_assets(
     get_object_info=True,
@@ -288,7 +274,9 @@ folder_paths.get_filename_list = get_filename_list
                 await asyncio.gather(*tasks)
                 print("tasks: Uploaded")
 
-        await upload_to_s3(ext_map, bucket_name, config.get("machine_hash", config["machine_id"]))
+        await upload_to_s3(
+            ext_map, bucket_name, config.get("machine_hash", config["machine_id"])
+        )
 
     # Reset the file
     with open(main_py_path, "w") as file:
@@ -316,7 +304,7 @@ else:
         dockerfile_image = modal.Image.from_registry(
             base_docker_image, add_python=python_version
         )
-        
+
     docker_commands = config["docker_commands"]
 
     # dockerfile_image = (
@@ -338,31 +326,28 @@ else:
                 gpu=gpu_param,
             )
 
-    dockerfile_image = dockerfile_image.copy_local_file(
-        f"{current_directory}/data/extra_model_paths.yaml", "/comfyui"
+    # Disabeld
+    # if skip_static_assets != "True":
+    #     dockerfile_image = (
+    #         dockerfile_image.workdir("/").run_function(
+    #             get_static_assets,
+    #             secrets=[modal.Secret.from_name("aws-s3-js-assets-user")],
+    #             gpu=gpu_param,
+    #         )
+    #         # .pip_install("pydantic==1.10.14")  # NOTE: modal needs this pydantic version, custom nodes might install another version
+    #     )
+
+    dockerfile_image = dockerfile_image.run_commands(
+        [
+            f"rm -rf {PRIVATE_BASEMODEL_DIR_SYM} /comfyui/models {PUBLIC_BASEMODEL_DIR}",
+            f"ln -s {PRIVATE_BASEMODEL_DIR_SYM} /comfyui/models",
+        ]
     )
 
+    dockerfile_image = dockerfile_image.add_local_file(
+        "./data/extra_model_paths.yaml", "/comfyui/extra_model_paths.yaml"
+    )
 
-    if skip_static_assets != "True":
-        dockerfile_image = (
-            dockerfile_image.workdir("/").run_function(
-                get_static_assets,
-                secrets=[modal.Secret.from_name("aws-s3-js-assets-user")],
-                gpu=gpu_param,
-            )
-            # .pip_install("pydantic==1.10.14")  # NOTE: modal needs this pydantic version, custom nodes might install another version
-        )
-
-    legacy_mode = config["legacy_mode"]
-    if legacy_mode == "False":
-        dockerfile_image = dockerfile_image.run_commands(
-            [
-                f"rm -rf {PRIVATE_BASEMODEL_DIR_SYM}",
-                "rm -rf /comfyui/models",
-                f"ln -s {PRIVATE_BASEMODEL_DIR_SYM} /comfyui/models",
-                f"rm -rf {PUBLIC_BASEMODEL_DIR}",
-            ]
-        )
 
 # Start and check comfyui
 # Skip checking comfyui
@@ -488,7 +473,9 @@ async def check_server_with_log(
             while last_sent_log_index < len(machine_logs):
                 log = machine_logs[last_sent_log_index]
                 if isinstance(log["timestamp"], float):
-                    log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                    log["timestamp"] = (
+                        datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                    )
                 print(log)
                 yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                 last_sent_log_index += 1
@@ -705,7 +692,12 @@ if "TAILSCALE_AUTHKEY" in config and config["TAILSCALE_AUTHKEY"] is not None:
     ]
 
 
-async def send_status_update(input: Input, status: str, gpu_event_id: str | None = None, function_id: str | None = None):
+async def send_status_update(
+    input: Input,
+    status: str,
+    gpu_event_id: str | None = None,
+    function_id: str | None = None,
+):
     print("sending status update", input.status_endpoint, status, function_id)
     async with aiohttp.ClientSession() as session:
         data = {
@@ -798,7 +790,7 @@ def create_web_app():
                 # allow_background_volume_commits=True,
             )
             print("MODEL2", Model2)
-            if hasattr(Model2, 'gpu_event_id'):
+            if hasattr(Model2, "gpu_event_id"):
                 print("GPU EVENT ID", Model2.gpu_event_id)
             else:
                 print("GPU EVENT ID not available")
@@ -840,7 +832,9 @@ def create_web_app():
 
         # asyncio.create_task(send_status_update(request_input.input, "queued", result.object_id))
         asyncio.create_task(
-            send_status_update(request_input.input, "not-started", None, result.object_id)
+            send_status_update(
+                request_input.input, "not-started", None, result.object_id
+            )
         )
         return JSONResponse({"call_id": result.object_id})
 
@@ -914,7 +908,10 @@ def create_web_app():
 
             asyncio.create_task(
                 send_status_update(
-                    request_input.input, "not-started", None, modal.current_function_call_id()
+                    request_input.input,
+                    "not-started",
+                    None,
+                    modal.current_function_call_id(),
                 )
             )
             # asyncio.create_task(send_status_update(request_input.input, "queued", modal.current_function_call_id()))
@@ -1093,13 +1090,13 @@ def create_web_app():
 web_app = create_web_app()
 
 
-@app.function(
-    timeout=600,
-    allow_concurrent_inputs=100,
-)
-@asgi_app(label=machine_name_for_label + "-comfyui-api")
-def comfyui_api():
-    return web_app
+# @app.function(
+#     timeout=600,
+#     allow_concurrent_inputs=100,
+# )
+# @asgi_app(label=machine_name_for_label + "-comfyui-api")
+# def comfyui_api():
+#     return web_app
 
 
 @app.cls(
@@ -1261,12 +1258,12 @@ class ComfyDeployRunner:
     ):
         if isinstance(input, dict):
             input = Input(**input)
-            
+
         try:
             print("post_run_streaming")
-            
+
             # print(input)
-            
+
             yield f"event: event_update\ndata: {json.dumps({'event': 'function_call_id', 'data': modal.current_function_call_id()})}\n\n"
 
             self.current_function_call_id = modal.current_function_call_id()
@@ -1328,7 +1325,12 @@ class ComfyDeployRunner:
                         while self.last_sent_log_index < len(self.machine_logs):
                             log = self.machine_logs[self.last_sent_log_index]
                             if isinstance(log["timestamp"], float):
-                                log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                                log["timestamp"] = (
+                                    datetime.utcfromtimestamp(
+                                        log["timestamp"]
+                                    ).isoformat()
+                                    + "Z"
+                                )
                             yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                             self.last_sent_log_index += 1
 
@@ -1636,7 +1638,8 @@ class ComfyDeployRunner:
             print(f"Directory {directory_path} does not exist.")
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU") + " --disable-metadata",
+            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU")
+            + " --disable-metadata",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
@@ -1728,18 +1731,20 @@ class ComfyDeployRunner:
 
             # self.private_volume.reload()
 
-            await send_status_update(input, "queued", self.gpu_event_id, modal.current_function_call_id())
+            await send_status_update(
+                input, "queued", self.gpu_event_id, modal.current_function_call_id()
+            )
 
             result = {"status": "queued"}
 
             class TimeoutError(Exception):
                 pass
-            
+
             my_function_call_id = modal.current_function_call_id()
 
             def timeout_handler(signum, frame):
                 asyncio.create_task(interrupt_comfyui())
-                
+
                 data = json.dumps(
                     {
                         "run_id": input.prompt_id,
@@ -1758,15 +1763,15 @@ class ComfyDeployRunner:
                     },
                 )
                 urllib.request.urlopen(req)
-                
+
                 print("current_function_call_id", my_function_call_id)
-                
+
                 try:
                     modal.functions.FunctionCall.from_id(my_function_call_id).cancel()
                 except Exception as e:
                     print("Issues when canceling function call", e)
                     pass
-                
+
                 # cancel self, instead of crashing it.
                 # asyncio.create_task(self.timeout_and_exit(0, True))
 
