@@ -214,6 +214,7 @@ async def create_machine_version(
     machine: Machine,
     user_id: str,
     version: int = 1,
+    current_version_data: MachineVersion = None,
 ) -> MachineVersion:
     # if the machine builder version is not 4, pass this function
     if machine.machine_builder_version != "4":
@@ -230,6 +231,9 @@ async def create_machine_version(
         created_at=func.now(),
         updated_at=func.now(),
         **{col: getattr(machine, col) for col in get_machine_columns().keys()},
+        modal_image_id=current_version_data.modal_image_id
+        if current_version_data
+        else None,
     )
     db.add(machine_version)
     await db.flush()
@@ -291,6 +295,7 @@ async def create_serverless_machine(
         existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
         try:
             import aiohttp
+
             async with aiohttp.ClientSession() as session:
                 async with session.head(existing_machine_info_url) as response:
                     skip_static_assets = response.status == 200
@@ -319,7 +324,8 @@ async def create_serverless_machine(
         install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
         allow_background_volume_commits=machine.allow_background_volume_commits,
         retrieve_static_assets=machine.retrieve_static_assets,
-        skip_static_assets=skip_static_assets,
+        # skip_static_assets=skip_static_assets,
+        skip_static_assets=True,
         docker_commands=docker_commands.model_dump()["docker_commands"],
         machine_builder_version=machine.machine_builder_version,
         base_docker_image=machine.base_docker_image,
@@ -425,8 +431,24 @@ async def update_serverless_machine(
             )
             next_version = (current_version.scalar() or 0) + 1
 
+            current_version_data = await db.execute(
+                select(MachineVersion).where(
+                    MachineVersion.machine_id == machine.id
+                    and MachineVersion.version == current_version.scalar()
+                )
+            )
+            current_version_data = current_version_data.scalars().first()
+
+            print("current_version_data", current_version_data)
+
             # Create new version
-            await create_machine_version(db, machine, user_id, version=next_version)
+            machine_version = await create_machine_version(
+                db,
+                machine,
+                user_id,
+                version=next_version,
+                current_version_data=current_version_data,
+            )
         else:
             machine.machine_version_id = rollback_version_id
 
@@ -444,6 +466,7 @@ async def update_serverless_machine(
             existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
             try:
                 import aiohttp
+
                 async with aiohttp.ClientSession() as session:
                     async with session.head(existing_machine_info_url) as response:
                         skip_static_assets = response.status == 200
@@ -476,7 +499,8 @@ async def update_serverless_machine(
             install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
             allow_background_volume_commits=machine.allow_background_volume_commits,
             retrieve_static_assets=machine.retrieve_static_assets,
-            skip_static_assets=skip_static_assets,
+            # skip_static_assets=skip_static_assets,
+            skip_static_assets=True,
             docker_commands=docker_commands.model_dump()["docker_commands"],
             machine_builder_version=machine.machine_builder_version,
             base_docker_image=machine.base_docker_image,
@@ -485,6 +509,7 @@ async def update_serverless_machine(
             extra_args=machine.extra_args,
             machine_version_id=str(machine.machine_version_id),
             machine_hash=docker_commands_hash,
+            modal_image_id=machine_version.modal_image_id,
         )
         background_tasks.add_task(build_logic, params)
 
@@ -499,6 +524,49 @@ async def update_serverless_machine(
     await db.refresh(machine)
 
     return JSONResponse(content=machine.to_dict())
+
+
+async def redeploy_machine(
+    request: Request,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+    machine: Machine,
+    machine_version: MachineVersion,
+):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    volumes = await retrieve_model_volumes(request, db)
+    machine_token = generate_persistent_token(user_id, org_id)
+    params = BuildMachineItem(
+        machine_id=str(machine.id),
+        name=str(machine.id),
+        cd_callback_url=f"{current_endpoint}/api/machine-built",
+        callback_url=f"{current_endpoint}/api",
+        gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
+        models=machine.models,
+        gpu=machine.gpu,
+        model_volume_name=volumes[0]["volume_name"],
+        run_timeout=machine.run_timeout,
+        idle_timeout=machine.idle_timeout,
+        auth_token=machine_token,
+        ws_timeout=machine.ws_timeout,
+        concurrency_limit=machine.concurrency_limit,
+        allow_concurrent_inputs=machine.allow_concurrent_inputs,
+        # skip_static_assets=skip_static_assets,
+        skip_static_assets=True,
+        modal_image_id=machine_version.modal_image_id,
+        machine_builder_version=machine.machine_builder_version,
+        base_docker_image=machine.base_docker_image,
+        python_version=machine.python_version,
+        prestart_command=machine.prestart_command,
+        extra_args=machine.extra_args,
+        machine_version_id=str(machine.machine_version_id),
+        machine_hash=machine_version.machine_hash,
+    )
+    print("params", params)
+    background_tasks.add_task(build_logic, params)
 
 
 @router.get("/machine/serverless/{machine_id}/versions")

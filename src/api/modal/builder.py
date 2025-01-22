@@ -166,7 +166,7 @@ class BuildMachineItem(BaseModel):
     modal_app_id: Optional[str] = None
     machine_version_id: Optional[str] = None
     machine_hash: Optional[str] = None
-
+    modal_image_id: Optional[str] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -611,6 +611,7 @@ async def build_logic(item: BuildMachineItem):
             "prestart_command": item.prestart_command,
             "extra_args": item.extra_args,
             "machine_hash": item.machine_hash,
+            "modal_image_id": item.modal_image_id,
         }
 
         # print("config: ", config)
@@ -655,7 +656,7 @@ async def build_logic(item: BuildMachineItem):
         # process = subprocess.Popen(f"modal deploy {folder_path}/app.py", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
         final_env = {
             **os.environ,
-            "COLUMNS": "5000",
+            # "COLUMNS": "5000",
         }
         if to_modal_deps_version[version_to_file]:
             final_env["MODAL_IMAGE_BUILDER_VERSION"] = to_modal_deps_version[
@@ -672,8 +673,8 @@ async def build_logic(item: BuildMachineItem):
 
         url = None
 
-        if item.machine_id not in machine_logs_cache:
-            machine_logs_cache[item.machine_id] = []
+        # if item.machine_id not in machine_logs_cache:
+        machine_logs_cache[item.machine_id] = []
 
         machine_logs = machine_logs_cache[item.machine_id]
 
@@ -832,35 +833,20 @@ async def build_logic(item: BuildMachineItem):
             elif info["type"] == "URL":
                 url = info["value"]
 
-        try:
-            app = modal.App.lookup(item.name)
-            # print("my legit app id", app.app_id)
-
-            if app.app_id:
-                app_id = app.app_id
-
-        except Exception as e:
-            print("error", e)
-
-        # Replace 'comfyui-api' in the URL with 'app-id' and parse the returned JSON to get app_id
-        if app_id is None and url and item.modal_app_id is None:
-            appid_url = url.replace("comfyui-api", "app-id")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(appid_url) as response:
-                    if response.status == 200:
-                        response_json = await response.json()
-                        app_id = response_json.get("app_id", None)
-                        if app_id:
-                            logger.info(f"App ID: {app_id}")
-                        else:
-                            logger.error("App ID not found in the response.")
-                    else:
-                        logger.error(
-                            f"Failed to fetch App ID. HTTP Status: {response.status}"
-                        )
 
         if item.modal_app_id:
             app_id = item.modal_app_id
+        else:
+            try:
+                app = await modal.App.lookup.aio(item.name)
+                # print("my legit app id", app.app_id)
+
+                if app.app_id:
+                    app_id = app.app_id
+
+            except Exception as e:
+                logger.error("App ID not found in the response.")
+                print("error", e)
 
     async def clear_machine_logs_and_remove_folder(machine_id, folder_path):
         # Close the ws connection and also pop the item
@@ -923,126 +909,44 @@ async def build_logic(item: BuildMachineItem):
         await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
         return
 
-    if url is None:
-        machine_logs.append(
-            {
-                "logs": "App image built, but url is None, unable to parse the url.",
-                "timestamp": time.time(),
-            }
+    async with get_db_context() as db:
+        # Update machine version build time
+        await update_machine_version_build_time(
+            db=db,
+            machine_version_id=item.machine_version_id,
+            build_time=machine_built_time,
+            status="ready",
+            build_log=json.dumps(machine_logs),
         )
+        
+        print("machine_logs", machine_logs)
 
-        # Direct database update instead of HTTP request
-        async with get_db_context() as db:
-            await update_machine_version_build_time(
-                db=db,
-                machine_version_id=item.machine_version_id,
-                status="error",
-                build_log=json.dumps(machine_logs),
-            )
-
-            update_stmt = (
-                update(Machine)
-                .where(Machine.id == item.machine_id)
-                .values(
-                    status="error",
-                    build_log=json.dumps(machine_logs),
-                    import_failed_logs=json.dumps(import_failed_logs)
-                    if not item.skip_static_assets
-                    else None,
-                )
-                .returning(Machine)
-            )
-            result = await db.execute(update_stmt)
-            await db.commit()
-            machine = result.scalar_one()
-            await db.refresh(machine)
-        await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
-        return
-
-    # Now instead of sending a post request to the callback url, we update the machine table
-    # TODO: Support always ons gpus
-    # print("callback_url", item.callback_url)
-    # async with aiohttp.ClientSession() as session:
-    #     await session.post(
-    #         item.callback_url,
-    #         headers={
-    #             "Content-Type": "application/json",
-    #             "bypass-tunnel-reminder": "true",
-    #         },
-    #         data=json.dumps(
-    #             {
-    #                 "machine_id": item.machine_id,
-    #                 "endpoint": url,
-    #                 "app_id": app_id,
-    #                 "build_log": json.dumps(machine_logs),
-    #                 "import_failed_logs": json.dumps(import_failed_logs)
-    #                 if not item.skip_static_assets
-    #                 else None,
-    #                 # "static_fe_assets": static_fe_assets,
-    #             }
-    #         ).encode("utf-8"),
-    #     )
-    if url is not None:
-        async with get_db_context() as db:
-            # Update machine version build time
-            await update_machine_version_build_time(
-                db=db,
-                machine_version_id=item.machine_version_id,
-                build_time=machine_built_time,
+        # Update machine status
+        update_stmt = (
+            update(Machine)
+            .where(Machine.id == item.machine_id)
+            .values(
                 status="ready",
+                # endpoint=url,
+                machine_version=BUILDER_VERSION,
                 build_log=json.dumps(machine_logs),
+                modal_app_id=app_id,
+                import_failed_logs=json.dumps(import_failed_logs)
+                if not item.skip_static_assets
+                else None,
             )
-            
-            print("machine_logs", machine_logs)
+            .returning(Machine)
+        )
+        result = await db.execute(update_stmt)
+        await db.commit()
+        machine = result.scalar_one()
+        await db.refresh(machine)
 
-            # Update machine status
-            update_stmt = (
-                update(Machine)
-                .where(Machine.id == item.machine_id)
-                .values(
-                    status="ready",
-                    endpoint=url,
-                    machine_version=BUILDER_VERSION,
-                    build_log=json.dumps(machine_logs),
-                    modal_app_id=app_id,
-                    import_failed_logs=json.dumps(import_failed_logs)
-                    if not item.skip_static_assets
-                    else None,
-                )
-                .returning(Machine)
+        if machine.keep_warm > 0:
+            set_machine_always_on(
+                machine.id,
+                KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu),
             )
-            result = await db.execute(update_stmt)
-            await db.commit()
-            machine = result.scalar_one()
-            await db.refresh(machine)
-
-            if machine.keep_warm > 0:
-                set_machine_always_on(
-                    machine.id,
-                    KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu),
-                )
-    else:
-        async with get_db_context() as db:
-            await update_machine_version_build_time(
-                db=db,
-                machine_version_id=item.machine_version_id,
-                status="error",
-                build_log=json.dumps(machine_logs),
-            )
-
-            update_stmt = (
-                update(Machine)
-                .where(Machine.id == item.machine_id)
-                .values(
-                    status="error",
-                    build_log=json.dumps(machine_logs),
-                )
-                .returning(Machine)
-            )
-            result = await db.execute(update_stmt)
-            await db.commit()
-            machine = result.scalar_one()
-            await db.refresh(machine)
 
     await send_json_to_ws(
         item.machine_id,
