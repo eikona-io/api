@@ -509,7 +509,7 @@ async def update_serverless_machine(
             extra_args=machine.extra_args,
             machine_version_id=str(machine.machine_version_id),
             machine_hash=docker_commands_hash,
-            modal_image_id=machine_version.modal_image_id,
+            modal_image_id=machine_version.modal_image_id if machine_version else None,
         )
         background_tasks.add_task(build_logic, params)
 
