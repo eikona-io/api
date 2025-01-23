@@ -389,14 +389,14 @@ async def create_run_stream(
     data.execution_mode = "stream"
     return await _create_run(request, data, background_tasks, db, client)
 
+
 class CancelFunctionBody(BaseModel):
     function_id: str
 
+
 @router.post("/run/{run_id}/cancel")
 async def cancel_run(
-    run_id: str,
-    body: CancelFunctionBody,
-    db: AsyncSession = Depends(get_db)
+    run_id: str, body: CancelFunctionBody, db: AsyncSession = Depends(get_db)
 ):
     try:
         # Cancel the modal function
@@ -410,17 +410,18 @@ async def cancel_run(
             result = await db.execute(query)
             existing_run = result.scalar_one_or_none()
 
-            if existing_run and existing_run.status not in ["success", "failed", "timeout", "cancelled"]:
+            if existing_run and existing_run.status not in [
+                "success",
+                "failed",
+                "timeout",
+                "cancelled",
+            ]:
                 now = dt.datetime.now(dt.UTC)
                 # Update the run status
                 stmt = (
                     update(WorkflowRun)
                     .where(WorkflowRun.modal_function_call_id == body.function_id)
-                    .values(
-                        status="cancelled",
-                        updated_at=now,
-                        ended_at=now
-                    )
+                    .values(status="cancelled", updated_at=now, ended_at=now)
                     .returning(WorkflowRun)
                 )
                 await db.execute(stmt)
@@ -429,6 +430,7 @@ async def cancel_run(
         return {"status": "success", "message": "Function cancelled"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancel function {str(e)}")
+
 
 # @router.post(
 #     "/run/workflow",
@@ -767,8 +769,26 @@ async def run_model_async(
     }
 
 
-# Add a new helper function for retrying
-async def retry_post_request(client: httpx.AsyncClient, url: str, json: Dict, headers: Dict, max_retries: int = 3, delay: int = 2) -> httpx.Response:
+async def retry_post_request(
+    client: httpx.AsyncClient,
+    url: str,
+    json: Dict,
+    headers: Dict,
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    max_delay: float = 10.0,
+    exponential_base: float = 2.0,
+    jitter: float = 0.1,
+) -> httpx.Response:
+    """
+    Retry POST requests with exponential backoff and jitter.
+
+    Args:
+        initial_delay: Starting delay in seconds
+        max_delay: Maximum delay between retries in seconds
+        exponential_base: Base for exponential backoff (typically 2)
+        jitter: Random jitter factor to add/subtract from delay (0.1 = ±10%)
+    """
     for attempt in range(max_retries):
         try:
             response = await client.post(
@@ -780,9 +800,16 @@ async def retry_post_request(client: httpx.AsyncClient, url: str, json: Dict, he
             return response
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 500 and attempt < max_retries - 1:
-                # Log retry attempt
-                logger.info(f"Attempt {attempt + 1} failed, retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
+                # Calculate exponential delay with jitter
+                delay = min(initial_delay * (exponential_base**attempt), max_delay)
+                # Add random jitter
+                jitter_range = delay * jitter
+                actual_delay = delay + random.uniform(-jitter_range, jitter_range)
+
+                logger.info(
+                    f"Attempt {attempt + 1} failed, retrying in {actual_delay:.2f} seconds..."
+                )
+                await asyncio.sleep(actual_delay)
                 continue
             raise
         except Exception as e:
@@ -1054,7 +1081,9 @@ async def _create_run(
             insert_to_clickhouse, client, "workflow_events", progress_data
         )
 
-        token = generate_temporary_token(request.state.current_user["user_id"], org_id, expires_in="12h")
+        token = generate_temporary_token(
+            request.state.current_user["user_id"], org_id, expires_in="12h"
+        )
         # logger.info(token)
         # logger.info("machine type " + machine.type)
 
@@ -1115,10 +1144,14 @@ async def _create_run(
                     async with httpx.AsyncClient() as _client:
                         try:
                             # Proxy the update run back to v1 endpoints
-                            params["file_upload_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/file-upload"
-                            params["status_endpoint"] = os.environ.get("LEGACY_API_URL") + "/api/update-run"
+                            params["file_upload_endpoint"] = (
+                                os.environ.get("LEGACY_API_URL") + "/api/file-upload"
+                            )
+                            params["status_endpoint"] = (
+                                os.environ.get("LEGACY_API_URL") + "/api/update-run"
+                            )
                             payload = {"input": params}
-                            
+
                             # Use the retry function instead of direct post
                             response = await retry_post_request(
                                 _client,
@@ -1127,9 +1160,9 @@ async def _create_run(
                                 headers={
                                     "Content-Type": "application/json",
                                     "Authorization": f"Bearer {machine.auth_token}",
-                                }
+                                },
                             )
-                            
+
                         except httpx.HTTPStatusError as e:
                             raise HTTPException(
                                 status_code=e.response.status_code,
