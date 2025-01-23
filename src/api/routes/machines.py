@@ -424,22 +424,20 @@ async def update_serverless_machine(
 
         # Get next version number
         if not rollback_version_id:
-            current_version = await db.execute(
-                select(func.max(MachineVersion.version)).where(
-                    MachineVersion.machine_id == machine.id
+            # Combine queries to get both max version and current version data
+            result = await db.execute(
+                select(
+                    func.max(MachineVersion.version).label('max_version'),
+                    MachineVersion
                 )
+                .where(MachineVersion.machine_id == machine.id)
+                .group_by(MachineVersion)
+                .order_by(MachineVersion.version.desc())
+                .limit(1)
             )
-            next_version = (current_version.scalar() or 0) + 1
-
-            current_version_data = await db.execute(
-                select(MachineVersion).where(
-                    MachineVersion.machine_id == machine.id
-                    and MachineVersion.version == current_version.scalar()
-                )
-            )
-            current_version_data = current_version_data.scalars().first()
-
-            print("current_version_data", current_version_data)
+            row = result.first()
+            next_version = (row.max_version or 0) + 1 if row else 1
+            current_version_data = row.MachineVersion if row else None
 
             # Create new version
             machine_version = await create_machine_version(
