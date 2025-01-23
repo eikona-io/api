@@ -1160,7 +1160,7 @@ async def _create_run(
                                 headers={
                                     "Content-Type": "application/json",
                                     "Authorization": f"Bearer {machine.auth_token}",
-                                },
+                                }
                             )
 
                         except httpx.HTTPStatusError as e:
