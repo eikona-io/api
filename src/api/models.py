@@ -375,7 +375,7 @@ def get_machine_columns():
         "idle_timeout": Column(Integer, nullable=False, default=60),
         "extra_docker_commands": Column(JSON),
         "machine_builder_version": Column(
-            Enum("2", "3", "4", name="machine_builder_version"), default="2"
+            Enum("2", "3", "4", name="machine_builder_version"), default="4"
         ),
         "base_docker_image": Column(String),
         "python_version": Column(String),

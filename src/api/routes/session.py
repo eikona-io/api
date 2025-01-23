@@ -8,7 +8,7 @@ from api.routes.machines import (
     redeploy_machine,
     update_serverless_machine,
 )
-from api.routes.types import GPUEventModel, MachineGPU
+from api.routes.types import GPUEventModel, MachineGPU, MachineType
 from api.utils.docker import (
     CustomNode,
     DepsBody,
@@ -754,14 +754,22 @@ async def create_dynamic_session(
     }
 
 
+class SnapshotSessionBody(BaseModel):
+    machine_name: Optional[str] = None
+
 # You can only snapshot a new machine
 @router.post("/session/{session_id}/snapshot")
 async def snapshot_session(
     request: Request,
     session_id: str,
+    body: SnapshotSessionBody,
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
     gpuEvent = cast(
         Optional[GPUEvent],
         (
@@ -780,10 +788,7 @@ async def snapshot_session(
         raise HTTPException(status_code=404, detail="GPUEvent not found")
 
     modal_function_id = gpuEvent.modal_function_id
-
-    if gpuEvent.machine_id is None:
-        raise HTTPException(status_code=400, detail="Machine id not found")
-
+    
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
 
@@ -791,6 +796,30 @@ async def snapshot_session(
         raise HTTPException(
             status_code=400, detail="Modal function id is not a sandbox"
         )
+        
+    machine = None
+    
+    if gpuEvent.machine_id is None and body.machine_name is not None:
+        machine = Machine(
+            id=uuid4(),
+            type=MachineType.COMFY_DEPLOY_SERVERLESS,
+            user_id=user_id,
+            org_id=org_id,
+            status="ready",
+            endpoint="not-ready",
+            created_at=func.now(),
+            updated_at=func.now(),
+            name=body.machine_name,
+            gpu=gpuEvent.gpu,
+            machine_builder_version="4",
+        )
+        db.add(machine)
+        await db.flush()
+                
+        gpuEvent.machine_id = machine.id
+        
+    if gpuEvent.machine_id is None:
+        raise HTTPException(status_code=400, detail="Machine id not found")
 
     # Get the sandbox and create snapshot
     sb = await modal.Sandbox.from_id.aio(modal_function_id)
@@ -803,12 +832,13 @@ async def snapshot_session(
     current_user = request.state.current_user
     user_id = current_user["user_id"]
 
-    machine = await db.execute(
-        select(Machine)
-        .where(Machine.id == gpuEvent.machine_id)
-        .apply_org_check(request)
-    )
-    machine = machine.scalar_one()
+    if machine is None:
+        machine = await db.execute(
+            select(Machine)
+            .where(Machine.id == gpuEvent.machine_id)
+            .apply_org_check(request)
+        )
+        machine = machine.scalar_one()
 
     # Get next version number
     current_version = await db.execute(
@@ -837,6 +867,7 @@ async def snapshot_session(
 
     await db.commit()
     await db.refresh(machine)
+    await db.refresh(gpuEvent)
     await db.refresh(machine_version)
 
     await redeploy_machine(request, db, background_tasks, machine, machine_version)
