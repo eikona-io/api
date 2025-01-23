@@ -768,7 +768,7 @@ async def run_model_async(
 
 
 # Add a new helper function for retrying
-async def retry_post_request(client: httpx.AsyncClient, url: str, json: Dict, headers: Dict, max_retries: int = 3, delay: int = 5) -> httpx.Response:
+async def retry_post_request(client: httpx.AsyncClient, url: str, json: Dict, headers: Dict, max_retries: int = 3, delay: int = 2) -> httpx.Response:
     for attempt in range(max_retries):
         try:
             response = await client.post(
