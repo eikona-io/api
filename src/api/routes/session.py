@@ -3,7 +3,11 @@ from datetime import datetime
 import os
 from pprint import pprint
 from api.modal.builder import insert_to_clickhouse
-from api.routes.machines import UpdateServerlessMachineModel, redeploy_machine, update_serverless_machine
+from api.routes.machines import (
+    UpdateServerlessMachineModel,
+    redeploy_machine,
+    update_serverless_machine,
+)
 from api.routes.types import GPUEventModel, MachineGPU
 from api.utils.docker import (
     CustomNode,
@@ -110,7 +114,7 @@ async def get_session(
         "gpu": gpuEvent.gpu,
         "created_at": gpuEvent.created_at,
         "timeout": gpuEvent.session_timeout,
-        "machine_id": str(gpuEvent.machine_id),
+        "machine_id": str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
     }
     # with logfire.span("spawn-run"):
     #     result = ComfyDeployRunner().run.spawn(params)
@@ -541,13 +545,11 @@ async def create_dynamic_sesssion_background_task(
                     ]
                 )
             )
-            print("deps_body 1", deps_body)
-            converted = generate_all_docker_commands(deps_body)
+            converted = generate_all_docker_commands(deps_body, include_comfyuimanager=True)
         else:
-            print("deps_body 2", body.dependencies)
-            converted = generate_all_docker_commands(body.dependencies)
+            converted = generate_all_docker_commands(body.dependencies, include_comfyuimanager=True)
 
-        pprint(converted)
+        # pprint(converted)
 
         dockerfile_image = modal.Image.debian_slim(python_version="3.11")
 
@@ -560,15 +562,14 @@ async def create_dynamic_sesssion_background_task(
 
         dockerfile_image = dockerfile_image.run_commands(
             [
-                "rm -rf /private_models",
-                "rm -rf /comfyui/models",
+                "rm -rf /private_models /comfyui/models /public_models",
                 "ln -s /private_models /comfyui/models",
-                "rm -rf /public_models",
             ]
         )
 
-        dockerfile_image = dockerfile_image.copy_local_file(
-            "src/api/modal/v4/data/extra_model_paths.yaml", "/comfyui"
+        dockerfile_image = dockerfile_image.add_local_file(
+            "../api/src/api/modal/v4/data/extra_model_paths.yaml",
+            "/comfyui/extra_model_paths.yaml",
         )
     else:
         logger.info(f"Using existing modal image {modal_image_id}")
@@ -644,7 +645,7 @@ async def create_dynamic_sesssion_background_task(
             await status_queue.put(tunnel.url)
 
             p = await sb.exec.aio(
-                "bash", "-c", comfyui_cmd(cpu=True if body.gpu == "CPU" else False)
+                "bash", "-c", comfyui_cmd(cpu=True if body.gpu == "CPU" else False, install_latest_comfydeploy=True)
             )
             logger.info(tunnel.url)
 
@@ -656,12 +657,26 @@ async def create_dynamic_sesssion_background_task(
                             # Try to decode as UTF-8, replace invalid characters
                             if isinstance(line, bytes):
                                 # Use 'ignore' instead of 'replace' to skip problematic characters
-                                line = line.decode('utf-8', errors='ignore')
-                                
+                                line = line.decode("utf-8", errors="ignore")
+
                                 # Skip progress bar lines that contain these special characters
-                                if any(char in line for char in ['█', '▮', '▯', '▏', '▎', '▍', '▌', '▋', '▊', '▉']):
+                                if any(
+                                    char in line
+                                    for char in [
+                                        "█",
+                                        "▮",
+                                        "▯",
+                                        "▏",
+                                        "▎",
+                                        "▍",
+                                        "▌",
+                                        "▋",
+                                        "▊",
+                                        "▉",
+                                    ]
+                                ):
                                     continue
-                                    
+
                             print(line, end="")
                             data = [
                                 (
@@ -674,7 +689,9 @@ async def create_dynamic_sesssion_background_task(
                                     line,
                                 )
                             ]
-                            asyncio.create_task(insert_to_clickhouse("log_entries", data))
+                            asyncio.create_task(
+                                insert_to_clickhouse("log_entries", data)
+                            )
                         except Exception as e:
                             logger.error(f"Error processing log line: {str(e)}")
 
@@ -686,7 +703,7 @@ async def create_dynamic_sesssion_background_task(
                 await asyncio.gather(stdout_task, stderr_task)
             except Exception as e:
                 logger.error(f"Error creating tasks: {str(e)}")
-                
+
             await sb.wait.aio()
     except Exception as e:
         pass
@@ -740,7 +757,10 @@ async def create_dynamic_session(
 # You can only snapshot a new machine
 @router.post("/session/{session_id}/snapshot")
 async def snapshot_session(
-    request: Request, session_id: str, db: AsyncSession = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()
+    request: Request,
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     gpuEvent = cast(
         Optional[GPUEvent],
@@ -818,7 +838,7 @@ async def snapshot_session(
     await db.commit()
     await db.refresh(machine)
     await db.refresh(machine_version)
-    
+
     await redeploy_machine(request, db, background_tasks, machine, machine_version)
 
     return JSONResponse(

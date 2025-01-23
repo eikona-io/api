@@ -20,8 +20,13 @@ def extract_url(dependency_string):
 def comfyui_cmd(
     cpu: bool = False,
     extra_args: Optional[str] = None,
+    install_latest_comfydeploy: bool = False,
 ):
-    cmd = f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
+    cmd = ""
+    if install_latest_comfydeploy:
+        cmd += "cd ./custom_nodes/comfyui-deploy && git pull --ff-only && cd - && "
+    
+    cmd += f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
     if cpu:
         cmd += " --cpu"
     if extra_args is not None:
@@ -116,7 +121,7 @@ class DockerCommandResponse(BaseModel):
     docker_commands: List[List[str]]
     # deps: DependencyGraph
     
-def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
+def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = False) -> DockerCommandResponse:
     deps = data.dependencies if hasattr(data, 'dependencies') else None
     docker_commands = []
     steps = data.docker_command_steps
@@ -221,10 +226,24 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
             "RUN if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi",
             "RUN if [ -f install.py ]; then python install.py || echo 'install script failed'; fi",
         ])
+        
     
-    # return {
-    #     "docker_commands": docker_commands,
-    #     # "deps": deps
-    # }
-
+    has_manager_node = (
+        hasattr(steps, 'steps') and 
+        any(
+            step.type == "custom-node" and 
+            step.data.url.lower().startswith("https://github.com/ltdrdata/ComfyUI-Manager.git".lower())
+            for step in steps.steps
+        )
+    )
+        
+    if include_comfyuimanager and not has_manager_node:
+        docker_commands.append([
+            "WORKDIR /comfyui/custom_nodes",
+            "RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git --recursive",
+            "WORKDIR /comfyui/custom_nodes/ComfyUI-Manager",
+            "RUN if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi",
+            "RUN if [ -f install.py ]; then python install.py || echo 'install script failed'; fi",
+        ])
+    
     return DockerCommandResponse(docker_commands=docker_commands)
