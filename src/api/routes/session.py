@@ -762,7 +762,7 @@ class SnapshotSessionBody(BaseModel):
 async def snapshot_session(
     request: Request,
     session_id: str,
-    body: SnapshotSessionBody,
+    body: Optional[SnapshotSessionBody] = None,
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
@@ -799,7 +799,7 @@ async def snapshot_session(
         
     machine = None
     
-    if gpuEvent.machine_id is None and body.machine_name is not None:
+    if gpuEvent.machine_id is None and body is not None and body.machine_name is not None:
         machine = Machine(
             id=uuid4(),
             type=MachineType.COMFY_DEPLOY_SERVERLESS,
