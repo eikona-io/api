@@ -3,6 +3,8 @@ from pydantic import BaseModel
 
 comfydeploy_hash = "ce3b0dbe849ed58285adfca49d42a7a1e3370589"
 comfyui_hash = "8ce2a1052ca03183768da0aaa483024e58b8008c"
+# https://github.com/ltdrdata/ComfyUI-Manager/commit/fd2d285af5ae257a4d1f3c1146981ce41ac5adf5
+comfyuimanager_hash = "fd2d285af5ae257a4d1f3c1146981ce41ac5adf5"
 
 def extract_hash(dependency_string):
     parts = dependency_string.split("@")
@@ -242,6 +244,7 @@ def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = 
             "WORKDIR /comfyui/custom_nodes",
             "RUN git clone https://github.com/ltdrdata/ComfyUI-Manager.git --recursive",
             "WORKDIR /comfyui/custom_nodes/ComfyUI-Manager",
+            f"RUN git reset --hard {comfyuimanager_hash}",
             "RUN if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi",
             "RUN if [ -f install.py ]; then python install.py || echo 'install script failed'; fi",
         ])
