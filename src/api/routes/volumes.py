@@ -1314,7 +1314,7 @@ async def check_file_existence(
                     model_name=filename
                 )
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=409, 
                     detail=f"File {full_path} already exists"
                 )
         except grpclib.exceptions.GRPCError as e:
@@ -1322,7 +1322,9 @@ async def check_file_existence(
                 raise e
     except Exception as e:
         logger.error(f"Error checking file existence: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        status_code = getattr(e, "status_code", 500)
+
+        raise HTTPException(status_code=status_code, detail=str(e))
 
 # Civitai handler
 async def handle_civitai_model(
