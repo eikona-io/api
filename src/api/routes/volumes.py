@@ -1343,11 +1343,14 @@ async def handle_civitai_model(
             raise HTTPException(status_code=400, detail="No model versions found")
             
         # Select version (latest if not specified)
-        selected_version = next(
-            (v for v in civitai_info["modelVersions"] 
-             if str(v["id"]) == version_id) if version_id 
-            else civitai_info["modelVersions"][0]
-        )
+        if version_id:
+            selected_version = None
+            for version in civitai_info["modelVersions"]:
+                if str(version["id"]) == version_id:
+                    selected_version = version
+                    break
+        else:
+            selected_version = civitai_info["modelVersions"][0]
         
         if not selected_version:
             raise HTTPException(status_code=400, detail="Model version not found")
