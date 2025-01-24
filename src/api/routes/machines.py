@@ -703,7 +703,8 @@ async def rollback_serverless_machine(
                 col: getattr(machine_version, col)
                 for col in get_machine_columns().keys()
                 if hasattr(machine_version, col)
-            }
+            },
+            is_trigger_rebuild=machine_version.modal_image_id is not None,
         ),
         rollback_version_id=machine_version.id,
         db=db,
