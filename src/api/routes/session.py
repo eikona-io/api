@@ -545,9 +545,13 @@ async def create_dynamic_sesssion_background_task(
                     ]
                 )
             )
-            converted = generate_all_docker_commands(deps_body, include_comfyuimanager=True)
+            converted = generate_all_docker_commands(
+                deps_body, include_comfyuimanager=True
+            )
         else:
-            converted = generate_all_docker_commands(body.dependencies, include_comfyuimanager=True)
+            converted = generate_all_docker_commands(
+                body.dependencies, include_comfyuimanager=True
+            )
 
         # pprint(converted)
 
@@ -567,8 +571,10 @@ async def create_dynamic_sesssion_background_task(
             ]
         )
 
+        current_directory = os.path.dirname(os.path.realpath(__file__))
+
         dockerfile_image = dockerfile_image.add_local_file(
-            "../api/src/api/modal/v4/data/extra_model_paths.yaml",
+            current_directory + "/extra_model_paths.yaml",
             "/comfyui/extra_model_paths.yaml",
         )
     else:
@@ -645,12 +651,18 @@ async def create_dynamic_sesssion_background_task(
             await status_queue.put(tunnel.url)
 
             p = await sb.exec.aio(
-                "bash", "-c", comfyui_cmd(cpu=True if body.gpu == "CPU" else False, install_latest_comfydeploy=True)
+                "bash",
+                "-c",
+                comfyui_cmd(
+                    cpu=True if body.gpu == "CPU" else False,
+                    install_latest_comfydeploy=True,
+                ),
             )
             logger.info(tunnel.url)
 
             # async with await get_clickhouse_client() as client:
             try:
+
                 async def log_stream(stream, stream_type: str):
                     async for line in stream:
                         try:
@@ -757,6 +769,7 @@ async def create_dynamic_session(
 class SnapshotSessionBody(BaseModel):
     machine_name: Optional[str] = None
 
+
 # You can only snapshot a new machine
 @router.post("/session/{session_id}/snapshot")
 async def snapshot_session(
@@ -788,7 +801,7 @@ async def snapshot_session(
         raise HTTPException(status_code=404, detail="GPUEvent not found")
 
     modal_function_id = gpuEvent.modal_function_id
-    
+
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
 
@@ -796,10 +809,14 @@ async def snapshot_session(
         raise HTTPException(
             status_code=400, detail="Modal function id is not a sandbox"
         )
-        
+
     machine = None
-    
-    if gpuEvent.machine_id is None and body is not None and body.machine_name is not None:
+
+    if (
+        gpuEvent.machine_id is None
+        and body is not None
+        and body.machine_name is not None
+    ):
         machine = Machine(
             id=uuid4(),
             type=MachineType.COMFY_DEPLOY_SERVERLESS,
@@ -815,9 +832,9 @@ async def snapshot_session(
         )
         db.add(machine)
         await db.flush()
-                
+
         gpuEvent.machine_id = machine.id
-        
+
     if gpuEvent.machine_id is None:
         raise HTTPException(status_code=400, detail="Machine id not found")
 
