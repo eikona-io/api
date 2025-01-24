@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from pprint import pprint
 from api.modal.builder import insert_to_clickhouse
@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 import modal
 from sqlalchemy.ext.asyncio import AsyncSession
+from upstash_redis.asyncio import Redis
 from .utils import select
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,10 @@ import logging
 from typing import Optional
 from sqlalchemy import update, func
 from fastapi import BackgroundTasks
+
+redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
+redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
+redis = Redis(url=redis_url, token=redis_token)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +76,7 @@ class Session(BaseModel):
     gpu: str
     created_at: datetime
     timeout: Optional[int]
+    timeout_end: Optional[datetime]
     machine_id: Optional[str]
 
 
@@ -100,12 +106,8 @@ async def get_session(
 
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
-
-    # runner = get_comfy_runner(gpuEvent.machine_id, gpuEvent.session_id)
-
-    # async with modal.Queue.ephemeral() as q:
-    #     await runner.create_tunnel.spawn.aio(q, status_endpoint)
-    #     url = await q.get.aio()
+    
+    timeout_end = await redis.get(f"session:{session_id}:timeout_end")
 
     return {
         "session_id": session_id,
@@ -115,10 +117,8 @@ async def get_session(
         "created_at": gpuEvent.created_at,
         "timeout": gpuEvent.session_timeout,
         "machine_id": str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
+        "timeout_end": timeout_end,
     }
-    # with logfire.span("spawn-run"):
-    #     result = ComfyDeployRunner().run.spawn(params)
-    #     new_run.modal_function_call_id = result.object_id
 
 
 class GetSessionsBody(BaseModel):
@@ -313,6 +313,44 @@ async def increase_timeout(
     # in the database we save the timeout in minutes
     gpu_event.session_timeout = gpu_event.session_timeout + body.timeout
     await db.commit()
+
+    return JSONResponse(
+        status_code=200, content={"message": "Timeout increased successfully"}
+    )
+    
+class IncreaseTimeoutBody2(BaseModel):
+    minutes: int
+    
+@router.post("/session/{session_id}/increase-timeout")
+async def increase_timeout_2(
+    request: Request, session_id: str, body: IncreaseTimeoutBody2, db: AsyncSession = Depends(get_db)
+):
+    gpu_event = (
+        await db.execute(
+            select(GPUEvent)
+            .where(GPUEvent.session_id == str(session_id))
+            .where(GPUEvent.end_time.is_(None))
+            .apply_org_check(request)
+        )
+    ).scalar_one_or_none()
+
+    if gpu_event is None:
+        raise HTTPException(status_code=404, detail="GPU event not found")
+
+    # Retrieve the current timeout end time from Redis
+    current_timeout_end_str = await redis.get(f"session:{session_id}:timeout_end")
+    if not current_timeout_end_str:
+        # If no existing timeout, raise an error
+        raise HTTPException(status_code=404, detail="Timeout end not found for session")
+
+    # Parse the current timeout end time
+    current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
+
+    # Calculate the new timeout end time
+    new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
+
+    # Update the timeout end time in Redis
+    await redis.set(f"session:{session_id}:timeout_end", new_timeout_end.isoformat())
 
     return JSONResponse(
         status_code=200, content={"message": "Timeout increased successfully"}
@@ -599,7 +637,8 @@ async def create_dynamic_sesssion_background_task(
                 # "-c",
                 # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
                 image=dockerfile_image,
-                timeout=(body.timeout or 15) * 60,
+                # timeout=(body.timeout or 15) * 60,
+                timeout=6 * 60 * 60,
                 gpu=body.gpu.value
                 if body.gpu is not None and body.gpu.value != "CPU"
                 else None,
@@ -740,7 +779,6 @@ async def create_dynamic_session(
     request: Request,
     body: CreateDynamicSessionBody,
     background_tasks: BackgroundTasks,
-    # db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
     session_id = uuid4()
     q = asyncio.Queue()
@@ -748,12 +786,27 @@ async def create_dynamic_session(
     task = asyncio.create_task(
         create_dynamic_sesssion_background_task(request, session_id, body, q)
     )
+    
+       # Calculate the timeout end time in UTC
+    timeout_duration = body.timeout or 15
+    timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
+
+    # Store the timeout end time in Redis
+    await redis.set("session:" + str(session_id) + ":timeout_end", timeout_end_time.isoformat())
 
     background_tasks.add_task(
         ensure_session_creation_complete,
         task,
     )
-
+    
+    # background_tasks.add_task(
+    #     check_and_close_sessions,
+    #     request, session_id
+    # )
+    asyncio.create_task(
+        check_and_close_sessions(request, str(session_id))
+    )
+    
     try:
         tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
     except asyncio.TimeoutError:
@@ -938,5 +991,40 @@ async def delete_session(
         await modal.Sandbox.from_id(modal_function_id).terminate.aio()
     else:
         await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
+        
+    await redis.delete("session:" + session_id + ":timeout_end")
 
     return {"success": True}
+
+
+async def check_and_close_sessions(request: Request, session_id: str):
+    try:
+        while True:
+            # Construct the specific Redis key for the session
+            key = f"session:{session_id}:timeout_end"
+            logger.info(f"Checking session {session_id}")
+            
+            # Retrieve the timeout end time from Redis
+            timeout_end_str = await redis.get(key)
+            if timeout_end_str is None:
+                logger.info(f"No timeout end found for session {session_id}")
+                break
+
+            try:
+                timeout_end = datetime.fromisoformat(timeout_end_str)
+            except ValueError:
+                logger.error(f"Invalid date format for session {session_id}")
+                break
+            
+            if datetime.utcnow() > timeout_end:
+                # Close the session
+                async with get_db_context() as db:
+                    await delete_session(request, session_id, db)
+                # Optionally, delete the key from Redis
+                logger.info(f"Session {session_id} closed due to timeout")
+                break
+            else:
+                await asyncio.sleep(1)
+
+    except Exception as e:
+        logger.error(f"Error checking session {session_id}: {str(e)}")
