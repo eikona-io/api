@@ -259,6 +259,7 @@ class CreateDynamicSessionBody(BaseModel):
     gpu: MachineGPU = Field("A10G", description="The GPU to use")
     machine_id: Optional[str] = Field(None, description="The machine id to use")
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
+    comfyui_hash: Optional[str] = Field(None, description="The comfyui hash to use")
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
         [],
         description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
@@ -568,6 +569,7 @@ async def create_dynamic_sesssion_background_task(
         if isinstance(body.dependencies, list):
             # Handle shorthand dependencies
             deps_body = DepsBody(
+                comfyui_version=body.comfyui_hash,
                 docker_command_steps=DockerSteps(
                     steps=[
                         DockerStep(
