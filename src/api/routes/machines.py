@@ -46,7 +46,7 @@ from api.models import (
 )
 
 # from sqlalchemy import select
-from api.database import get_db
+from api.database import get_db, get_db_context
 import logging
 from typing import Any, Dict, List, Optional, Literal
 # from fastapi_pagination import Page, add_pagination, paginate
@@ -350,186 +350,195 @@ async def update_serverless_machine(
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
-    machine = await db.execute(
-        select(Machine).where(Machine.id == machine_id).apply_org_check(request)
-    )
-    machine = machine.scalars().first()
-    if not machine:
-        raise HTTPException(status_code=404, detail="Machine not found")
-
-    if machine.type != MachineType.COMFY_DEPLOY_SERVERLESS:
-        raise HTTPException(
-            status_code=400, detail="Machine is not a serverless machine"
+    try:
+        machine = await db.execute(
+            select(Machine).where(Machine.id == machine_id).apply_org_check(request)
         )
+        machine = machine.scalars().first()
+        if not machine:
+            raise HTTPException(status_code=404, detail="Machine not found")
 
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if "org_id" in current_user else None
-
-    if machine.machine_version_id is None and machine.machine_builder_version == "4":
-        # give it a default version 1
-        await create_machine_version(db, machine, user_id)
-        await db.commit()
-        await db.refresh(machine)  # Single refresh at the end
-
-    fields_to_trigger_rebuild = [
-        "allow_concurrent_inputs",
-        "comfyui_version",
-        "concurrency_limit",
-        "docker_command_steps",
-        "extra_docker_commands",
-        "idle_timeout",
-        "ws_timeout",
-        "machine_builder_version",
-        "install_custom_node_with_gpu",
-        "run_timeout",
-        "base_docker_image",
-        "extra_args",
-        "prestart_command",
-        "python_version",
-        "install_custom_node_with_gpu",
-    ]
-
-    update_machine_dict = update_machine.model_dump()
-
-    rebuild = update_machine_dict.get(
-        "is_trigger_rebuild", False
-    ) or check_fields_for_changes(
-        machine, update_machine_dict, fields_to_trigger_rebuild
-    )
-    keep_warm_changed = check_fields_for_changes(
-        machine, update_machine_dict, ["keep_warm"]
-    )
-    gpu_changed = check_fields_for_changes(machine, update_machine_dict, ["gpu"])
-
-    # We dont need to trigger a rebuild if we only change the gpu.
-    # We need to trigger a rebuild if we change the gpu and install_custom_node_with_gpu is true
-    if gpu_changed and machine.install_custom_node_with_gpu:
-        rebuild = True
-
-    print(update_machine.model_dump())
-
-    for key, value in update_machine.model_dump().items():
-        if hasattr(machine, key) and value is not None:
-            setattr(machine, key, value)
-
-    docker_commands = generate_all_docker_commands(machine)
-    docker_commands_hash = hash_machine_dependencies(docker_commands)
-    machine.machine_hash = docker_commands_hash
-
-    machine.updated_at = func.now()
-
-    if rebuild:
-        machine.status = "building"
-
-        # Get next version number
-        if not rollback_version_id:
-            # Combine queries to get both max version and current version data
-            result = await db.execute(
-                select(
-                    func.max(MachineVersion.version).label('max_version'),
-                    MachineVersion
-                )
-                .where(MachineVersion.machine_id == machine.id)
-                .group_by(MachineVersion)
-                .order_by(MachineVersion.version.desc())
-                .limit(1)
+        if machine.type != MachineType.COMFY_DEPLOY_SERVERLESS:
+            raise HTTPException(
+                status_code=400, detail="Machine is not a serverless machine"
             )
-            row = result.first()
-            next_version = (row.max_version or 0) + 1 if row else 1
-            current_version_data = row.MachineVersion if row else None
 
-            # Create new version
-            machine_version = await create_machine_version(
-                db,
-                machine,
-                user_id,
-                version=next_version,
-                current_version_data=current_version_data,
-            )
-        else:
-            machine.machine_version_id = rollback_version_id
+        current_user = request.state.current_user
+        user_id = current_user["user_id"]
+        org_id = current_user["org_id"] if "org_id" in current_user else None
 
-            # update that machine version's created_at to now
-            machine_version = await db.execute(
-                select(MachineVersion).where(MachineVersion.id == rollback_version_id)
-            )
-            machine_version = machine_version.scalars().first()
-            machine_version.created_at = func.now()
-            machine_version.updated_at = func.now()
-            machine_version.status = machine.status
+        if machine.machine_version_id is None and machine.machine_builder_version == "4":
+            # give it a default version 1
+            await create_machine_version(db, machine, user_id)
             await db.commit()
+            await db.refresh(machine)  # Single refresh at the end
 
-        if machine.machine_hash is not None:
-            existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
-            try:
-                import aiohttp
+        fields_to_trigger_rebuild = [
+            "allow_concurrent_inputs",
+            "comfyui_version",
+            "concurrency_limit",
+            "docker_command_steps",
+            "extra_docker_commands",
+            "idle_timeout",
+            "ws_timeout",
+            "machine_builder_version",
+            "install_custom_node_with_gpu",
+            "run_timeout",
+            "base_docker_image",
+            "extra_args",
+            "prestart_command",
+            "python_version",
+            "install_custom_node_with_gpu",
+        ]
 
-                async with aiohttp.ClientSession() as session:
-                    async with session.head(existing_machine_info_url) as response:
-                        skip_static_assets = response.status == 200
-            except Exception as e:
-                logger.warning(f"Error checking static assets: {e}")
-                skip_static_assets = False
-        else:
-            skip_static_assets = False
+        update_machine_dict = update_machine.model_dump()
 
-        # Prepare build parameters
-        volumes = await retrieve_model_volumes(request, db)
+        rebuild = update_machine_dict.get(
+            "is_trigger_rebuild", False
+        ) or check_fields_for_changes(
+            machine, update_machine_dict, fields_to_trigger_rebuild
+        )
+        keep_warm_changed = check_fields_for_changes(
+            machine, update_machine_dict, ["keep_warm"]
+        )
+        gpu_changed = check_fields_for_changes(machine, update_machine_dict, ["gpu"])
+
+        # We dont need to trigger a rebuild if we only change the gpu.
+        # We need to trigger a rebuild if we change the gpu and install_custom_node_with_gpu is true
+        if gpu_changed and machine.install_custom_node_with_gpu:
+            rebuild = True
+
+        print(update_machine.model_dump())
+
+        for key, value in update_machine.model_dump().items():
+            if hasattr(machine, key) and value is not None:
+                setattr(machine, key, value)
+                
+        if (machine.comfyui_version is None):
+            # put something here so it wont crash
+            machine.comfyui_version = comfyui_hash
+
         docker_commands = generate_all_docker_commands(machine)
-        machine_token = generate_persistent_token(user_id, org_id)
-        params = BuildMachineItem(
-            machine_id=str(machine.id),
-            name=str(machine.id),
-            cd_callback_url=f"{current_endpoint}/api/machine-built",
-            callback_url=f"{current_endpoint}/api",
-            gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
-            models=machine.models,
-            gpu=machine.gpu,
-            model_volume_name=volumes[0]["volume_name"],
-            run_timeout=machine.run_timeout,
-            idle_timeout=machine.idle_timeout,
-            auth_token=machine_token,
-            ws_timeout=machine.ws_timeout,
-            concurrency_limit=machine.concurrency_limit,
-            allow_concurrent_inputs=machine.allow_concurrent_inputs,
-            legacy_mode=machine.legacy_mode,
-            install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
-            allow_background_volume_commits=machine.allow_background_volume_commits,
-            retrieve_static_assets=machine.retrieve_static_assets,
-            # skip_static_assets=skip_static_assets,
-            skip_static_assets=True,
-            docker_commands=docker_commands.model_dump()["docker_commands"],
-            machine_builder_version=machine.machine_builder_version,
-            base_docker_image=machine.base_docker_image,
-            python_version=machine.python_version,
-            prestart_command=machine.prestart_command,
-            extra_args=machine.extra_args,
-            machine_version_id=str(machine.machine_version_id),
-            machine_hash=docker_commands_hash,
-            modal_image_id=machine_version.modal_image_id if machine_version else None,
-        )
-        background_tasks.add_task(build_logic, params)
+        docker_commands_hash = hash_machine_dependencies(docker_commands)
+        machine.machine_hash = docker_commands_hash
 
-    if keep_warm_changed and not rebuild:
-        print("Keep warm changed", machine.keep_warm)
-        set_machine_always_on(
-            str(machine.id),
-            KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=GPUType(machine.gpu)),
-        )
+        machine.updated_at = func.now()
 
-    await db.commit()
-    await db.refresh(machine)
+        if rebuild:
+            machine.status = "building"
 
-    return JSONResponse(content=machine.to_dict())
+            # Get next version number
+            if not rollback_version_id:
+                # Combine queries to get both max version and current version data
+                result = await db.execute(
+                    select(
+                        func.max(MachineVersion.version).label('max_version'),
+                        MachineVersion
+                    )
+                    .where(MachineVersion.machine_id == machine.id)
+                    .group_by(MachineVersion)
+                    .order_by(MachineVersion.version.desc())
+                    .limit(1)
+                )
+                row = result.first()
+                next_version = (row.max_version or 0) + 1 if row else 1
+                current_version_data = row.MachineVersion if row else None
+
+                # Create new version
+                machine_version = await create_machine_version(
+                    db,
+                    machine,
+                    user_id,
+                    version=next_version,
+                    current_version_data=current_version_data,
+                )
+            else:
+                machine.machine_version_id = rollback_version_id
+
+                # update that machine version's created_at to now
+                machine_version = await db.execute(
+                    select(MachineVersion).where(MachineVersion.id == rollback_version_id)
+                )
+                machine_version = machine_version.scalars().first()
+                machine_version.created_at = func.now()
+                machine_version.updated_at = func.now()
+                machine_version.status = machine.status
+                await db.commit()
+
+            if machine.machine_hash is not None:
+                existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
+                try:
+                    import aiohttp
+
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(existing_machine_info_url) as response:
+                            skip_static_assets = response.status == 200
+                except Exception as e:
+                    logger.warning(f"Error checking static assets: {e}")
+                    skip_static_assets = False
+            else:
+                skip_static_assets = False
+
+            # Prepare build parameters
+            volumes = await retrieve_model_volumes(request, db)
+            docker_commands = generate_all_docker_commands(machine)
+            machine_token = generate_persistent_token(user_id, org_id)
+            params = BuildMachineItem(
+                machine_id=str(machine.id),
+                name=str(machine.id),
+                cd_callback_url=f"{current_endpoint}/api/machine-built",
+                callback_url=f"{current_endpoint}/api",
+                gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
+                models=machine.models,
+                gpu=machine.gpu,
+                model_volume_name=volumes[0]["volume_name"],
+                run_timeout=machine.run_timeout,
+                idle_timeout=machine.idle_timeout,
+                auth_token=machine_token,
+                ws_timeout=machine.ws_timeout,
+                concurrency_limit=machine.concurrency_limit,
+                allow_concurrent_inputs=machine.allow_concurrent_inputs,
+                legacy_mode=machine.legacy_mode,
+                install_custom_node_with_gpu=machine.install_custom_node_with_gpu,
+                allow_background_volume_commits=machine.allow_background_volume_commits,
+                retrieve_static_assets=machine.retrieve_static_assets,
+                # skip_static_assets=skip_static_assets,
+                skip_static_assets=True,
+                docker_commands=docker_commands.model_dump()["docker_commands"],
+                machine_builder_version=machine.machine_builder_version,
+                base_docker_image=machine.base_docker_image,
+                python_version=machine.python_version,
+                prestart_command=machine.prestart_command,
+                extra_args=machine.extra_args,
+                machine_version_id=str(machine.machine_version_id),
+                machine_hash=docker_commands_hash,
+                modal_image_id=machine_version.modal_image_id if machine_version else None,
+            )
+            background_tasks.add_task(build_logic, params)
+
+        if keep_warm_changed and not rebuild:
+            print("Keep warm changed", machine.keep_warm)
+            set_machine_always_on(
+                str(machine.id),
+                KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=GPUType(machine.gpu)),
+            )
+
+        await db.commit()
+        await db.refresh(machine)
+
+        return JSONResponse(content=machine.to_dict())
+    except HTTPException as e:
+        raise e
+    # except Exception as e:
+    #     raise HTTPException(status_code=500, detail="Internal server error: " + str(e))
 
 
 async def redeploy_machine(
     request: Request,
     db: AsyncSession,
-    background_tasks: BackgroundTasks,
     machine: Machine,
     machine_version: MachineVersion,
+    background_tasks: Optional[BackgroundTasks] = None,
 ):
     current_user = request.state.current_user
     user_id = current_user["user_id"]
@@ -564,7 +573,103 @@ async def redeploy_machine(
         machine_hash=machine_version.machine_hash,
     )
     print("params", params)
-    background_tasks.add_task(build_logic, params)
+    if background_tasks:
+        background_tasks.add_task(build_logic, params)
+    else:
+        await build_logic(params)
+        
+        
+async def redeploy_machine_internal(
+    machine_id: str,
+):
+    async with get_db_context() as db:
+        machine = await db.execute(
+            select(Machine).where(Machine.id == machine_id)
+        )
+        machine = machine.scalars().first()
+        # volumes = await retrieve_model_volumes(request, db)
+        volume_name = "models_" + machine.org_id if machine.org_id else machine.user_id
+        machine_token = generate_persistent_token(machine.user_id, machine.org_id)
+        machine_version = await db.execute(
+            select(MachineVersion).where(MachineVersion.id == machine.machine_version_id)
+        )
+        machine_version = machine_version.scalars().first()
+        
+        if machine_version.modal_image_id is None:
+            raise HTTPException(status_code=404, detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id")
+        
+    params = BuildMachineItem(
+        machine_id=str(machine.id),
+        name=str(machine.id),
+        cd_callback_url=f"{current_endpoint}/api/machine-built",
+        callback_url=f"{current_endpoint}/api",
+        gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
+        models=machine.models,
+        gpu=machine.gpu,
+        model_volume_name=volume_name,
+        run_timeout=machine.run_timeout,
+        idle_timeout=machine.idle_timeout,
+        auth_token=machine_token,
+        ws_timeout=machine.ws_timeout,
+        concurrency_limit=machine.concurrency_limit,
+        allow_concurrent_inputs=machine.allow_concurrent_inputs,
+        # skip_static_assets=skip_static_assets,
+        skip_static_assets=True,
+        modal_image_id=machine_version.modal_image_id,
+        machine_builder_version=machine.machine_builder_version,
+        base_docker_image=machine.base_docker_image,
+        python_version=machine.python_version,
+        prestart_command=machine.prestart_command,
+        extra_args=machine.extra_args,
+        machine_version_id=str(machine.machine_version_id),
+        machine_hash=machine_version.machine_hash,
+    )
+    await build_logic(params)
+    
+
+async def redeploy_machine_deployment_internal(
+    deployment: Deployment,
+):
+    async with get_db_context() as db:
+        volume_name = "models_" + deployment.org_id if deployment.org_id else deployment.user_id
+        machine_token = generate_persistent_token(deployment.user_id, deployment.org_id)
+        machine_version = await db.execute(
+            select(MachineVersion).where(MachineVersion.id == deployment.machine_version_id)
+        )
+        machine_version = machine_version.scalars().first()
+        
+        if machine_version.modal_image_id is None:
+            raise HTTPException(status_code=404, detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id")
+        
+    params = BuildMachineItem(
+        machine_id=deployment.machine_id,
+        name=str(deployment.id),
+        cd_callback_url=f"{current_endpoint}/api/machine-built",
+        callback_url=f"{current_endpoint}/api",
+        gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
+        # models=machine.models,
+        gpu=deployment.gpu,
+        model_volume_name=volume_name,
+        run_timeout=deployment.run_timeout,
+        idle_timeout=deployment.idle_timeout,
+        auth_token=machine_token,
+        # ws_timeout=machine.ws_timeout,
+        concurrency_limit=deployment.concurrency_limit,
+        allow_concurrent_inputs=False,
+        # skip_static_assets=skip_static_assets,
+        skip_static_assets=True,
+        modal_image_id=machine_version.modal_image_id,
+        machine_builder_version="4",
+        # base_docker_image=machine.base_docker_image,
+        # python_version=machine.python_version,
+        # prestart_command=machine.prestart_command,
+        # extra_args=machine.extra_args,
+        machine_version_id=str(deployment.machine_version_id),
+        machine_hash=machine_version.machine_hash,
+        
+        is_deployment=True
+    )
+    await build_logic(params)
 
 
 @router.get("/machine/serverless/{machine_id}/versions")

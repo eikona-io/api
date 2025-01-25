@@ -167,6 +167,7 @@ class BuildMachineItem(BaseModel):
     machine_version_id: Optional[str] = None
     machine_hash: Optional[str] = None
     modal_image_id: Optional[str] = None
+    is_deployment: Optional[bool] = False
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -880,21 +881,60 @@ async def build_logic(item: BuildMachineItem):
             {"logs": "Unable to build the app image.", "timestamp": time.time()}
         )
 
+        if not item.is_deployment:
         # Direct database update instead of HTTP request
+            async with get_db_context() as db:
+                await update_machine_version_build_time(
+                    db=db,
+                    machine_version_id=item.machine_version_id,
+                    status="error",
+                    build_log=json.dumps(machine_logs),
+                )
+
+                update_stmt = (
+                    update(Machine)
+                    .where(Machine.id == item.machine_id)
+                    .values(
+                        status="error",
+                        build_log=json.dumps(machine_logs),
+                        import_failed_logs=json.dumps(import_failed_logs)
+                        if not item.skip_static_assets
+                        else None,
+                    )
+                    .returning(Machine)
+                )
+                result = await db.execute(update_stmt)
+                await db.commit()
+                machine = result.scalar_one()
+                await db.refresh(machine)
+
+        await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
+        return
+
+
+    if not item.is_deployment:
         async with get_db_context() as db:
+            # Update machine version build time
             await update_machine_version_build_time(
                 db=db,
                 machine_version_id=item.machine_version_id,
-                status="error",
+                build_time=machine_built_time,
+                status="ready",
                 build_log=json.dumps(machine_logs),
             )
+            
+            print("machine_logs", machine_logs)
 
+            # Update machine status
             update_stmt = (
                 update(Machine)
                 .where(Machine.id == item.machine_id)
                 .values(
-                    status="error",
+                    status="ready",
+                    # endpoint=url,
+                    machine_version=BUILDER_VERSION,
                     build_log=json.dumps(machine_logs),
+                    modal_app_id=app_id,
                     import_failed_logs=json.dumps(import_failed_logs)
                     if not item.skip_static_assets
                     else None,
@@ -906,54 +946,18 @@ async def build_logic(item: BuildMachineItem):
             machine = result.scalar_one()
             await db.refresh(machine)
 
-        await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
-        return
+            if machine.keep_warm > 0:
+                set_machine_always_on(
+                    machine.id,
+                    KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu),
+                )
 
-    async with get_db_context() as db:
-        # Update machine version build time
-        await update_machine_version_build_time(
-            db=db,
-            machine_version_id=item.machine_version_id,
-            build_time=machine_built_time,
-            status="ready",
-            build_log=json.dumps(machine_logs),
+        await send_json_to_ws(
+            item.machine_id,
+            "FINISHED",
+            {
+                "status": "succuss",
+            },
         )
-        
-        print("machine_logs", machine_logs)
-
-        # Update machine status
-        update_stmt = (
-            update(Machine)
-            .where(Machine.id == item.machine_id)
-            .values(
-                status="ready",
-                # endpoint=url,
-                machine_version=BUILDER_VERSION,
-                build_log=json.dumps(machine_logs),
-                modal_app_id=app_id,
-                import_failed_logs=json.dumps(import_failed_logs)
-                if not item.skip_static_assets
-                else None,
-            )
-            .returning(Machine)
-        )
-        result = await db.execute(update_stmt)
-        await db.commit()
-        machine = result.scalar_one()
-        await db.refresh(machine)
-
-        if machine.keep_warm > 0:
-            set_machine_always_on(
-                machine.id,
-                KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu),
-            )
-
-    await send_json_to_ws(
-        item.machine_id,
-        "FINISHED",
-        {
-            "status": "succuss",
-        },
-    )
 
     await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
