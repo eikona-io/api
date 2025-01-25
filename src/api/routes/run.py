@@ -128,7 +128,8 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
 
 
 async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optional[Deployment] = None):
-    target_app_name = str(deployment.id if deployment is not None else machine_id)
+    # Only when this deployment is using latest modal_image
+    target_app_name = str(deployment.id if deployment is not None and deployment.modal_image_id is not None else machine_id)
     try:
         ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
     except modal.exception.NotFoundError as e:
