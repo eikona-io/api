@@ -4,6 +4,7 @@ import json
 import os
 from uuid import UUID, uuid4
 import uuid
+from api.routes.deployments import DeploymentCreate, create_deployment
 from sqlalchemy.orm import defer
 from pydantic import BaseModel
 
@@ -244,11 +245,11 @@ async def get_all_runs(
     LIMIT :limit
     OFFSET :offset
     """)
-    
+
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
-    
+
     result = await db.execute(
         query,
         {
@@ -256,13 +257,13 @@ async def get_all_runs(
             "org_id": org_id,
             "limit": limit,
             "workflow_id": workflow_id,
-            "offset": offset
-        }
+            "offset": offset,
+        },
     )
-    
+
     # Convert raw SQL results using our standalone serialization function
     runs = [serialize_row(dict(row._mapping)) for row in result.fetchall()]
-    
+
     if not runs:
         return []
     for run in runs:
@@ -296,7 +297,9 @@ async def get_all_runs(
     query = (
         select(WorkflowRunWithExtra)
         .options(*query_options)
-        .outerjoin(WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id)
+        .outerjoin(
+            WorkflowVersion, WorkflowRun.workflow_version_id == WorkflowVersion.id
+        )
         .join(Workflow, WorkflowRun.workflow_id == Workflow.id)
         .where(WorkflowRun.workflow_id == workflow_id)
         .where(Workflow.deleted == False)
@@ -308,13 +311,13 @@ async def get_all_runs(
     # Instead of with_only_columns, use column_descriptions to deferred load specific columns
     if not with_inputs:
         query = query.options(defer(WorkflowRunWithExtra.workflow_inputs))
-    
+
     # Always defer run_log
     query = query.options(defer(WorkflowRunWithExtra.run_log))
 
     result = await db.execute(query)
     runs = result.unique().scalars().all()
-    
+
     if not runs:
         return []
     for run in runs:
@@ -452,6 +455,7 @@ async def get_versions(
         runs_data.append(run_dict)
 
     return JSONResponse(content=runs_data)
+
 
 @router.get("/workflow/{workflow_id}", response_model=WorkflowModel)
 async def get_workflow(
@@ -759,6 +763,8 @@ class WorkflowVersionCreate(BaseModel):
     workflow: Dict[str, Any]
     workflow_api: Dict[str, Any]
     comment: Optional[str] = None
+    machine_id: Optional[str] = None
+    # machine_version_id: Optional[str] = None
 
 
 @router.post("/workflow/{workflow_id}/version")
@@ -802,6 +808,21 @@ async def create_workflow_version(
 
             workflow.updated_at = func.now()
             await db.flush()
+
+        if version_data.machine_id is not None:
+            print("Creating deployment for staging")
+            # When creating a new version, we also create a deployment for staging automatically
+            result = await create_deployment(
+                request,
+                DeploymentCreate(
+                    workflow_version_id=str(new_version.id),
+                    workflow_id=workflow_id,
+                    machine_id=version_data.machine_id,
+                    environment="staging",
+                ),
+                db=db,
+            )
+            print(result)
 
         return new_version.to_dict()
 

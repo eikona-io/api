@@ -942,7 +942,7 @@ async def snapshot_session(
     await db.refresh(gpuEvent)
     await db.refresh(machine_version)
 
-    await redeploy_machine(request, db, background_tasks, machine, machine_version)
+    await redeploy_machine(request, db, machine, machine_version, background_tasks)
 
     return JSONResponse(
         content={

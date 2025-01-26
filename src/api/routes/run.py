@@ -5,6 +5,7 @@ from pprint import pprint
 from urllib.parse import quote, urljoin
 import uuid
 
+from api.routes.machines import redeploy_machine_deployment_internal, redeploy_machine_internal
 from api.routes.models import AVAILABLE_MODELS
 from api.sqlmodels import WorkflowRunWebhookResponse
 from .types import (
@@ -126,10 +127,23 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
     return run.to_dict()
 
 
-def get_comfy_deploy_runner(machine_id: str, gpu: str):
-    ComfyDeployRunner = modal.Cls.lookup(str(machine_id), "ComfyDeployRunner")
+async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optional[Deployment] = None):
+    # Only when this deployment is using latest modal_image
+    target_app_name = str(deployment.id if deployment is not None and deployment.modal_image_id is not None else machine_id)
+    try:
+        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+    except modal.exception.NotFoundError as e:
+        logger.info(f"App not found for machine {target_app_name}, redeploying...")
+        if deployment is not None:
+            if deployment.modal_image_id is not None:
+                await redeploy_machine_deployment_internal(deployment)
+            else:
+                logfire.error(f"App not found for machine {target_app_name}, and no modal_image_id found")
+        else:
+            await redeploy_machine_internal(target_app_name)
+        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+            
     return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
-
 
 @router.post(
     "/run",
@@ -849,6 +863,7 @@ async def _create_run(
 
     workflow_id = None
     workflow_api_raw = None
+    deployment = None
 
     # Ensure GPU is always a string
     gpu = data.gpu.value if data.gpu is not None else None
@@ -887,6 +902,9 @@ async def _create_run(
 
         workflow_version_id = deployment.workflow_version_id
         machine_id = deployment.machine_id
+        
+        if deployment.gpu is not None:
+            gpu = str(deployment.gpu)
 
     # Get the workflow version associated with the deployment
     if workflow_version_id is not None:
@@ -1005,352 +1023,364 @@ async def _create_run(
 
         print("data", data)
         print("GPU EVENT ID", data.gpu_event_id)
+        
+        try:
+            # backward compatibility for old comfyui custom nodes
+            # Clone workflow_api_raw to modify inputs without affecting original
+            workflow_api = json.loads(json.dumps(workflow_api_raw))
 
-        # backward compatibility for old comfyui custom nodes
-        # Clone workflow_api_raw to modify inputs without affecting original
-        workflow_api = json.loads(json.dumps(workflow_api_raw))
+            if inputs and workflow_api:
+                for key in inputs:
+                    for node in workflow_api.values():
+                        if node.get("inputs", {}).get("input_id") == key:
+                            node["inputs"]["input_id"] = inputs[key]
+                            # Fix for external text default value
+                            if node.get("class_type") == "ComfyUIDeployExternalText":
+                                node["inputs"]["default_value"] = inputs[key]
 
-        if inputs and workflow_api:
-            for key in inputs:
-                for node in workflow_api.values():
-                    if node.get("inputs", {}).get("input_id") == key:
-                        node["inputs"]["input_id"] = inputs[key]
-                        # Fix for external text default value
-                        if node.get("class_type") == "ComfyUIDeployExternalText":
-                            node["inputs"]["default_value"] = inputs[key]
+            # print("workflow_api", workflow_api)
 
-        # print("workflow_api", workflow_api)
-
-        params = {
-            "prompt_id": str(new_run.id),
-            "workflow_api_raw": workflow_api_raw,
-            "workflow_api": workflow_api,
-            "inputs": inputs,
-            "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
-            "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
-            + "/api/file-upload",
-            "workflow": workflow,
-            "gpu_event_id": data.gpu_event_id
-            if data.gpu_event_id is not None
-            else None,
-        }
-
-        # Get the count of runs for this workflow
-        # run_count_query = select(func.count(WorkflowRun.id)).where(
-        #     WorkflowRun.workflow_id == workflow_id
-        # )
-        # result = await db.execute(run_count_query)
-        # run_count = result.scalar_one()
-
-        new_run_data = new_run.to_dict()
-        new_run_data["version"] = {
-            "version": workflow_version_version,
-        }
-        new_run_data["machine"] = {
-            "name": machine.name if machine else None,
-        }
-        # new_run_data["number"] = run_count
-        # background_tasks.add_task(
-        #     send_workflow_update, str(new_run.workflow_id), new_run_data
-        # )
-        # background_tasks.add_task(
-        #     send_realtime_update, str(new_run.id), new_run.to_dict()
-        # )
-
-        # Sending to clickhouse
-        progress_data = [
-            (
-                user_id,
-                org_id,
-                machine_id,
-                data.gpu_event_id if data.gpu_event_id is not None else None,
-                workflow_id,
-                workflow_version_id,
-                new_run.id,
-                dt.datetime.now(dt.UTC),
-                "input",
-                0,
-                json.dumps(inputs),
-            )
-        ]
-
-        print("INPUT")
-        print("progress_data", progress_data)
-
-        background_tasks.add_task(
-            insert_to_clickhouse, client, "workflow_events", progress_data
-        )
-
-        token = generate_temporary_token(
-            request.state.current_user["user_id"], org_id, expires_in="12h"
-        )
-        # logger.info(token)
-        # logger.info("machine type " + machine.type)
-
-        # return the params for the native run
-        if is_native_run:
-            return {
-                **params,
-                "cd_token": token,
+            params = {
+                "prompt_id": str(new_run.id),
+                "workflow_api_raw": workflow_api_raw,
+                "workflow_api": workflow_api,
+                "inputs": inputs,
+                "status_endpoint": os.environ.get("CURRENT_API_URL") + "/api/update-run",
+                "file_upload_endpoint": os.environ.get("CURRENT_API_URL")
+                + "/api/file-upload",
+                "workflow": workflow,
+                "gpu_event_id": data.gpu_event_id
+                if data.gpu_event_id is not None
+                else None,
             }
 
-        if is_model_run:
+            # Get the count of runs for this workflow
+            # run_count_query = select(func.count(WorkflowRun.id)).where(
+            #     WorkflowRun.workflow_id == workflow_id
+            # )
+            # result = await db.execute(run_count_query)
+            # run_count = result.scalar_one()
+
+            new_run_data = new_run.to_dict()
+            new_run_data["version"] = {
+                "version": workflow_version_version,
+            }
+            new_run_data["machine"] = {
+                "name": machine.name if machine else None,
+            }
+            # new_run_data["number"] = run_count
+            # background_tasks.add_task(
+            #     send_workflow_update, str(new_run.workflow_id), new_run_data
+            # )
+            # background_tasks.add_task(
+            #     send_realtime_update, str(new_run.id), new_run.to_dict()
+            # )
+
+            # Sending to clickhouse
+            progress_data = [
+                (
+                    user_id,
+                    org_id,
+                    machine_id,
+                    data.gpu_event_id if data.gpu_event_id is not None else None,
+                    workflow_id,
+                    workflow_version_id,
+                    new_run.id,
+                    dt.datetime.now(dt.UTC),
+                    "input",
+                    0,
+                    json.dumps(inputs),
+                )
+            ]
+
+            print("INPUT")
+            print("progress_data", progress_data)
+
+            background_tasks.add_task(
+                insert_to_clickhouse, client, "workflow_events", progress_data
+            )
+
+            token = generate_temporary_token(
+                request.state.current_user["user_id"], org_id, expires_in="12h"
+            )
+            # logger.info(token)
+            # logger.info("machine type " + machine.type)
+
+            # return the params for the native run
+            if is_native_run:
+                return {
+                    **params,
+                    "cd_token": token,
+                }
+
+            if is_model_run:
+                if data.execution_mode == "async":
+                    params = {
+                        **params,
+                        "auth_token": token,
+                    }
+                    return await run_model_async(
+                        request,
+                        data,
+                        params=params,
+                        workflow_run=new_run,
+                        background_tasks=background_tasks,
+                        client=client,
+                    )
+                # if data.execution_mode == "async":
+                #     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
+                #     await ComfyDeployRunner().run.spawn.aio(params)
+                #     return {"run_id": str(new_run.id)}
+                if data.execution_mode == "sync":
+                    params = {
+                        **params,
+                        "auth_token": token,
+                    }
+                    return await run_model(
+                        request,
+                        data,
+                        params=params,
+                        workflow_run=new_run,
+                        background_tasks=background_tasks,
+                        client=client,
+                    )
+
             if data.execution_mode == "async":
-                params = {
-                    **params,
-                    "auth_token": token,
-                }
-                return await run_model_async(
-                    request,
-                    data,
-                    params=params,
-                    workflow_run=new_run,
-                    background_tasks=background_tasks,
-                    client=client,
-                )
-            # if data.execution_mode == "async":
-            #     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
-            #     await ComfyDeployRunner().run.spawn.aio(params)
-            #     return {"run_id": str(new_run.id)}
-            if data.execution_mode == "sync":
-                params = {
-                    **params,
-                    "auth_token": token,
-                }
-                return await run_model(
-                    request,
-                    data,
-                    params=params,
-                    workflow_run=new_run,
-                    background_tasks=background_tasks,
-                    client=client,
-                )
-
-        if data.execution_mode == "async":
-            match machine.type:
-                case "comfy-deploy-serverless":
-                    # print("shit", str(machine_id))
-                    ComfyDeployRunner = get_comfy_deploy_runner(machine_id, gpu)
-                    with logfire.span("spawn-run"):
-                        result = ComfyDeployRunner.run.spawn(params)
-                        new_run.modal_function_call_id = result.object_id
-                # For runpod there will be a problem with the auth token cause v2 endpoint requires a token
-                case "runpod-serverless":
-                    if not machine.auth_token:
-                        raise HTTPException(
-                            status_code=400, detail="Machine auth token not found"
-                        )
-
-                    async with httpx.AsyncClient() as _client:
-                        try:
-                            # Proxy the update run back to v1 endpoints
-                            params["file_upload_endpoint"] = (
-                                os.environ.get("LEGACY_API_URL") + "/api/file-upload"
-                            )
-                            params["status_endpoint"] = (
-                                os.environ.get("LEGACY_API_URL") + "/api/update-run"
-                            )
-                            payload = {"input": params}
-
-                            # Use the retry function instead of direct post
-                            response = await retry_post_request(
-                                _client,
-                                f"{machine.endpoint}/run",
-                                json=payload,
-                                headers={
-                                    "Content-Type": "application/json",
-                                    "Authorization": f"Bearer {machine.auth_token}",
-                                }
-                            )
-
-                        except httpx.HTTPStatusError as e:
+                match machine.type:
+                    case "comfy-deploy-serverless":
+                        # print("shit", str(machine_id))
+                        ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
+                        with logfire.span("spawn-run"):
+                            result = ComfyDeployRunner.run.spawn(params)
+                            new_run.modal_function_call_id = result.object_id
+                    # For runpod there will be a problem with the auth token cause v2 endpoint requires a token
+                    case "runpod-serverless":
+                        if not machine.auth_token:
                             raise HTTPException(
-                                status_code=e.response.status_code,
-                                detail=f"Error creating run: {e.response.text}",
+                                status_code=400, detail="Machine auth token not found"
                             )
 
-                    # Update the run with the RunPod job ID if available
-                    runpod_response = response.json()
-                case "classic":
-                    # comfyui_endpoint = f"{machine.endpoint}/comfyui-deploy/run"
-                    comfyui_endpoint = urljoin(machine.endpoint, "comfyui-deploy/run")
-
-                    headers = {"Content-Type": "application/json"}
-                    # if machine.auth_token:
-                    # headers["Authorization"] = f"Bearer {machine.auth_token}"
-                    if machine.auth_token:
-                        # Use Basic Authentication
-                        credentials = base64.b64encode(
-                            machine.auth_token.encode()
-                        ).decode()
-                        headers["Authorization"] = f"Basic {credentials}"
-                        headers["authorizationheader"] = machine.auth_token
-
-                    # print(headers)
-
-                    async with httpx.AsyncClient() as _client:
-                        try:
-                            response = await _client.post(
-                                comfyui_endpoint,
-                                json={
-                                    **params,
-                                    "cd_token": token,
-                                },
-                                headers=headers,
-                            )
-                            response.raise_for_status()
-                        except httpx.HTTPStatusError as e:
-                            error_message = f"Error creating run: {e.response.status_code} {e.response.reason_phrase}"
+                        async with httpx.AsyncClient() as _client:
                             try:
-                                result = response.json()
-                                if "node_errors" in result:
-                                    error_message += f" {result['node_errors']}"
-                            except json.JSONDecodeError:
-                                pass
-                            raise HTTPException(
-                                status_code=e.response.status_code, detail=error_message
-                            )
-                case _:
-                    raise HTTPException(status_code=400, detail="Invalid machine type")
+                                # Proxy the update run back to v1 endpoints
+                                params["file_upload_endpoint"] = (
+                                    os.environ.get("LEGACY_API_URL") + "/api/file-upload"
+                                )
+                                params["status_endpoint"] = (
+                                    os.environ.get("LEGACY_API_URL") + "/api/update-run"
+                                )
+                                payload = {"input": params}
 
-            await db.commit()
-            await db.refresh(new_run)
+                                # Use the retry function instead of direct post
+                                response = await retry_post_request(
+                                    _client,
+                                    f"{machine.endpoint}/run",
+                                    json=payload,
+                                    headers={
+                                        "Content-Type": "application/json",
+                                        "Authorization": f"Bearer {machine.auth_token}",
+                                    }
+                                )
 
-            return {"run_id": new_run.id}
-        elif data.execution_mode in ["sync", "sync_first_result"]:
-            with logfire.span("run-sync"):
-                ComfyDeployRunner = get_comfy_deploy_runner(machine_id, gpu)
-                result = await ComfyDeployRunner.run.remote.aio(params)
+                            except httpx.HTTPStatusError as e:
+                                raise HTTPException(
+                                    status_code=e.response.status_code,
+                                    detail=f"Error creating run: {e.response.text}",
+                                )
 
-            if data.execution_mode == "sync_first_result":
-                first_output_query = (
-                    select(WorkflowRunOutput)
-                    .where(WorkflowRunOutput.run_id == new_run.id)
-                    .order_by(WorkflowRunOutput.created_at.desc())
-                    .limit(1)
-                )
+                        # Update the run with the RunPod job ID if available
+                        runpod_response = response.json()
+                    case "classic":
+                        # comfyui_endpoint = f"{machine.endpoint}/comfyui-deploy/run"
+                        comfyui_endpoint = urljoin(machine.endpoint, "comfyui-deploy/run")
 
-                result = await db.execute(first_output_query)
-                output = result.scalar_one_or_none()
+                        headers = {"Content-Type": "application/json"}
+                        # if machine.auth_token:
+                        # headers["Authorization"] = f"Bearer {machine.auth_token}"
+                        if machine.auth_token:
+                            # Use Basic Authentication
+                            credentials = base64.b64encode(
+                                machine.auth_token.encode()
+                            ).decode()
+                            headers["Authorization"] = f"Basic {credentials}"
+                            headers["authorizationheader"] = machine.auth_token
 
-                user_settings = await get_user_settings(request, db)
+                        # print(headers)
 
-                post_process_outputs([output], user_settings)
+                        async with httpx.AsyncClient() as _client:
+                            try:
+                                response = await _client.post(
+                                    comfyui_endpoint,
+                                    json={
+                                        **params,
+                                        "cd_token": token,
+                                    },
+                                    headers=headers,
+                                )
+                                response.raise_for_status()
+                            except httpx.HTTPStatusError as e:
+                                error_message = f"Error creating run: {e.response.status_code} {e.response.reason_phrase}"
+                                try:
+                                    result = response.json()
+                                    if "node_errors" in result:
+                                        error_message += f" {result['node_errors']}"
+                                except json.JSONDecodeError:
+                                    pass
+                                raise HTTPException(
+                                    status_code=e.response.status_code, detail=error_message
+                                )
+                    case _:
+                        raise HTTPException(status_code=400, detail="Invalid machine type")
+
+                await db.commit()
+                await db.refresh(new_run)
+
+                return {"run_id": new_run.id}
+            elif data.execution_mode in ["sync", "sync_first_result"]:
+                with logfire.span("run-sync"):
+                    ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
+                    result = await ComfyDeployRunner.run.remote.aio(params)
 
                 if data.execution_mode == "sync_first_result":
-                    if output and output.data and isinstance(output.data, dict):
-                        images = output.data.get("images", [])
-                        for image in images:
-                            if isinstance(image, dict):
-                                if "url" in image:
-                                    # Fetch the image/video data
-                                    async with httpx.AsyncClient() as _client:
-                                        response = await _client.get(image["url"])
-                                        if response.status_code == 200:
-                                            content_type = response.headers.get(
-                                                "content-type"
-                                            )
-                                            if content_type:
-                                                return Response(
-                                                    content=response.content,
-                                                    media_type=content_type,
+                    first_output_query = (
+                        select(WorkflowRunOutput)
+                        .where(WorkflowRunOutput.run_id == new_run.id)
+                        .order_by(WorkflowRunOutput.created_at.desc())
+                        .limit(1)
+                    )
+
+                    result = await db.execute(first_output_query)
+                    output = result.scalar_one_or_none()
+
+                    user_settings = await get_user_settings(request, db)
+
+                    post_process_outputs([output], user_settings)
+
+                    if data.execution_mode == "sync_first_result":
+                        if output and output.data and isinstance(output.data, dict):
+                            images = output.data.get("images", [])
+                            for image in images:
+                                if isinstance(image, dict):
+                                    if "url" in image:
+                                        # Fetch the image/video data
+                                        async with httpx.AsyncClient() as _client:
+                                            response = await _client.get(image["url"])
+                                            if response.status_code == 200:
+                                                content_type = response.headers.get(
+                                                    "content-type"
                                                 )
+                                                if content_type:
+                                                    return Response(
+                                                        content=response.content,
+                                                        media_type=content_type,
+                                                    )
+                        else:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="No output found is matching, please check the workflow or disable output_first_result",
+                            )
                     else:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="No output found is matching, please check the workflow or disable output_first_result",
-                        )
+                        return output
                 else:
-                    return output
-            else:
-                output_query = (
-                    select(WorkflowRunOutput)
-                    .where(WorkflowRunOutput.run_id == new_run.id)
-                    .order_by(WorkflowRunOutput.created_at.desc())
-                )
+                    output_query = (
+                        select(WorkflowRunOutput)
+                        .where(WorkflowRunOutput.run_id == new_run.id)
+                        .order_by(WorkflowRunOutput.created_at.desc())
+                    )
 
-                result = await db.execute(output_query)
-                outputs = result.scalars().all()
+                    result = await db.execute(output_query)
+                    outputs = result.scalars().all()
 
+                    user_settings = await get_user_settings(request, db)
+                    clean_up_outputs(outputs)
+                    post_process_outputs(outputs, user_settings)
+
+                    return [output.to_dict() for output in outputs]
+            elif data.execution_mode == "stream":
+                ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
                 user_settings = await get_user_settings(request, db)
-                clean_up_outputs(outputs)
-                post_process_outputs(outputs, user_settings)
 
-                return [output.to_dict() for output in outputs]
-        elif data.execution_mode == "stream":
-            ComfyDeployRunner = get_comfy_deploy_runner(machine_id, gpu)
-            user_settings = await get_user_settings(request, db)
+                async def wrapped_generator():
+                    yield f"event: event_update\ndata: {json.dumps({'event': 'queuing'})}\n\n"
+                    try:
+                        with logfire.span("stream-run"):
+                            async for event in ComfyDeployRunner.streaming.remote_gen.aio(
+                                input=params
+                            ):
+                                if isinstance(event, (str, bytes)):
+                                    # Convert bytes to string if necessary
+                                    event_str = (
+                                        event.decode("utf-8")
+                                        if isinstance(event, bytes)
+                                        else event
+                                    )
+                                    lines = event_str.strip().split("\n")
+                                    event_type = None
+                                    event_data = None
+                                    for line in lines:
+                                        if line.startswith("event:"):
+                                            event_type = line.split(":", 1)[1].strip()
+                                        elif line.startswith("data:"):
+                                            event_data = line.split(":", 1)[1].strip()
 
-            async def wrapped_generator():
-                yield f"event: event_update\ndata: {json.dumps({'event': 'queuing'})}\n\n"
-                try:
-                    with logfire.span("stream-run"):
-                        async for event in ComfyDeployRunner.streaming.remote_gen.aio(
-                            input=params
-                        ):
-                            if isinstance(event, (str, bytes)):
-                                # Convert bytes to string if necessary
-                                event_str = (
-                                    event.decode("utf-8")
-                                    if isinstance(event, bytes)
-                                    else event
-                                )
-                                lines = event_str.strip().split("\n")
-                                event_type = None
-                                event_data = None
-                                for line in lines:
-                                    if line.startswith("event:"):
-                                        event_type = line.split(":", 1)[1].strip()
-                                    elif line.startswith("data:"):
-                                        event_data = line.split(":", 1)[1].strip()
+                                    # logger.info(event_type)
+                                    # logger.info(lines)
 
-                                # logger.info(event_type)
-                                # logger.info(lines)
+                                    if event_type == "event_update" and event_data:
+                                        try:
+                                            data = json.loads(event_data)
+                                            if data.get("event") == "function_call_id":
+                                                new_run.modal_function_call_id = data.get(
+                                                    "data"
+                                                )
+                                                await db.commit()
+                                            if data.get("event") == "executed":
+                                                logger.info(
+                                                    data.get("data", {}).get("output")
+                                                )
+                                                post_process_output_data(
+                                                    data.get("data", {}).get("output"),
+                                                    user_settings,
+                                                )
+                                                new_event_data = {
+                                                    "event": "executed",
+                                                    "data": data.get("data", {}),
+                                                }
+                                                new_event = f"event: event_update\ndata: {json.dumps(new_event_data)}\n\n"
+                                                yield new_event
+                                                continue
 
-                                if event_type == "event_update" and event_data:
-                                    try:
-                                        data = json.loads(event_data)
-                                        if data.get("event") == "function_call_id":
-                                            new_run.modal_function_call_id = data.get(
-                                                "data"
-                                            )
-                                            await db.commit()
-                                        if data.get("event") == "executed":
-                                            logger.info(
-                                                data.get("data", {}).get("output")
-                                            )
-                                            post_process_output_data(
-                                                data.get("data", {}).get("output"),
-                                                user_settings,
-                                            )
-                                            new_event_data = {
-                                                "event": "executed",
-                                                "data": data.get("data", {}),
-                                            }
-                                            new_event = f"event: event_update\ndata: {json.dumps(new_event_data)}\n\n"
-                                            yield new_event
-                                            continue
+                                        except json.JSONDecodeError:
+                                            pass  # Invalid JSON, ignore
 
-                                    except json.JSONDecodeError:
-                                        pass  # Invalid JSON, ignore
+                                # logger.info(event)
+                                yield event
 
-                            # logger.info(event)
-                            yield event
+                    except Exception as e:
+                        print(e)
 
-                except Exception as e:
-                    print(e)
-
-            return StreamingResponse(
-                wrapped_generator(),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-        else:
-            raise HTTPException(status_code=400, detail="Invalid execution_mode")
+                return StreamingResponse(
+                    wrapped_generator(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            else:
+                raise HTTPException(status_code=400, detail="Invalid execution_mode")
+        except HTTPException as e:
+            new_run.status = "failed"
+            await db.commit()
+            await db.refresh(new_run)
+            raise e
+        except Exception as e:
+            new_run.status = "failed"
+            await db.commit()
+            await db.refresh(new_run)
+            raise e
+            # raise HTTPException(status_code=500, detail="Internal server error: " + str(e))
 
     if data.batch_input_params is not None:
         batch_id = uuid.uuid4()
@@ -1388,6 +1418,7 @@ async def _create_run(
         results = await batch_run()
 
         return {"status": "success", "batch_id": str(batch_id)}
+
 
     elif data.batch_number is not None and data.batch_number > 1:
         batch_id = uuid.uuid4()

@@ -344,6 +344,17 @@ class Deployment(SerializableMixin, Base):
         nullable=False,
     )
 
+    # V2 deployment system
+    machine_version_id = Column(UUID(as_uuid=True))
+    modal_image_id = Column(String)
+    concurrency_limit = Column(Integer, nullable=False, default=2)
+    gpu = Column(
+        Enum("CPU", "T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", name="machine_gpu")
+    )
+    run_timeout = Column(Integer, nullable=False, default=300)
+    idle_timeout = Column(Integer, nullable=False, default=0)
+    keep_warm = Column(Integer, nullable=False, default=0)
+
     machine = relationship("Machine")
     version = relationship("WorkflowVersion")
     workflow = relationship("Workflow")

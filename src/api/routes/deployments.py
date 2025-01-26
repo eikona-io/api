@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 from .types import DeploymentModel, DeploymentEnvironment
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
-from api.models import Deployment, Workflow
+from api.models import Deployment, Machine, MachineVersion, Workflow
 from api.database import get_db
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import joinedload
@@ -23,10 +23,6 @@ class DeploymentCreate(BaseModel):
     workflow_version_id: str
     workflow_id: str
     machine_id: str
-    # share_slug: Optional[str] = None
-    # description: Optional[str] = None
-    # share_options: Optional[Dict[str, Any]] = None
-    # showcase_media: Optional[Dict[str, Any]] = None
     environment: str
 
 @router.post(
@@ -53,20 +49,39 @@ async def create_deployment(
         existing_deployment_query = select(Deployment).where(
             Deployment.workflow_id == deployment_data.workflow_id,
             Deployment.environment == deployment_data.environment
-        )
-        if org_id:
-            existing_deployment_query = existing_deployment_query.where(Deployment.org_id == org_id)
-        else:
-            existing_deployment_query = existing_deployment_query.where(Deployment.user_id == user_id)
+        ).apply_org_check(request)
             
         result = await db.execute(existing_deployment_query)
         existing_deployment = result.scalar_one_or_none()
+        
+        # Get current machine and machine version
+        machine_query = select(Machine).where(Machine.id == deployment_data.machine_id)
+        result = await db.execute(machine_query)
+        machine = result.scalar_one_or_none()
+        if not machine:
+            raise HTTPException(status_code=404, detail="Machine not found")
+
+        machine_version = None
+        if machine.machine_version_id:
+            machine_version_query = select(MachineVersion).where(MachineVersion.id == machine.machine_version_id)
+            result = await db.execute(machine_version_query)
+            machine_version = result.scalar_one_or_none()
 
         if existing_deployment:
             # Update existing deployment
             existing_deployment.workflow_version_id = deployment_data.workflow_version_id
             existing_deployment.machine_id = deployment_data.machine_id
             deployment = existing_deployment
+            
+            if machine_version is not None and machine_version.modal_image_id is not None:
+                existing_deployment.machine_version_id = machine_version.id
+                existing_deployment.modal_image_id = machine_version.modal_image_id
+                existing_deployment.gpu = machine_version.gpu
+                existing_deployment.run_timeout = machine_version.run_timeout
+                existing_deployment.idle_timeout = machine_version.idle_timeout
+                # Not supporting this for now
+                # existing_deployment.keep_warm = machine_version.keep_warm
+            
         else:
             # Create new deployment object
             deployment = Deployment(
@@ -78,6 +93,14 @@ async def create_deployment(
                 machine_id=deployment_data.machine_id,
                 environment=deployment_data.environment,
             )
+            if machine_version is not None and machine_version.modal_image_id is not None:
+                deployment.machine_version_id = machine_version.id
+                deployment.modal_image_id = machine_version.modal_image_id
+                deployment.gpu = machine_version.gpu
+                deployment.run_timeout = machine_version.run_timeout
+                deployment.idle_timeout = machine_version.idle_timeout
+                # Not supporting this for now
+                # deployment.keep_warm = machine_version.keep_warm
             db.add(deployment)
 
         await db.commit()
