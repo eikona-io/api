@@ -64,10 +64,24 @@ async def get_machines(
     limit: int = 100,
     offset: int = 0,
     is_deleted: Optional[bool] = None,
+    include_has_workflows: bool = False,  # New parameter
     db: AsyncSession = Depends(get_db),
 ):
-    machines_query = (
-        select(Machine)
+    if include_has_workflows:
+        # Include workflow check only when requested
+        workflow_exists = (
+            select(Workflow)
+            .where(Workflow.selected_machine_id == Machine.id)
+            .exists()
+            .correlate(Machine)
+        )
+        query = select(Machine, workflow_exists.label('has_workflows'))
+    else:
+        # Simple query without workflow check
+        query = select(Machine)
+
+    query = (
+        query
         .order_by(Machine.created_at.desc())
         .where(Machine.deleted == is_deleted)
         .apply_org_check(request)
@@ -75,18 +89,27 @@ async def get_machines(
     )
 
     if search:
-        machines_query = machines_query.where(
+        query = query.where(
             func.lower(Machine.name).contains(search.lower())
         )
 
-    result = await db.execute(machines_query)
-    machines = result.unique().scalars().all()
+    result = await db.execute(query)
+    rows = result.unique().all()
 
-    if not machines:
-        # raise HTTPException(status_code=404, detail="Runs not found")
+    if not rows:
         return []
 
-    machines_data = [machine.to_dict() for machine in machines]
+    # Convert to dict based on whether we included workflow check
+    if include_has_workflows:
+        machines_data = [
+            {**row.Machine.to_dict(), 'has_workflows': row.has_workflows}
+            for row in rows
+        ]
+    else:
+        machines_data = [
+            row.to_dict() if isinstance(row, Machine) else row.Machine.to_dict()
+            for row in rows
+        ]
 
     return JSONResponse(content=machines_data)
 
@@ -160,6 +183,16 @@ async def get_machine_events(
     events = events.scalars().all()
     return JSONResponse(content=[event.to_dict() for event in events])
 
+@router.get("/machine/{machine_id}/workflows")
+async def get_machine_workflows(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    workflows = await db.execute(
+        select(Workflow).where(Workflow.selected_machine_id == machine_id).apply_org_check(request)
+    )
+    return JSONResponse(content=[workflow.to_dict() for workflow in workflows.scalars().all()])
 
 class DockerCommand(BaseModel):
     when: Literal["before", "after"]

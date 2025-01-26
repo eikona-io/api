@@ -275,6 +275,7 @@ class MachineModel(MachineSharedFields):
     extensions: Optional[Dict[str, Any]]
     import_failed_logs: Optional[str]
     machine_version_id: Optional[UUID]
+    has_workflows: bool = False
 
     class Config:
         from_attributes = True
