@@ -642,7 +642,7 @@ async def redeploy_machine_deployment_internal(
             raise HTTPException(status_code=404, detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id")
         
     params = BuildMachineItem(
-        machine_id=deployment.machine_id,
+        machine_id=str(deployment.machine_id),
         name=str(deployment.id),
         cd_callback_url=f"{current_endpoint}/api/machine-built",
         callback_url=f"{current_endpoint}/api",
