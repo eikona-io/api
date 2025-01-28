@@ -102,3 +102,4 @@ private:
   LLavacheckpoints: LLavacheckpoints
   BiRefNet: BiRefNet
   diffusion_models: diffusion_models
+  xlabs: xlabs
