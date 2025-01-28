@@ -49,6 +49,7 @@ public:
   LLavacheckpoints: LLavacheckpoints
   BiRefNet: BiRefNet
   diffusion_models: diffusion_models
+  xlabs: xlabs
 
 private:
   base_path: /private_models/
