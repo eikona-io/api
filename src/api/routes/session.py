@@ -649,10 +649,10 @@ async def create_dynamic_sesssion_background_task(
                 encrypted_ports=[8188],
                 volumes={
                     "/public_models": modal.Volume.from_name(
-                        os.environ.get("SHARED_MODEL_VOLUME_NAME")
+                        os.environ.get("SHARED_MODEL_VOLUME_NAME"), create_if_missing=True
                     ),
                     "/private_models": modal.Volume.from_name(
-                        "models_" + org_id if org_id is not None else user_id
+                        "models_" + org_id if org_id is not None else user_id, create_if_missing=True
                     ),
                 },
             )
