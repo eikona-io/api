@@ -50,6 +50,11 @@ public:
   BiRefNet: BiRefNet
   diffusion_models: diffusion_models
   xlabs: xlabs
+  xlabs_loras: xlabs/loras
+  xlabs_controlnets: xlabs/controlnets
+  xlabs_ipadapters: xlabs/ipadapters
+  xlabs_flux: xlabs/flux
+  xlabs_flux_json: xlabs/flux_json
 
 private:
   base_path: /private_models/
@@ -103,3 +108,8 @@ private:
   BiRefNet: BiRefNet
   diffusion_models: diffusion_models
   xlabs: xlabs
+  xlabs_loras: xlabs/loras
+  xlabs_controlnets: xlabs/controlnets
+  xlabs_ipadapters: xlabs/ipadapters
+  xlabs_flux: xlabs/flux
+  xlabs_flux_json: xlabs/flux_json
