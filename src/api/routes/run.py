@@ -788,7 +788,7 @@ async def retry_post_request(
     url: str,
     json: Dict,
     headers: Dict,
-    max_retries: int = 3,
+    max_retries: int = 6,
     initial_delay: float = 1.0,
     max_delay: float = 10.0,
     exponential_base: float = 2.0,
