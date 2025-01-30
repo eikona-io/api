@@ -517,6 +517,9 @@ async def create_dynamic_sesssion_background_task(
 
     org_id = request.state.current_user.get("org_id")
     user_id = request.state.current_user.get("user_id")
+    
+    machine_version: Optional[MachineVersion] = None
+    machine: Optional[Machine] = None
 
     # Get machine and its version info
     modal_image_id = None
@@ -594,8 +597,20 @@ async def create_dynamic_sesssion_background_task(
             )
 
         # pprint(converted)
-
-        dockerfile_image = modal.Image.debian_slim(python_version="3.11")
+        
+        dockerfile_image: modal.Image = None
+        
+        python_version = "3.11"
+        
+        # Python version to override
+        if machine_version is not None:
+            python_version = machine_version.python_version
+        
+        # Base docker image to use, if not fallback to debian slim
+        if machine_version is not None and machine_version.base_docker_image is not None:
+            dockerfile_image = modal.Image.from_registry(machine_version.base_docker_image, add_python=python_version)
+        else:
+            dockerfile_image = modal.Image.debian_slim(python_version=python_version)
 
         docker_commands = converted.docker_commands
         if docker_commands is not None:
