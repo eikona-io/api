@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from datetime import datetime, timedelta
 import os
 from pprint import pprint
@@ -25,6 +26,52 @@ from upstash_redis.asyncio import Redis
 from .utils import select
 from pydantic import BaseModel, Field
 
+
+from modal._output import OutputManager
+class CustomOutputManager(OutputManager):
+    _context_id = None
+    _machine_id = None
+
+    @classmethod
+    @contextlib.contextmanager
+    def enable_output_with_context(
+        cls, context_id: str, machine_id: str, show_progress: bool = True
+    ):
+        print(f"[Intercepted Modal Log] enable_output with context {context_id}")
+        if show_progress:
+            cls._instance = CustomOutputManager()
+            cls._context_id = context_id
+            cls._machine_id = machine_id
+        try:
+            yield
+        finally:
+            cls._instance = None
+            cls._context_id = None
+            cls._machine_id = None
+
+    def _print_log(self, fd: int, data: str) -> None:
+        # context_info = f"[Context: {self._context_id} {self._machine_id}] " if self._context_id else ""
+        # print(f"[Intercepted Modal Log] {context_info}_print_log", fd, data)
+
+        if self._context_id is not None:
+            item = [
+                (
+                    uuid4(),
+                    self._context_id,
+                    None,
+                    self._machine_id,
+                    datetime.now(),
+                    "info",
+                    data,
+                )
+            ]
+            # print("inserting to clickhouse")
+            asyncio.create_task(insert_to_clickhouse("log_entries", item))
+
+        super()._print_log(fd, data)
+
+modal._output.OutputManager = CustomOutputManager
+
 # from sqlalchemy import select
 from api.models import (
     GPUEvent,
@@ -33,7 +80,7 @@ from api.models import (
     get_machine_columns,
 )
 from api.database import get_clickhouse_client, get_db, get_db_context
-from typing import Any, Dict, List, Optional, cast, Union
+from typing import Any, ClassVar, Dict, Generator, List, Optional, cast, Union
 from uuid import UUID, uuid4
 import logging
 from typing import Optional
@@ -106,7 +153,7 @@ async def get_session(
 
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
-    
+
     timeout_end = await redis.get(f"session:{session_id}:timeout_end")
 
     return {
@@ -318,13 +365,18 @@ async def increase_timeout(
     return JSONResponse(
         status_code=200, content={"message": "Timeout increased successfully"}
     )
-    
+
+
 class IncreaseTimeoutBody2(BaseModel):
     minutes: int
-    
+
+
 @router.post("/session/{session_id}/increase-timeout")
 async def increase_timeout_2(
-    request: Request, session_id: str, body: IncreaseTimeoutBody2, db: AsyncSession = Depends(get_db)
+    request: Request,
+    session_id: str,
+    body: IncreaseTimeoutBody2,
+    db: AsyncSession = Depends(get_db),
 ):
     gpu_event = (
         await db.execute(
@@ -508,6 +560,7 @@ def extract_url(dependency_string):
 
 async def create_dynamic_sesssion_background_task(
     request: Request,
+    gpu_event_id: str,
     session_id: UUID,
     body: CreateDynamicSessionBody,
     status_queue: Optional[asyncio.Queue] = None,
@@ -517,7 +570,7 @@ async def create_dynamic_sesssion_background_task(
 
     org_id = request.state.current_user.get("org_id")
     user_id = request.state.current_user.get("user_id")
-    
+
     machine_version: Optional[MachineVersion] = None
     machine: Optional[Machine] = None
 
@@ -557,8 +610,6 @@ async def create_dynamic_sesssion_background_task(
 
     logger.info("Dependencies configuration " + str(body.dependencies))
 
-    gpu_event_id = str(uuid4())
-
     logger.info("creating dynamic session")
 
     if (
@@ -586,7 +637,7 @@ async def create_dynamic_sesssion_background_task(
                         )
                         for dep in body.dependencies
                     ]
-                )
+                ),
             )
             converted = generate_all_docker_commands(
                 deps_body, include_comfyuimanager=True
@@ -597,18 +648,23 @@ async def create_dynamic_sesssion_background_task(
             )
 
         # pprint(converted)
-        
+
         dockerfile_image: modal.Image = None
-        
+
         python_version = "3.11"
-        
+
         # Python version to override
         if machine_version is not None:
             python_version = machine_version.python_version
-        
+
         # Base docker image to use, if not fallback to debian slim
-        if machine_version is not None and machine_version.base_docker_image is not None:
-            dockerfile_image = modal.Image.from_registry(machine_version.base_docker_image, add_python=python_version)
+        if (
+            machine_version is not None
+            and machine_version.base_docker_image is not None
+        ):
+            dockerfile_image = modal.Image.from_registry(
+                machine_version.base_docker_image, add_python=python_version
+            )
         else:
             dockerfile_image = modal.Image.debian_slim(python_version=python_version)
 
@@ -623,7 +679,8 @@ async def create_dynamic_sesssion_background_task(
             [
                 "rm -rf /private_models /comfyui/models /public_models",
                 "ln -s /private_models /comfyui/models",
-            ]
+            ],
+            force_build=True,
         )
 
         current_directory = os.path.dirname(os.path.realpath(__file__))
@@ -641,138 +698,125 @@ async def create_dynamic_sesssion_background_task(
             status_code=400, detail="No dependencies or modal image id provided"
         )
 
-    gpu_event_id = str(uuid4())
-
     logger.info("creating dynamic session")
 
     try:
-        async with app.run.aio():
-            print("creating sandbox")
-            print(dockerfile_image)
-            sb = await modal.Sandbox.create.aio(
-                # "bash",
-                # "-c",
-                # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
-                image=dockerfile_image,
-                # timeout=(body.timeout or 15) * 60,
-                timeout=6 * 60 * 60,
-                gpu=body.gpu.value
-                if body.gpu is not None and body.gpu.value != "CPU"
-                else None,
-                app=app,
-                workdir="/comfyui",
-                encrypted_ports=[8188],
-                volumes={
-                    "/public_models": modal.Volume.from_name(
-                        os.environ.get("SHARED_MODEL_VOLUME_NAME"), create_if_missing=True
-                    ),
-                    "/private_models": modal.Volume.from_name(
-                        "models_" + org_id if org_id is not None else user_id, create_if_missing=True
-                    ),
-                },
-            )
+        with CustomOutputManager.enable_output_with_context(
+            str(session_id), body.machine_id
+        ):
+            async with app.run.aio():
+                print("creating sandbox")
+                print(dockerfile_image)
+                with modal.enable_output():
+                    sb = await modal.Sandbox.create.aio(
+                        # "bash",
+                        # "-c",
+                        # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
+                        image=dockerfile_image,
+                        # timeout=(body.timeout or 15) * 60,
+                        timeout=6 * 60 * 60,
+                        gpu=body.gpu.value
+                        if body.gpu is not None and body.gpu.value != "CPU"
+                        else None,
+                        app=app,
+                        workdir="/comfyui",
+                        encrypted_ports=[8188],
+                        volumes={
+                            "/public_models": modal.Volume.from_name(
+                                os.environ.get("SHARED_MODEL_VOLUME_NAME"),
+                                create_if_missing=True,
+                            ),
+                            "/private_models": modal.Volume.from_name(
+                                "models_" + org_id if org_id is not None else user_id,
+                                create_if_missing=True,
+                            ),
+                        },
+                    )
 
-            logger.info("creating gpu event")
+                    # logger.info("creating gpu event")
 
-            async with get_db_context() as db:
-                # Insert GPU event
-                new_gpu_event = GPUEvent(
-                    id=gpu_event_id,
-                    user_id=user_id,
-                    org_id=org_id,
-                    session_id=str(session_id),
-                    machine_id=body.machine_id,
-                    gpu=body.gpu.value if body.gpu is not None else "CPU",
-                    session_timeout=body.timeout or 15,
-                    gpu_provider="modal",
-                    start_time=datetime.now(),
-                    modal_function_id=sb.object_id,
-                )
-                db.add(new_gpu_event)
-                await db.commit()
-                await db.refresh(new_gpu_event)
+                    # logger.info(sb.tunnels())
+                    tunnels = await sb.tunnels.aio()
+                    tunnel = tunnels[8188]  # Access the tunnel after awaiting
 
-            # logger.info(sb.tunnels())
-            tunnels = await sb.tunnels.aio()
-            tunnel = tunnels[8188]  # Access the tunnel after awaiting
-
-            async with get_db_context() as db:
-                await db.execute(
-                    update(GPUEvent)
-                    .where(GPUEvent.id == gpu_event_id)
-                    .values(tunnel_url=tunnel.url)
-                )
-                await db.commit()
-
-            await status_queue.put(tunnel.url)
-
-            p = await sb.exec.aio(
-                "bash",
-                "-c",
-                comfyui_cmd(
-                    cpu=True if body.gpu == "CPU" else False,
-                    install_latest_comfydeploy=True,
-                ),
-            )
-            logger.info(tunnel.url)
-
-            # async with await get_clickhouse_client() as client:
-            try:
-
-                async def log_stream(stream, stream_type: str):
-                    async for line in stream:
-                        try:
-                            # Try to decode as UTF-8, replace invalid characters
-                            if isinstance(line, bytes):
-                                # Use 'ignore' instead of 'replace' to skip problematic characters
-                                line = line.decode("utf-8", errors="ignore")
-
-                                # Skip progress bar lines that contain these special characters
-                                if any(
-                                    char in line
-                                    for char in [
-                                        "█",
-                                        "▮",
-                                        "▯",
-                                        "▏",
-                                        "▎",
-                                        "▍",
-                                        "▌",
-                                        "▋",
-                                        "▊",
-                                        "▉",
-                                    ]
-                                ):
-                                    continue
-
-                            print(line, end="")
-                            data = [
-                                (
-                                    uuid4(),
-                                    session_id,
-                                    None,
-                                    body.machine_id,
-                                    datetime.now(),
-                                    stream_type,
-                                    line,
-                                )
-                            ]
-                            asyncio.create_task(
-                                insert_to_clickhouse("log_entries", data)
+                    async with get_db_context() as db:
+                        await db.execute(
+                            update(GPUEvent)
+                            .where(GPUEvent.id == gpu_event_id)
+                            .values(
+                                tunnel_url=tunnel.url,
+                                modal_function_id=sb.object_id,
+                                start_time=datetime.now(),
                             )
-                        except Exception as e:
-                            logger.error(f"Error processing log line: {str(e)}")
+                        )
+                        await db.commit()
 
-                # Create tasks for both stdout and stderr
-                stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
-                stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
+                    if status_queue:
+                        status_queue.put_nowait(tunnel.url)
 
-                # Wait for both streams to complete
-                await asyncio.gather(stdout_task, stderr_task)
-            except Exception as e:
-                logger.error(f"Error creating tasks: {str(e)}")
+                    p = await sb.exec.aio(
+                        "bash",
+                        "-c",
+                        comfyui_cmd(
+                            cpu=True if body.gpu == "CPU" else False,
+                            install_latest_comfydeploy=True,
+                        ),
+                    )
+                    logger.info(tunnel.url)
 
-            await sb.wait.aio()
+                    # async with await get_clickhouse_client() as client:
+                    async def log_stream(stream, stream_type: str):
+                        async for line in stream:
+                            try:
+                                # Try to decode as UTF-8, replace invalid characters
+                                if isinstance(line, bytes):
+                                    # Use 'ignore' instead of 'replace' to skip problematic characters
+                                    line = line.decode("utf-8", errors="ignore")
+
+                                    # Skip progress bar lines that contain these special characters
+                                    if any(
+                                        char in line
+                                        for char in [
+                                            "█",
+                                            "▮",
+                                            "▯",
+                                            "▏",
+                                            "▎",
+                                            "▍",
+                                            "▌",
+                                            "▋",
+                                            "▊",
+                                            "▉",
+                                        ]
+                                    ):
+                                        continue
+
+                                print(line, end="")
+                                data = [
+                                    (
+                                        uuid4(),
+                                        session_id,
+                                        None,
+                                        body.machine_id,
+                                        datetime.now(),
+                                        stream_type,
+                                        line,
+                                    )
+                                ]
+                                asyncio.create_task(
+                                    insert_to_clickhouse("log_entries", data)
+                                )
+                            except Exception as e:
+                                logger.error(f"Error processing log line: {str(e)}")
+
+                    # Create tasks for both stdout and stderr
+                    stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
+                    stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
+
+                    # Wait for both streams to complete
+                    await asyncio.gather(stdout_task, stderr_task)
+
+                await sb.wait.aio()
     except Exception as e:
         pass
     finally:
@@ -781,6 +825,10 @@ async def create_dynamic_sesssion_background_task(
                 select(GPUEvent).where(GPUEvent.id == gpu_event_id)
             )
             gpu_event = gpu_event.scalar_one_or_none()
+            
+            if (gpu_event.start_time is None):
+                gpu_event.start_time = datetime.now()
+            
             gpu_event.end_time = datetime.now()
             await db.commit()
             await db.refresh(gpu_event)
@@ -798,42 +846,65 @@ async def create_dynamic_session(
     background_tasks: BackgroundTasks,
 ) -> CreateSessionResponse:
     session_id = uuid4()
-    q = asyncio.Queue()
+    q = asyncio.Queue() if body.wait_for_server else None
+    
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+    
+    gpu_event_id = str(uuid4())
+    async with get_db_context() as db:
+        # Insert GPU event
+        new_gpu_event = GPUEvent(
+            id=gpu_event_id,
+            user_id=user_id,
+            org_id=org_id,
+            session_id=str(session_id),
+            machine_id=body.machine_id,
+            gpu=body.gpu.value if body.gpu is not None else "CPU",
+            session_timeout=body.timeout or 15,
+            gpu_provider="modal",
+            # start_time=datetime.now(),
+            # modal_function_id=sb.object_id,
+        )
+        db.add(new_gpu_event)
+        await db.commit()
+        await db.refresh(new_gpu_event)
 
     task = asyncio.create_task(
-        create_dynamic_sesssion_background_task(request, session_id, body, q)
+        create_dynamic_sesssion_background_task(request, gpu_event_id, session_id, body, q)
     )
-    
-       # Calculate the timeout end time in UTC
+
+    # Calculate the timeout end time in UTC
     timeout_duration = body.timeout or 15
     timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
 
     # Store the timeout end time in Redis
-    await redis.set("session:" + str(session_id) + ":timeout_end", timeout_end_time.isoformat())
+    await redis.set(
+        "session:" + str(session_id) + ":timeout_end", timeout_end_time.isoformat()
+    )
 
     background_tasks.add_task(
         ensure_session_creation_complete,
         task,
     )
-    
-    # background_tasks.add_task(
-    #     check_and_close_sessions,
-    #     request, session_id
-    # )
-    asyncio.create_task(
-        check_and_close_sessions(request, str(session_id))
-    )
-    
-    try:
-        tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
-    except asyncio.TimeoutError:
-        print("Timed out waiting for tunnel_url")
-        tunnel_url = None
 
-    return {
-        "session_id": session_id,
-        "url": tunnel_url,
-    }
+    asyncio.create_task(check_and_close_sessions(request, str(session_id)))
+
+    if body.wait_for_server:
+        try:
+            tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
+        except asyncio.TimeoutError:
+            print("Timed out waiting for tunnel_url")
+            tunnel_url = None
+
+        return {
+            "session_id": session_id,
+            "url": tunnel_url,
+        }
+    else:
+        return {
+            "session_id": session_id,
+        }
 
 
 class SnapshotSessionBody(BaseModel):
@@ -1008,7 +1079,7 @@ async def delete_session(
         await modal.Sandbox.from_id(modal_function_id).terminate.aio()
     else:
         await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
-        
+
     await redis.delete("session:" + session_id + ":timeout_end")
 
     return {"success": True}
@@ -1020,7 +1091,7 @@ async def check_and_close_sessions(request: Request, session_id: str):
             # Construct the specific Redis key for the session
             key = f"session:{session_id}:timeout_end"
             logger.info(f"Checking session {session_id}")
-            
+
             # Retrieve the timeout end time from Redis
             timeout_end_str = await redis.get(key)
             if timeout_end_str is None:
@@ -1032,7 +1103,7 @@ async def check_and_close_sessions(request: Request, session_id: str):
             except ValueError:
                 logger.error(f"Invalid date format for session {session_id}")
                 break
-            
+
             if datetime.utcnow() > timeout_end:
                 # Close the session
                 async with get_db_context() as db:
