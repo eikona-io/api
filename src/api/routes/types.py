@@ -591,7 +591,7 @@ class DeploymentModel(BaseModel):
     created_at: datetime
     updated_at: datetime
     workflow: Optional[WorkflowWithName] = None
-    version: Optional[WorkflowVersionModel] = None
+    version: Optional[Any] = None
     machine: Optional[MachineWithName] = None
 
     input_types: Optional[List[InputModel]] = None
