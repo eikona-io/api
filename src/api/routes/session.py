@@ -320,6 +320,12 @@ class CreateDynamicSessionBody(BaseModel):
     wait_for_server: bool = Field(
         False, description="Whether to create the session asynchronously"
     )
+    base_docker_image: Optional[str] = Field(
+        None, description="The base docker image to use"
+    )
+    python_version: Optional[str] = Field(
+        None, description="The python version to use"
+    )
 
 
 async def ensure_session_creation_complete(task: asyncio.Task):
@@ -653,12 +659,18 @@ async def create_dynamic_sesssion_background_task(
 
         python_version = "3.11"
 
-        # Python version to override
-        if machine_version is not None:
+        # Python version to override - first check body, then machine_version
+        if body.python_version is not None:
+            python_version = body.python_version
+        elif machine_version is not None:
             python_version = machine_version.python_version
 
-        # Base docker image to use, if not fallback to debian slim
-        if (
+        # Base docker image to use - first check body, then machine_version, then fallback to debian slim
+        if body.base_docker_image is not None:
+            dockerfile_image = modal.Image.from_registry(
+                body.base_docker_image, add_python=python_version
+            )
+        elif (
             machine_version is not None
             and machine_version.base_docker_image is not None
         ):

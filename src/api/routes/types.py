@@ -156,7 +156,7 @@ class WorkflowVersionModel(BaseModel):
     id: UUID
     workflow_id: UUID
     workflow: Dict[str, Any]
-    workflow_api: Dict[str, Any]
+    workflow_api: Optional[Dict[str, Any]]
     user_id: Optional[str]
     comment: Optional[str]
     version: int
