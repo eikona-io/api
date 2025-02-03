@@ -544,6 +544,10 @@ class DeploymentEnvironment(str, Enum):
 class WorkflowWithName(BaseModel):
     id: UUID
     name: str
+    
+class MachineWithName(BaseModel):
+    id: UUID
+    name: str
 
 
 class InputModel(BaseModel):
@@ -587,6 +591,8 @@ class DeploymentModel(BaseModel):
     created_at: datetime
     updated_at: datetime
     workflow: Optional[WorkflowWithName] = None
+    version: Optional[WorkflowVersionModel] = None
+    machine: Optional[MachineWithName] = None
 
     input_types: Optional[List[InputModel]] = None
     output_types: Optional[List[OutputModel]] = None
