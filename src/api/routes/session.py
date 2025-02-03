@@ -692,7 +692,6 @@ async def create_dynamic_sesssion_background_task(
                 "rm -rf /private_models /comfyui/models /public_models",
                 "ln -s /private_models /comfyui/models",
             ],
-            force_build=True,
         )
 
         current_directory = os.path.dirname(os.path.realpath(__file__))
