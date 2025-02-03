@@ -28,8 +28,6 @@ from pydantic import BaseModel, Field
 
 
 from modal._output import OutputManager
-
-
 class CustomOutputManager(OutputManager):
     _context_id = None
     _machine_id = None
@@ -71,7 +69,6 @@ class CustomOutputManager(OutputManager):
             asyncio.create_task(insert_to_clickhouse("log_entries", item))
 
         super()._print_log(fd, data)
-
 
 modal._output.OutputManager = CustomOutputManager
 
@@ -326,9 +323,9 @@ class CreateDynamicSessionBody(BaseModel):
     base_docker_image: Optional[str] = Field(
         None, description="The base docker image to use"
     )
-    python_version: Optional[str] = Field(None, description="The python version to use")
-    # This is dummy field to log the workflow link
-    workflow_link: Optional[str] = Field(None, description="The workflow link to use")
+    python_version: Optional[str] = Field(
+        None, description="The python version to use"
+    )
 
 
 async def ensure_session_creation_complete(task: asyncio.Task):
@@ -840,10 +837,10 @@ async def create_dynamic_sesssion_background_task(
                 select(GPUEvent).where(GPUEvent.id == gpu_event_id)
             )
             gpu_event = gpu_event.scalar_one_or_none()
-
-            if gpu_event.start_time is None:
+            
+            if (gpu_event.start_time is None):
                 gpu_event.start_time = datetime.now()
-
+            
             gpu_event.end_time = datetime.now()
             await db.commit()
             await db.refresh(gpu_event)
@@ -862,14 +859,10 @@ async def create_dynamic_session(
 ) -> CreateSessionResponse:
     session_id = uuid4()
     q = asyncio.Queue() if body.wait_for_server else None
-
+    
     org_id = request.state.current_user.get("org_id")
     user_id = request.state.current_user.get("user_id")
-
-    logger.info(
-        f"Creating dynamic session - user_id: {user_id}, org_id: {org_id}, workflow_link: {body.workflow_link}"
-    )
-
+    
     gpu_event_id = str(uuid4())
     async with get_db_context() as db:
         # Insert GPU event
@@ -890,9 +883,7 @@ async def create_dynamic_session(
         await db.refresh(new_gpu_event)
 
     task = asyncio.create_task(
-        create_dynamic_sesssion_background_task(
-            request, gpu_event_id, session_id, body, q
-        )
+        create_dynamic_sesssion_background_task(request, gpu_event_id, session_id, body, q)
     )
 
     # Calculate the timeout end time in UTC
