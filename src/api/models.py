@@ -114,6 +114,9 @@ class WorkflowVersion(SerializableMixin, Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
+    machine_version_id = Column(UUID(as_uuid=True))
+    machine_id = Column(UUID(as_uuid=True))
+
     workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")
 
@@ -693,6 +696,7 @@ class GPUEvent(SerializableMixin, Base):
     session_id = Column(String)
     modal_function_id = Column(String)
     tunnel_url = Column(String)
+    machine_version_id = Column(UUID(as_uuid=True))
 
 
 class SubscriptionStatus(SerializableMixin, Base):

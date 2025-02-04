@@ -125,6 +125,7 @@ class Session(BaseModel):
     timeout: Optional[int]
     timeout_end: Optional[datetime]
     machine_id: Optional[str]
+    machine_version_id: Optional[str]
 
 
 # Return the session tunnel url
@@ -164,6 +165,7 @@ async def get_session(
         "created_at": gpuEvent.created_at,
         "timeout": gpuEvent.session_timeout,
         "machine_id": str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
+        "machine_version_id": str(gpuEvent.machine_version_id) if gpuEvent.machine_version_id else None,
         "timeout_end": timeout_end,
     }
 
@@ -758,6 +760,7 @@ async def create_dynamic_sesssion_background_task(
                                 tunnel_url=tunnel.url,
                                 modal_function_id=sb.object_id,
                                 start_time=datetime.now(),
+                                machine_version_id=machine_version.id if machine_version else None,
                             )
                         )
                         await db.commit()
@@ -1033,6 +1036,8 @@ async def snapshot_session(
     # Update machine with new version id
     machine.machine_version_id = machine_version.id
     machine.updated_at = func.now()
+    
+    gpuEvent.machine_version_id = machine_version.id
 
     await db.commit()
     await db.refresh(machine)

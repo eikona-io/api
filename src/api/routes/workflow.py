@@ -783,7 +783,7 @@ class WorkflowVersionCreate(BaseModel):
     workflow_api: Dict[str, Any]
     comment: Optional[str] = None
     machine_id: Optional[str] = None
-    # machine_version_id: Optional[str] = None
+    machine_version_id: Optional[str] = None
 
 
 @router.post("/workflow/{workflow_id}/version")
@@ -817,6 +817,8 @@ async def create_workflow_version(
                 workflow=version_data.workflow,
                 workflow_api=version_data.workflow_api,
                 comment=version_data.comment,
+                machine_version_id=version_data.machine_version_id,
+                machine_id=version_data.machine_id,
             )
             db.add(new_version)
 
