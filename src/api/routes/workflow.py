@@ -60,7 +60,7 @@ class WorkflowUpdateModel(BaseModel):
     selected_machine_id: Optional[UUID] = None
     pinned: Optional[bool] = None
     deleted: Optional[bool] = None
-    workflow_data: Optional[Dict[str, Any]] = None
+    description: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -99,8 +99,8 @@ async def update_workflow(
             workflow.selected_machine_id = body.selected_machine_id
         if body.deleted is not None:
             workflow.deleted = body.deleted
-        if body.workflow_data is not None:
-            workflow.workflow_data = body.workflow_data
+        if body.description is not None:
+            workflow.description = body.description
 
     await db.commit()
 

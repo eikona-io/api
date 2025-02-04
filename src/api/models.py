@@ -81,7 +81,7 @@ class Workflow(SerializableMixin, Base):
     selected_machine_id = Column(
         UUID(as_uuid=True), ForeignKey("machines.id", ondelete="set null")
     )
-    workflow_data = Column(JSON)
+    description = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
     pinned = Column(Boolean, nullable=False, default=False)
