@@ -87,13 +87,18 @@ async def create_deployment(
             deployment = existing_deployment
             
             if machine_version is not None and machine_version.modal_image_id is not None:
+                original_modal_image_id = existing_deployment.modal_image_id
+                
                 existing_deployment.machine_version_id = machine_version.id
                 existing_deployment.modal_image_id = machine_version.modal_image_id
                 existing_deployment.gpu = machine_version.gpu
                 existing_deployment.run_timeout = machine_version.run_timeout
                 existing_deployment.idle_timeout = machine_version.idle_timeout
                 
-                if (existing_deployment.modal_image_id != machine_version.modal_image_id):
+                print("existing_deployment.modal_image_id", existing_deployment.modal_image_id)
+                print("machine_version.modal_image_id", machine_version.modal_image_id)
+                
+                if (original_modal_image_id != machine_version.modal_image_id):
                     # We should trigger a redeploy
                     await redeploy_comfy_deploy_runner_if_exists(machine_id, machine_version.gpu, existing_deployment)
                 

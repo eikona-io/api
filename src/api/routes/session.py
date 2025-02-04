@@ -780,34 +780,28 @@ async def create_dynamic_sesssion_background_task(
 
                     # async with await get_clickhouse_client() as client:
                     async def log_stream(stream, stream_type: str):
-                        async for line in stream:
-                            try:
-                                # Try to decode as UTF-8, replace invalid characters
-                                if isinstance(line, bytes):
-                                    # Use 'ignore' instead of 'replace' to skip problematic characters
-                                    line = line.decode("utf-8", errors="ignore")
+                        try:
+                            async for line in stream:
+                                try:
+                                    # Add debug logging to see what we're receiving
+                                    if isinstance(line, bytes):
+                                        logger.debug(f"Received bytes: {repr(line)}")
+                                        
+                                        # Handle decoding in a separate try block
+                                        try:
+                                            line = line.decode("utf-8", errors="replace")
+                                        except UnicodeDecodeError as decode_err:
+                                            logger.error(f"Decode error: {decode_err}")
+                                            continue  # Skip this line and continue with the next one
 
-                                    # Skip progress bar lines that contain these special characters
-                                    if any(
-                                        char in line
-                                        for char in [
-                                            "█",
-                                            "▮",
-                                            "▯",
-                                            "▏",
-                                            "▎",
-                                            "▍",
-                                            "▌",
-                                            "▋",
-                                            "▊",
-                                            "▉",
-                                        ]
-                                    ):
-                                        continue
+                                        # Skip progress bar lines
+                                        if any(char in line for char in [
+                                            "█", "▮", "▯", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "\r"
+                                        ]):
+                                            continue
 
-                                print(line, end="")
-                                data = [
-                                    (
+                                    print(line, end="")
+                                    data = [(
                                         uuid4(),
                                         session_id,
                                         None,
@@ -815,21 +809,25 @@ async def create_dynamic_sesssion_background_task(
                                         datetime.now(),
                                         stream_type,
                                         line,
+                                    )]
+                                    asyncio.create_task(
+                                        insert_to_clickhouse("log_entries", data)
                                     )
-                                ]
-                                asyncio.create_task(
-                                    insert_to_clickhouse("log_entries", data)
-                                )
-                            except Exception as e:
-                                logger.error(f"Error processing log line: {str(e)}")
+                                except Exception as e:
+                                    logger.error(f"Inner error processing log line: {str(e)}")
+                                    continue  # Ensure we continue processing next lines
+                        except Exception as e:
+                            logger.error(f"Outer error in log stream: {str(e)}")
+                            # Re-raise if this is a critical error that should stop the stream
+                            # raise
 
                     # Create tasks for both stdout and stderr
                     stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
                     stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
-
+                    
                     # Wait for both streams to complete
                     await asyncio.gather(stdout_task, stderr_task)
-
+                    
                 await sb.wait.aio()
     except Exception as e:
         pass
