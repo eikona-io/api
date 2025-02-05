@@ -145,6 +145,26 @@ async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optiona
             
     return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
 
+async def redeploy_comfy_deploy_runner_if_exists(machine_id: str, gpu: str, deployment: Optional[Deployment] = None):
+    # Only when this deployment is using latest modal_image
+    target_app_name = str(deployment.id if deployment is not None and deployment.modal_image_id is not None else machine_id)
+    try:
+        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+    except modal.exception.NotFoundError as e:
+        return
+    
+    logger.info(f"App found for machine {target_app_name}, redeploying...")
+    if deployment is not None:
+        if deployment.modal_image_id is not None:
+            await redeploy_machine_deployment_internal(deployment)
+        else:
+            logfire.error(f"App found for machine {target_app_name}, and no modal_image_id found")
+    else:
+        await redeploy_machine_internal(target_app_name)
+        
+    ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+    return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
+
 @router.post(
     "/run",
     response_model=Union[

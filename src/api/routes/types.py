@@ -65,7 +65,7 @@ class WorkflowModel(BaseModel):
     updated_at: datetime = Field()
     pinned: bool = False
     deleted: bool = False
-
+    description: Optional[str] = None
     class Config:
         from_attributes = True
 

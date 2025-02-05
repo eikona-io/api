@@ -60,6 +60,7 @@ class WorkflowUpdateModel(BaseModel):
     selected_machine_id: Optional[UUID] = None
     pinned: Optional[bool] = None
     deleted: Optional[bool] = None
+    description: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -98,6 +99,8 @@ async def update_workflow(
             workflow.selected_machine_id = body.selected_machine_id
         if body.deleted is not None:
             workflow.deleted = body.deleted
+        if body.description is not None:
+            workflow.description = body.description
 
     await db.commit()
 
@@ -783,7 +786,7 @@ class WorkflowVersionCreate(BaseModel):
     workflow_api: Dict[str, Any]
     comment: Optional[str] = None
     machine_id: Optional[str] = None
-    # machine_version_id: Optional[str] = None
+    machine_version_id: Optional[str] = None
 
 
 @router.post("/workflow/{workflow_id}/version")
@@ -817,6 +820,8 @@ async def create_workflow_version(
                 workflow=version_data.workflow,
                 workflow_api=version_data.workflow_api,
                 comment=version_data.comment,
+                machine_version_id=version_data.machine_version_id,
+                machine_id=version_data.machine_id,
             )
             db.add(new_version)
 
