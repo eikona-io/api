@@ -55,6 +55,7 @@ public:
   xlabs_ipadapters: xlabs/ipadapters
   xlabs_flux: xlabs/flux
   xlabs_flux_json: xlabs/flux_json
+  pulid: pulid
 
 private:
   base_path: /private_models/
@@ -113,3 +114,4 @@ private:
   xlabs_ipadapters: xlabs/ipadapters
   xlabs_flux: xlabs/flux
   xlabs_flux_json: xlabs/flux_json
+  pulid: pulid
