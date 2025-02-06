@@ -698,6 +698,16 @@ class GPUEvent(SerializableMixin, Base):
     modal_function_id = Column(String)
     tunnel_url = Column(String)
     machine_version_id = Column(UUID(as_uuid=True))
+    
+    environment = Column(
+        Enum(
+            "staging",
+            "production",
+            "public-share",
+            "private-share",
+            name="deployment_environment",
+        ),
+    )
 
 
 class SubscriptionStatus(SerializableMixin, Base):

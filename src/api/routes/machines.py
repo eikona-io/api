@@ -700,7 +700,8 @@ async def redeploy_machine_deployment_internal(
         machine_version_id=str(deployment.machine_version_id),
         machine_hash=machine_version.machine_hash,
         
-        is_deployment=True
+        is_deployment=True,
+        environment=deployment.environment,
     )
     await build_logic(params)
 

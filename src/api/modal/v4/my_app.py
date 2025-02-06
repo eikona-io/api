@@ -307,16 +307,6 @@ else:
 
     docker_commands = config["docker_commands"]
 
-    # dockerfile_image = (
-    #     dockerfile_image
-    #     .run_commands("python --version")
-    #     .apt_install("git", "wget", "curl")
-    #     .apt_install("libgl1-mesa-glx", "libglib2.0-0")
-    #     # For uv local path
-    #     .env({"VIRTUAL_ENV": "/usr/local/"})
-    #     .pip_install("boto3", "aioboto3")
-    # )
-
     # Install all custom nodes
     if docker_commands is not None:
         # print("docker_commands: ", docker_commands)
@@ -325,17 +315,6 @@ else:
                 commands,
                 gpu=gpu_param,
             )
-
-    # Disabeld
-    # if skip_static_assets != "True":
-    #     dockerfile_image = (
-    #         dockerfile_image.workdir("/").run_function(
-    #             get_static_assets,
-    #             secrets=[modal.Secret.from_name("aws-s3-js-assets-user")],
-    #             gpu=gpu_param,
-    #         )
-    #         # .pip_install("pydantic==1.10.14")  # NOTE: modal needs this pydantic version, custom nodes might install another version
-    #     )
 
     dockerfile_image = dockerfile_image.run_commands(
         [
@@ -348,19 +327,6 @@ else:
         "./data/extra_model_paths.yaml", "/comfyui/extra_model_paths.yaml"
     )
 
-
-# Start and check comfyui
-# Skip checking comfyui
-
-# dockerfile_image = (
-#     dockerfile_image.workdir("/")
-#     .copy_local_file(f"{current_directory}/data/install_models.py", "/")
-#     # Will only start and check comfyui version
-#     .run_commands(
-#         f"python install_models.py{'' if compile_with_gpu else ' --cpu'}" ,
-#         gpu=gpu_param
-#     )
-# )
 
 # Time to wait between API check attempts in milliseconds
 COMFY_API_AVAILABLE_INTERVAL_MS = 50
@@ -560,6 +526,8 @@ class GPUEventType(str, Enum):
     GPU_END = "gpu_end"
 
 
+environment = config.get("environment", None)
+
 async def sync_report_gpu_event(
     event_id: str | None,
     is_workspace: bool = False,
@@ -598,9 +566,10 @@ async def sync_report_gpu_event(
         "org_id": org_id,
         "session_id": session_id,
         "modal_function_id": modal.current_function_call_id(),
+        "environment": environment,
     }
 
-    print("body", body, gpu_event_callback_url)
+    # print("body", body, gpu_event_callback_url)
 
     # Perform the asynchronous POST request
     async with aiohttp.ClientSession() as session:
