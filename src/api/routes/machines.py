@@ -289,6 +289,20 @@ async def create_serverless_machine(
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
+    plan = request.state.current_user.get("plan")
+    
+    if plan == "free":
+        max_machine_count = 1
+        # find all gpu event on this account
+        machine_count = (await db.execute(
+            select(Machine)
+            .apply_org_check(request)
+        )).scalars().count()
+        
+        if machine_count >= max_machine_count:
+            raise HTTPException(status_code=400, detail="Free plan does not support more than 1 machine")
+    
+    
     new_machine_id = uuid.uuid4()
     current_user = request.state.current_user
     user_id = current_user["user_id"]
