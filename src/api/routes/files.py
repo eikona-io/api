@@ -34,6 +34,7 @@ prefixes = {
     "img": "img",
     "zip": "zip",
     "vid": "vid",
+    "audio": "audio",
     "file": "file",
     "folder": "folder"
 }
@@ -122,7 +123,7 @@ async def upload_file(
     )  # Default to binary data if type can't be guessed
 
     # Check if the file type is allowed
-    if not file_type.startswith(("image/", "video/", "application/")):
+    if not file_type.startswith(("image/", "video/", "application/", "audio/")):
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
     user_settings = await get_user_settings(request, db)
@@ -156,6 +157,8 @@ async def upload_file(
     file_extension = os.path.splitext(file.filename)[1]
     if file_type.startswith("video/"):
         file_id = new_id("vid")
+    elif file_type.startswith("audio/"):
+        file_id = new_id("audio")
     elif file_type.startswith("image/"):
         file_id = new_id("img")
     elif file_type.startswith("application/zip"):
@@ -390,7 +393,7 @@ async def upload_asset_file(
     file_type = inferred_type or "application/octet-stream"
 
     # Check if the file type is allowed
-    if not file_type.startswith(("image/", "video/", "application/")):
+    if not file_type.startswith(("image/", "video/", "application/", "audio/")):
         raise HTTPException(status_code=400, detail="Unsupported file type")
 
     user_settings = await get_user_settings(request, db)
@@ -424,6 +427,8 @@ async def upload_asset_file(
     file_extension = os.path.splitext(file.filename)[1]
     if file_type.startswith("video/"):
         file_id = new_id("vid")
+    elif file_type.startswith("audio/"):
+        file_id = new_id("audio")
     elif file_type.startswith("image/"):
         file_id = new_id("img")
     elif file_type.startswith("application/zip"):

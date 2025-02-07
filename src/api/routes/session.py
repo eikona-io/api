@@ -438,6 +438,21 @@ async def create_session(
 ) -> CreateSessionResponse:
     org_id = request.state.current_user.get("org_id")
     user_id = request.state.current_user.get("user_id")
+    plan = request.state.current_user.get("plan")
+    
+    if plan == "free":
+        max_concurrent_sessions = 1
+        # find all gpu event on this account
+        gpu_events = (await db.execute(
+            select(GPUEvent)
+            .apply_org_check(request)
+            .where(GPUEvent.session_id.isnot(None))
+            .where(GPUEvent.end_time.is_(None))
+        )).scalars().all()
+        
+        if len(gpu_events) >= max_concurrent_sessions:
+            raise HTTPException(status_code=400, detail="Free plan does not support concurrent sessions")
+    
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
     # if exceed_spend_limit:
