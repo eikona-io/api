@@ -818,10 +818,10 @@ async def retry_post_request(
     Retry POST requests with exponential backoff and jitter.
 
     Args:
-        initial_delay: Starting delay in seconds
-        max_delay: Maximum delay between retries in seconds
-        exponential_base: Base for exponential backoff (typically 2)
-        jitter: Random jitter factor to add/subtract from delay (0.1 = ±10%)
+        initial_delay: Starting delay in seconds.
+        max_delay: Maximum delay between retries in seconds.
+        exponential_base: Base for exponential backoff (typically 2).
+        jitter: Random jitter factor to add/subtract from delay (0.1 = ±10%).
     """
     for attempt in range(max_retries):
         try:
@@ -834,20 +834,31 @@ async def retry_post_request(
             return response
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 500 and attempt < max_retries - 1:
-                # Calculate exponential delay with jitter
-                delay = min(initial_delay * (exponential_base**attempt), max_delay)
-                # Add random jitter
+
+                delay = min(initial_delay * (exponential_base ** attempt), max_delay)
+
                 jitter_range = delay * jitter
                 actual_delay = delay + random.uniform(-jitter_range, jitter_range)
 
                 logger.info(
-                    f"Attempt {attempt + 1} failed, retrying in {actual_delay:.2f} seconds..."
+                    f"Attempt {attempt + 1} failed with status 500, retrying in {actual_delay:.2f} seconds..."
+                )
+                await asyncio.sleep(actual_delay)
+                continue
+            raise
+        except httpx.ReadTimeout as e:
+            if attempt < max_retries - 1:
+                delay = min(initial_delay * (exponential_base ** attempt), max_delay)
+                jitter_range = delay * jitter
+                actual_delay = delay + random.uniform(-jitter_range, jitter_range)
+                logger.info(
+                    f"Attempt {attempt + 1} timed out, retrying in {actual_delay:.2f} seconds..."
                 )
                 await asyncio.sleep(actual_delay)
                 continue
             raise
         except Exception as e:
-            # For any other exceptions, raise immediately
+            # For any other exceptions, just raise immediately.
             raise
 
 
@@ -1229,7 +1240,8 @@ async def _create_run(
 
                         async with httpx.AsyncClient() as _client:
                             try:
-                                response = await _client.post(
+                                response = await retry_post_request(
+                                    _client,
                                     comfyui_endpoint,
                                     json={
                                         **params,
