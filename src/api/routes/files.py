@@ -146,7 +146,7 @@ async def upload_file(
 
     # File size check
     file_size = file.size
-    size_limit = 50 * 1024 * 1024  # 50MB
+    size_limit = 100 * 1024 * 1024  # 100MB
     if file_size > size_limit:
         raise HTTPException(
             status_code=400,
@@ -416,7 +416,7 @@ async def upload_asset_file(
 
     # File size check
     file_size = file.size
-    size_limit = 50 * 1024 * 1024  # 50MB
+    size_limit = 100 * 1024 * 1024  # 100MB
     if file_size > size_limit:
         raise HTTPException(
             status_code=400,
