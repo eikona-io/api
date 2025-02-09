@@ -298,12 +298,11 @@ async def create_serverless_machine(
             select(func.count())
             .select_from(Machine)
             .where(~Machine.deleted)
-            .apply_org_check(request)
+            .apply_org_check_by_type(Machine,request)
         )).scalar()
         
         if machine_count >= max_machine_count:
             raise HTTPException(status_code=400, detail="Free plan does not support more than 1 machine")
-    
     
     new_machine_id = uuid.uuid4()
     current_user = request.state.current_user
