@@ -800,38 +800,53 @@ async def create_workflow_version(
         current_user = request.state.current_user
         user_id = current_user["user_id"]
         org_id = current_user["org_id"] if "org_id" in current_user else None
+        
+        workflow = await db.execute(
+            select(Workflow)
+            .where(Workflow.id == workflow_id)
+            .where(~Workflow.deleted)
+            .limit(1)
+            .apply_org_check(request)
+        )
+        workflow = workflow.scalar_one_or_none()
+        
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
-        async with db.begin():
-            # Get the next version number
-            version_query = select(
-                func.coalesce(func.max(WorkflowVersion.version), 0) + 1
-            ).where(WorkflowVersion.workflow_id == workflow_id)
-            result = await db.execute(version_query)
-            next_version = result.scalar_one()
+        # async with db.begin():
+        if version_data.machine_id and workflow.selected_machine_id != UUID(version_data.machine_id):
+            workflow.selected_machine_id = UUID(version_data.machine_id)
+        
+        # Get the next version number
+        version_query = select(
+            func.coalesce(func.max(WorkflowVersion.version), 0) + 1
+        ).where(WorkflowVersion.workflow_id == workflow_id)
+        result = await db.execute(version_query)
+        next_version = result.scalar_one()
 
-            # Create new version
-            new_version = WorkflowVersion(
-                id=str(uuid.uuid4()),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-                workflow_id=workflow_id,
-                version=next_version,
-                user_id=user_id,
-                workflow=version_data.workflow,
-                workflow_api=version_data.workflow_api,
-                comment=version_data.comment,
-                machine_version_id=version_data.machine_version_id,
-                machine_id=version_data.machine_id,
-            )
-            db.add(new_version)
+        # Create new version
+        new_version = WorkflowVersion(
+            id=str(uuid.uuid4()),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            workflow_id=workflow_id,
+            version=next_version,
+            user_id=user_id,
+            workflow=version_data.workflow,
+            workflow_api=version_data.workflow_api,
+            comment=version_data.comment,
+            machine_version_id=version_data.machine_version_id,
+            machine_id=version_data.machine_id,
+        )
+        db.add(new_version)
 
-            # Update workflow timestamp
-            workflow = await db.get(Workflow, workflow_id)
-            if not workflow:
-                raise HTTPException(status_code=404, detail="Workflow not found")
+        # Update workflow timestamp
+        workflow = await db.get(Workflow, workflow_id)
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found")
 
-            workflow.updated_at = func.now()
-            await db.flush()
+        workflow.updated_at = func.now()
+        await db.flush()
 
         if version_data.machine_id is not None:
             print("Creating deployment for staging")

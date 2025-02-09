@@ -65,6 +65,7 @@ async def get_machines(
     offset: int = 0,
     is_deleted: Optional[bool] = None,
     include_has_workflows: bool = False,  # New parameter
+    is_workspace: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     if include_has_workflows:
@@ -84,6 +85,7 @@ async def get_machines(
         query
         .order_by(Machine.created_at.desc())
         .where(Machine.deleted == is_deleted)
+        .where(Machine.is_workspace == is_workspace)
         .apply_org_check(request)
         .paginate(limit, offset)
     )

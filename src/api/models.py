@@ -502,6 +502,7 @@ class Machine(SerializableMixin, Base):
     machine_version_id = Column(
         UUID(as_uuid=True), ForeignKey("machine_versions.id", ondelete="set null")
     )
+    is_workspace = Column(Boolean, nullable=False, default=False)
 
     # Add shared columns
     locals().update(get_machine_columns())
