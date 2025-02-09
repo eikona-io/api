@@ -312,25 +312,25 @@ async def create_serverless_machine(
     docker_commands = generate_all_docker_commands(machine)
     docker_commands_hash = hash_machine_dependencies(docker_commands)
 
-    async with db.begin():  # Single transaction for entire operation
+    # async with db.begin():  # Single transaction for entire operation
         # Create initial machine
-        machine = Machine(
-            **machine.model_dump(),
-            id=new_machine_id,
-            type=MachineType.COMFY_DEPLOY_SERVERLESS,
-            user_id=user_id,
-            org_id=org_id,
-            status="building",
-            endpoint="not-ready",
-            created_at=func.now(),
-            updated_at=func.now(),
-            machine_hash=docker_commands_hash,
-        )
-        db.add(machine)
-        await db.flush()
+    machine = Machine(
+        **machine.model_dump(),
+        id=new_machine_id,
+        type=MachineType.COMFY_DEPLOY_SERVERLESS,
+        user_id=user_id,
+        org_id=org_id,
+        status="building",
+        endpoint="not-ready",
+        created_at=func.now(),
+        updated_at=func.now(),
+        machine_hash=docker_commands_hash,
+    )
+    db.add(machine)
+    await db.flush()
 
-        # Create initial version (uses same transaction)
-        await create_machine_version(db, machine, user_id)
+    # Create initial version (uses same transaction)
+    await create_machine_version(db, machine, user_id)
 
     # Transaction automatically commits here if successful
     await db.refresh(machine)  # Only one refresh at the end
