@@ -843,8 +843,6 @@ async def create_workflow_version(
         # Update workflow timestamp
         workflow.updated_at = func.now()
 
-        workflow.updated_at = func.now()
-
         if version_data.machine_id is not None:
             print("Creating deployment for staging")
             # When creating a new version, we also create a deployment for staging automatically
