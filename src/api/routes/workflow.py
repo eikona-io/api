@@ -846,7 +846,6 @@ async def create_workflow_version(
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         workflow.updated_at = func.now()
-        await db.flush()
 
         if version_data.machine_id is not None:
             print("Creating deployment for staging")
@@ -862,6 +861,10 @@ async def create_workflow_version(
                 db=db,
             )
             print(result)
+        else:
+            await db.commit()
+            await db.flush()
+            await db.refresh(workflow)
 
         return new_version.to_dict()
 
