@@ -841,9 +841,7 @@ async def create_workflow_version(
         db.add(new_version)
 
         # Update workflow timestamp
-        workflow = await db.get(Workflow, workflow_id)
-        if not workflow:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        workflow.updated_at = func.now()
 
         workflow.updated_at = func.now()
 
