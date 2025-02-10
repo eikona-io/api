@@ -334,6 +334,7 @@ class Deployment(SerializableMixin, Base):
             "production",
             "public-share",
             "private-share",
+            "preview",
             name="deployment_environment",
         ),
         nullable=False,
@@ -706,6 +707,7 @@ class GPUEvent(SerializableMixin, Base):
             "production",
             "public-share",
             "private-share",
+            "preview",
             name="deployment_environment",
         ),
     )

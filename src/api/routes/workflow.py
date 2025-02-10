@@ -857,7 +857,7 @@ async def create_workflow_version(
                     workflow_version_id=str(new_version.id),
                     workflow_id=workflow_id,
                     machine_id=version_data.machine_id,
-                    environment="staging",
+                    environment="preview",
                 ),
                 db=db,
             )
