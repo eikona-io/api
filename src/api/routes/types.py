@@ -539,7 +539,7 @@ class DeploymentEnvironment(str, Enum):
     PRODUCTION = "production"
     PUBLIC_SHARE = "public-share"
     PRIVATE_SHARE = "private-share"
-
+    PREVIEW = "preview"
 
 class WorkflowWithName(BaseModel):
     id: UUID
@@ -596,6 +596,14 @@ class DeploymentModel(BaseModel):
 
     input_types: Optional[List[InputModel]] = None
     output_types: Optional[List[OutputModel]] = None
+    
+    gpu: Optional[str] = None
+    machine_version_id: Optional[UUID] = None
+    modal_image_id: Optional[str] = None
+    concurrency_limit: Optional[int] = None
+    run_timeout: Optional[int] = None
+    idle_timeout: Optional[int] = None
+    keep_warm: Optional[int] = None
 
     class Config:
         from_attributes = True

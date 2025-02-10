@@ -168,6 +168,7 @@ class BuildMachineItem(BaseModel):
     machine_hash: Optional[str] = None
     modal_image_id: Optional[str] = None
     is_deployment: Optional[bool] = False
+    environment: Optional[str] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -613,6 +614,7 @@ async def build_logic(item: BuildMachineItem):
             "extra_args": item.extra_args,
             "machine_hash": item.machine_hash,
             "modal_image_id": item.modal_image_id,
+            "environment": item.environment,
         }
 
         # print("config: ", config)

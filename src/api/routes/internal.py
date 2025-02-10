@@ -465,6 +465,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
     org_id = data.get("org_id")
     session_id = data.get("session_id")
     modal_function_id = data.get("modal_function_id")
+    environment = data.get("environment", None)
    
     # Get token data from request
     token = request.headers.get("authorization", "").replace("Bearer ", "")
@@ -504,7 +505,8 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                     ws_gpu=ws_gpu_type,
                     gpu_provider=gpu_provider,
                     session_id=session_id,
-                    modal_function_id=modal_function_id
+                    modal_function_id=modal_function_id,
+                    environment=environment
                 )
 
                 db.add(gpu_event)

@@ -334,6 +334,7 @@ class Deployment(SerializableMixin, Base):
             "production",
             "public-share",
             "private-share",
+            "preview",
             name="deployment_environment",
         ),
         nullable=False,
@@ -502,6 +503,7 @@ class Machine(SerializableMixin, Base):
     machine_version_id = Column(
         UUID(as_uuid=True), ForeignKey("machine_versions.id", ondelete="set null")
     )
+    is_workspace = Column(Boolean, nullable=False, default=False)
 
     # Add shared columns
     locals().update(get_machine_columns())
@@ -698,6 +700,17 @@ class GPUEvent(SerializableMixin, Base):
     modal_function_id = Column(String)
     tunnel_url = Column(String)
     machine_version_id = Column(UUID(as_uuid=True))
+    
+    environment = Column(
+        Enum(
+            "staging",
+            "production",
+            "public-share",
+            "private-share",
+            "preview",
+            name="deployment_environment",
+        ),
+    )
 
 
 class SubscriptionStatus(SerializableMixin, Base):

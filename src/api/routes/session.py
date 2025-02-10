@@ -307,6 +307,7 @@ class CreateSessionBody(BaseModel):
 class CreateDynamicSessionBody(BaseModel):
     gpu: MachineGPU = Field("A10G", description="The GPU to use")
     machine_id: Optional[str] = Field(None, description="The machine id to use")
+    machine_version_id: Optional[str] = Field(None, description="The machine version id to use")
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
     comfyui_hash: Optional[str] = Field(None, description="The comfyui hash to use")
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
@@ -610,12 +611,15 @@ async def create_dynamic_sesssion_background_task(
 
             if not machine:
                 raise HTTPException(status_code=404, detail="Machine not found")
+            
+            target_machine_version_id = body.machine_version_id or machine.machine_version_id
 
             # Get machine version if it exists
-            if machine.machine_version_id:
+            if target_machine_version_id:
                 machine_version = await db.execute(
                     select(MachineVersion).where(
-                        MachineVersion.id == machine.machine_version_id
+                        MachineVersion.id == target_machine_version_id,
+                        MachineVersion.machine_id == body.machine_id
                     )
                 )
                 machine_version = machine_version.scalars().first()
@@ -997,6 +1001,7 @@ async def snapshot_session(
             name=body.machine_name,
             gpu=gpuEvent.gpu,
             machine_builder_version="4",
+            is_workspace=True,
         )
         db.add(machine)
         await db.flush()
