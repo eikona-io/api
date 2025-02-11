@@ -3,12 +3,13 @@ import uuid
 from api.routes.run import redeploy_comfy_deploy_runner_if_exists
 from api.utils.inputs import get_inputs_from_workflow_api
 from api.utils.outputs import get_outputs_from_workflow
+from api.routes.platform import get_clerk_data_with_slug
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
-from .types import DeploymentModel, DeploymentEnvironment
+from .types import DeploymentModel, DeploymentEnvironment, DeploymentShareModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
-from api.models import Deployment, Machine, MachineVersion, Workflow
+from api.models import Deployment, Machine, MachineVersion, User, Workflow
 from api.database import get_db
 from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
@@ -35,6 +36,8 @@ class DeploymentCreate(BaseModel):
     machine_id: Optional[str] = None
     machine_version_id: Optional[str] = None
     environment: str
+    description: Optional[str] = None
+    share_slug: Optional[str] = None
 
 class DeploymentUpdate(BaseModel):
     workflow_version_id: Optional[str] = None
@@ -116,6 +119,21 @@ async def update_deployment_with_machine(
                 
     return deployment
 
+async def check_share_slug_available(share_slug: str, request: Request, db: AsyncSession, current_deployment_id: Optional[str] = None) -> bool:
+    """Check if share_slug is available, excluding the current deployment if provided."""
+    share_slug_query = (
+        select(Deployment)
+        .where(Deployment.share_slug.ilike(share_slug))
+        .apply_org_check(request)
+    )
+    
+    if current_deployment_id:
+        share_slug_query = share_slug_query.where(Deployment.id != current_deployment_id)
+    
+    result = await db.execute(share_slug_query)
+    existing = result.scalar_one_or_none()
+    return existing is None
+
 @router.post(
     "/deployment",
     response_model=DeploymentModel,
@@ -171,9 +189,22 @@ async def create_deployment(
 
         if existing_deployment:
             # Update existing deployment
+            if deployment_data.share_slug is not None:
+                # Check if new slug is available (excluding current deployment)
+                if not await check_share_slug_available(deployment_data.share_slug, request, db, str(existing_deployment.id)):
+                    raise HTTPException(status_code=400, detail="Workflow name already taken, please rename your workflow and try again.")
+                existing_deployment.share_slug = deployment_data.share_slug
+
             existing_deployment.workflow_version_id = deployment_data.workflow_version_id
+            existing_deployment.description = deployment_data.description
             deployment = await update_deployment_with_machine(existing_deployment, machine_id, machine_version, db)
         else:
+            # Create new deployment
+            if deployment_data.share_slug is not None:
+                # Check if slug is available
+                if not await check_share_slug_available(deployment_data.share_slug, request, db):
+                    raise HTTPException(status_code=400, detail="Workflow name already taken, please rename your workflow and try again.")
+
             # Create new deployment object
             deployment = Deployment(
                 id=uuid.uuid4(),
@@ -182,6 +213,8 @@ async def create_deployment(
                 workflow_version_id=deployment_data.workflow_version_id,
                 workflow_id=deployment_data.workflow_id,
                 environment=deployment_data.environment,
+                description=deployment_data.description,
+                share_slug=deployment_data.share_slug,
             )
             deployment = await update_deployment_with_machine(deployment, machine_id, machine_version, db)
             db.add(deployment)
@@ -193,6 +226,10 @@ async def create_deployment(
         deployment_dict = deployment.to_dict()
         return deployment_dict
 
+    except HTTPException as he:
+        # Propagate HTTP exceptions directly
+        await db.rollback()
+        raise he
     except Exception as e:
         logger.error(f"Error creating deployment: {e}", exc_info=True)
         await db.rollback()
@@ -313,3 +350,60 @@ async def get_deployments(
     except Exception as e:
         logger.error(f"Error getting deployments: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/share/{username}/{slug}",
+    response_model=DeploymentShareModel,
+)
+async def get_share_deployment(
+    request: Request,
+    username: str,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    user_data = await get_clerk_data_with_slug(username)
+    if user_data["type"] == "none":
+        raise HTTPException(status_code=404, detail="User or organization not found")
+
+    # get the deployment with the user id and slug (share_slug)
+    deployment_query = (
+        select(Deployment)
+        .options(
+            joinedload(Deployment.workflow).load_only(Workflow.name),
+            joinedload(Deployment.version),
+        )
+        .join(Workflow)
+        .where(
+            Deployment.share_slug.ilike(slug),
+            Deployment.environment == "public-share",
+            Workflow.deleted == False,
+        )
+    )
+    if user_data["type"] == "user":
+        deployment_query = deployment_query.where(Deployment.user_id == user_data["id"])
+    elif user_data["type"] == "org":
+        deployment_query = deployment_query.where(Deployment.org_id == user_data["id"])
+
+    result = await db.execute(deployment_query)
+    deployment = result.scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    # if the deployment is created in org, using userid should fail
+    if deployment.org_id and user_data["type"] == "user":
+        raise HTTPException(status_code=403, detail="You do not have access to this deployment")
+
+    workflow_api = deployment.version.workflow_api if deployment.version else None
+    inputs = get_inputs_from_workflow_api(workflow_api)
+
+    workflow = deployment.version.workflow if deployment.version else None
+    outputs = get_outputs_from_workflow(workflow)
+
+    # Just update the deployment with the additional fields
+    deployment_dict = deployment.to_dict()
+    deployment_dict["input_types"] = inputs
+    deployment_dict["output_types"] = outputs
+
+    # FastAPI will automatically filter based on DeploymentModel
+    return deployment_dict

@@ -17,6 +17,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/fal-webhook",
             "/api/models",
             "/api/clerk/webhook",
+            "/api/share",
         ]
         # print("AuthMiddleware initialized")  # Test print
 
@@ -45,9 +46,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return response
 
     def should_authenticate(self, request: Request) -> bool:
+        path = request.url.path
         should_auth = (
-            request.url.path.startswith("/api")
-            and request.url.path not in self.ignored_routes
+            path.startswith("/api")
+            and not any(path.startswith(route) for route in self.ignored_routes)
         )
         # print(f"Should authenticate: {should_auth}")  # Test print
         return should_auth

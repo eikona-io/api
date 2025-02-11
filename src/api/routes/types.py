@@ -608,6 +608,15 @@ class DeploymentModel(BaseModel):
     class Config:
         from_attributes = True
 
+class DeploymentShareModel(BaseModel):
+    id: UUID
+    user_id: str
+    org_id: Optional[str]
+    share_slug: str
+    description: str
+    workflow: Dict[str, Optional[str]]
+    input_types: Optional[List[Dict[str, Any]]]
+    output_types: Optional[List[Dict[str, Any]]]
 
 class MachineGPU(str, Enum):
     CPU = "CPU"

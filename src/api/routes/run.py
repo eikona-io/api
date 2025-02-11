@@ -908,6 +908,7 @@ async def _create_run(
     )
 
     is_native_run = data.is_native_run
+    is_public_deployment = False
 
     if isinstance(data, WorkflowRunVersionRequest):
         workflow_version_id = data.workflow_version_id
@@ -919,11 +920,9 @@ async def _create_run(
         workflow = data.workflow
     elif isinstance(data, DeploymentRunRequest):
         # Retrieve the deployment and its associated workflow version
-        deployment_query = (
-            select(Deployment)
-            .where(Deployment.id == data.deployment_id)
-            .apply_org_check(request)
-        )
+        deployment_query = select(Deployment).where(Deployment.id == data.deployment_id)
+
+        # First get deployment without org check to check environment
         deployment_result = await db.execute(deployment_query)
         deployment = deployment_result.scalar_one_or_none()
         deployment = cast(Optional[Deployment], deployment)
@@ -931,9 +930,16 @@ async def _create_run(
         if not deployment:
             raise HTTPException(status_code=404, detail="Deployment not found")
 
+        # Set public deployment flag
+        is_public_deployment = deployment.environment == "public-share"
+
+        # If not public deployment, verify org access
+        if not is_public_deployment and not await deployment_query.apply_org_check(request).exists():
+            raise HTTPException(status_code=404, detail="Deployment not found")
+
         workflow_version_id = deployment.workflow_version_id
         machine_id = deployment.machine_id
-        
+
         if deployment.gpu is not None:
             gpu = str(deployment.gpu)
 
@@ -964,12 +970,14 @@ async def _create_run(
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         # To account for the new soft delete workflow
-        test_workflow = await db.execute(
+        workflow_query = (
             select(Workflow)
             .where(Workflow.id == workflow_id)
             .where(Workflow.deleted == False)
-            .apply_org_check(request)
         )
+        if not is_public_deployment:
+            workflow_query = workflow_query.apply_org_check(request)
+        test_workflow = await db.execute(workflow_query)
         test_workflow = test_workflow.scalar_one_or_none()
         test_workflow = cast(Optional[Workflow], test_workflow)
 
@@ -982,8 +990,9 @@ async def _create_run(
             select(Machine)
             .where(Machine.id == machine_id)
             .where(~Machine.deleted)
-            .apply_org_check(request)
         )
+        if not is_public_deployment:
+            machine_query = machine_query.apply_org_check(request)
         machine_result = await db.execute(machine_query)
         machine = machine_result.scalar_one_or_none()
         machine = cast(Optional[Machine], machine)
