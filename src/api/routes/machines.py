@@ -284,6 +284,62 @@ def hash_machine_dependencies(docker_commands: DockerCommandResponse):
     return hashlib.sha256(json.dumps(docker_commands.model_dump()).encode()).hexdigest()
 
 
+async def validate_free_plan_restrictions(
+    request: Request,
+    machine_data: dict,
+    db: AsyncSession,
+    is_update: bool = False,
+    existing_machine_id: UUID = None
+) -> None:
+    """
+    Validates restrictions for free plan users.
+    Raises HTTPException if restrictions are violated.
+    """
+    plan = request.state.current_user.get("plan")
+    if plan != "free":
+        return
+
+    # Check machine count limit (only for creation)
+    if not is_update:
+        max_machine_count = 1
+        machine_count = (await db.execute(
+            select(func.count())
+            .select_from(Machine)
+            .where(~Machine.deleted)
+            .apply_org_check_by_type(Machine, request)
+        )).scalar()
+        
+        if machine_count >= max_machine_count:
+            raise HTTPException(
+                status_code=400,
+                detail="Free plan does not support more than 1 machine"
+            )
+
+    # Check restricted fields
+    restricted_fields = [
+        "extra_docker_commands",
+        "base_docker_image",
+        "prestart_command",
+        "extra_args",
+        "install_custom_node_with_gpu",
+    ]
+
+    for field in restricted_fields:
+        if field in machine_data and machine_data[field]:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Free plan users cannot use {field}. Please upgrade to use this feature."
+            )
+
+    # Check docker_command_steps separately for commands
+    if "docker_command_steps" in machine_data and machine_data["docker_command_steps"] is not None:
+        steps = machine_data["docker_command_steps"].get("steps", [])
+        if any("commands" in step for step in steps):
+            raise HTTPException(
+                status_code=403,
+                detail="Free plan users cannot include custom commands in docker_command_steps. Please upgrade to use this feature."
+            )
+
 @router.post("/machine/serverless")
 async def create_serverless_machine(
     request: Request,
@@ -291,20 +347,12 @@ async def create_serverless_machine(
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
-    plan = request.state.current_user.get("plan")
-    
-    if plan == "free":
-        max_machine_count = 1
-        # Count all non-deleted machines for this account
-        machine_count = (await db.execute(
-            select(func.count())
-            .select_from(Machine)
-            .where(~Machine.deleted)
-            .apply_org_check_by_type(Machine,request)
-        )).scalar()
-        
-        if machine_count >= max_machine_count:
-            raise HTTPException(status_code=400, detail="Free plan does not support more than 1 machine")
+    # Validate free plan restrictions
+    await validate_free_plan_restrictions(
+        request=request,
+        machine_data=machine.model_dump(),
+        db=db
+    )
     
     new_machine_id = uuid.uuid4()
     current_user = request.state.current_user
@@ -399,6 +447,15 @@ async def update_serverless_machine(
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
+    # Validate free plan restrictions
+    await validate_free_plan_restrictions(
+        request=request,
+        machine_data=update_machine.model_dump(exclude_unset=True),
+        db=db,
+        is_update=True,
+        existing_machine_id=machine_id
+    )
+    
     try:
         machine = await db.execute(
             select(Machine).where(Machine.id == machine_id).apply_org_check(request)
