@@ -875,7 +875,23 @@ async def create_dynamic_session(
     request: Request,
     body: CreateDynamicSessionBody,
     background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
+    plan = request.state.current_user.get("plan")
+    
+    if plan == "free":
+        max_concurrent_sessions = 1
+        # find all gpu event on this account
+        gpu_events = (await db.execute(
+            select(GPUEvent)
+            .apply_org_check(request)
+            .where(GPUEvent.session_id.isnot(None))
+            .where(GPUEvent.end_time.is_(None))
+        )).scalars().all()
+        
+        if len(gpu_events) >= max_concurrent_sessions:
+            raise HTTPException(status_code=400, detail="Free plan does not support concurrent sessions")
+        
     session_id = uuid4()
     q = asyncio.Queue() if body.wait_for_server else None
     
