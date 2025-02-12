@@ -119,21 +119,6 @@ async def update_deployment_with_machine(
                 
     return deployment
 
-async def check_share_slug_available(share_slug: str, request: Request, db: AsyncSession, current_deployment_id: Optional[str] = None) -> bool:
-    """Check if share_slug is available, excluding the current deployment if provided."""
-    share_slug_query = (
-        select(Deployment)
-        .where(Deployment.share_slug.ilike(share_slug))
-        .apply_org_check(request)
-    )
-    
-    if current_deployment_id:
-        share_slug_query = share_slug_query.where(Deployment.id != current_deployment_id)
-    
-    result = await db.execute(share_slug_query)
-    existing = result.scalar_one_or_none()
-    return existing is None
-
 @router.post(
     "/deployment",
     response_model=DeploymentModel,
@@ -174,7 +159,7 @@ async def create_deployment(
             result = await db.execute(machine_version_query)
             machine_version = result.scalar_one_or_none()
             machine_id = machine_version.machine_id
-            
+
         # Get current machine and machine version
         machine_query = select(Machine).where(Machine.id == machine_id)
         result = await db.execute(machine_query)
@@ -189,22 +174,11 @@ async def create_deployment(
 
         if existing_deployment:
             # Update existing deployment
-            if deployment_data.share_slug is not None:
-                # Check if new slug is available (excluding current deployment)
-                if not await check_share_slug_available(deployment_data.share_slug, request, db, str(existing_deployment.id)):
-                    raise HTTPException(status_code=400, detail="Workflow name already taken, please rename your workflow and try again.")
-                existing_deployment.share_slug = deployment_data.share_slug
-
+            existing_deployment.share_slug = deployment_data.share_slug
             existing_deployment.workflow_version_id = deployment_data.workflow_version_id
             existing_deployment.description = deployment_data.description
             deployment = await update_deployment_with_machine(existing_deployment, machine_id, machine_version, db)
         else:
-            # Create new deployment
-            if deployment_data.share_slug is not None:
-                # Check if slug is available
-                if not await check_share_slug_available(deployment_data.share_slug, request, db):
-                    raise HTTPException(status_code=400, detail="Workflow name already taken, please rename your workflow and try again.")
-
             # Create new deployment object
             deployment = Deployment(
                 id=uuid.uuid4(),
@@ -225,11 +199,6 @@ async def create_deployment(
         # Convert to dict
         deployment_dict = deployment.to_dict()
         return deployment_dict
-
-    except HTTPException as he:
-        # Propagate HTTP exceptions directly
-        await db.rollback()
-        raise he
     except Exception as e:
         logger.error(f"Error creating deployment: {e}", exc_info=True)
         await db.rollback()
@@ -375,7 +344,7 @@ async def get_share_deployment(
         )
         .join(Workflow)
         .where(
-            Deployment.share_slug.ilike(slug),
+            Deployment.share_slug == slug,
             Deployment.environment == "public-share",
             Workflow.deleted == False,
         )

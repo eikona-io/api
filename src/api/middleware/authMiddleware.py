@@ -4,9 +4,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from api.database import AsyncSessionLocal
 from .auth import get_current_user
+from fnmatch import fnmatch
 
 logger = logging.getLogger(__name__)
-
 
 class AuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
@@ -17,7 +17,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/fal-webhook",
             "/api/models",
             "/api/clerk/webhook",
-            "/api/share",
+            "/api/share/*",
         ]
         # print("AuthMiddleware initialized")  # Test print
 
@@ -47,12 +47,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def should_authenticate(self, request: Request) -> bool:
         path = request.url.path
-        should_auth = (
-            path.startswith("/api")
-            and not any(path.startswith(route) for route in self.ignored_routes)
-        )
-        # print(f"Should authenticate: {should_auth}")  # Test print
-        return should_auth
+
+        # Check if path matches any of the ignored routes (including wildcards)
+        for route in self.ignored_routes:
+            if fnmatch(path, route):
+                return False
+
+        # Require authentication for all other /api routes
+        return path.startswith("/api")
 
     async def authenticate(self, request: Request):
         async with AsyncSessionLocal() as db:

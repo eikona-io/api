@@ -934,8 +934,13 @@ async def _create_run(
         is_public_deployment = deployment.environment == "public-share"
 
         # If not public deployment, verify org access
-        if not is_public_deployment and not await deployment_query.apply_org_check(request).exists():
-            raise HTTPException(status_code=404, detail="Deployment not found")
+        if not is_public_deployment:
+            has_access = (
+                (org_id and deployment.org_id == org_id) or
+                (not org_id and deployment.user_id == request.state.current_user["user_id"])
+            )
+            if not has_access:
+                raise HTTPException(status_code=404, detail="Deployment not found")
 
         workflow_version_id = deployment.workflow_version_id
         machine_id = deployment.machine_id
@@ -1248,6 +1253,7 @@ async def _create_run(
                         # print(headers)
 
                         async with httpx.AsyncClient() as _client:
+                            response = None  # Define response outside try block
                             try:
                                 response = await retry_post_request(
                                     _client,
@@ -1262,9 +1268,10 @@ async def _create_run(
                             except httpx.HTTPStatusError as e:
                                 error_message = f"Error creating run: {e.response.status_code} {e.response.reason_phrase}"
                                 try:
-                                    result = response.json()
-                                    if "node_errors" in result:
-                                        error_message += f" {result['node_errors']}"
+                                    if response:  # Check if response exists
+                                        result = response.json()
+                                        if "node_errors" in result:
+                                            error_message += f" {result['node_errors']}"
                                 except json.JSONDecodeError:
                                     pass
                                 raise HTTPException(
