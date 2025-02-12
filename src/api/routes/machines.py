@@ -355,6 +355,8 @@ async def create_serverless_machine(
         db=db
     )
     
+    wait_for_build = machine.wait_for_build
+    
     new_machine_id = uuid.uuid4()
     current_user = request.state.current_user
     user_id = current_user["user_id"]
