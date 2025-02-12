@@ -9,7 +9,7 @@ services:
       ports:
         - 4040:4040  # Expose ngrok admin interface
       healthcheck:
-        test: ["CMD", "curl", "-f", "http://localhost:4040/api/tunnels"]
+        test: ["CMD", "curl", "-f", "http://${NGROK_HOST:-host.docker.internal}:4040/api/tunnels"]
         interval: 5s
         timeout: 10s
         retries: 3
@@ -38,6 +38,7 @@ services:
         SPACES_REGION_V2: "us-east-2"
         SPACES_KEY_V2: ${SPACES_KEY_V2}
         SPACES_SECRET_V2: ${SPACES_SECRET_V2}
+        NGROK_HOST: ${NGROK_HOST:-host.docker.internal}
       volumes:
         - .:/app
       depends_on:

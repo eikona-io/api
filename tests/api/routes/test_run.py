@@ -1,20 +1,11 @@
 import requests
 import os
 
-
-def get_ngrok_url():
-    try:
-        response = requests.get("http://localhost:4040/api/tunnels")
-        return response.json()["tunnels"][0]["public_url"]
-    except:
-        return "http://localhost:8000"  # fallback url
-
-
 def get_ngrok_url_with_retry(max_retries=5, delay=1):
     """Get ngrok URL with retries"""
     for attempt in range(max_retries):
         try:
-            response = requests.get("http://host.docker.internal:4040/api/tunnels")
+            response = requests.get(f"http://{os.getenv('NGROK_HOST')}:4040/api/tunnels")
             return response.json()["tunnels"][0]["public_url"]
         except Exception as e:
             if attempt == max_retries - 1:  # Last attempt
