@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "import_failed_logs" text;

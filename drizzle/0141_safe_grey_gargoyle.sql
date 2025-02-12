@@ -1,0 +1,1 @@
+ALTER TYPE "machine_builder_version" ADD VALUE '4';

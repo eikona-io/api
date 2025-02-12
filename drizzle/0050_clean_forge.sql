@@ -1,0 +1,10 @@
+ALTER TYPE "model_type" ADD VALUE 'clip';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'clip_vision';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'configs';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'controlnet';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'upscale_models';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'ipadapter';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'gligen';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'custom';--> statement-breakpoint
+ALTER TYPE "model_type" ADD VALUE 'custom_node';--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."models" ADD COLUMN "target_symlink_path" text;

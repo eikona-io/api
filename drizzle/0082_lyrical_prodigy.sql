@@ -1,0 +1,1 @@
+ALTER TYPE "machine_status" ADD VALUE 'starting';

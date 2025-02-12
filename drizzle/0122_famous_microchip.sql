@@ -1,0 +1,1 @@
+ALTER TYPE "resource_upload" ADD VALUE 'cancelled';

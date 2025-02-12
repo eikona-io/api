@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "comfyui_version" text;

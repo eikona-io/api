@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "allow_concurrent_inputs" integer DEFAULT 50;

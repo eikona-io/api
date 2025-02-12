@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "hugging_face_token" text;

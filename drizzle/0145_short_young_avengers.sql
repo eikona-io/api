@@ -1,0 +1,2 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "spend_limit" real DEFAULT 500 NOT NULL;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "max_spend_limit" real DEFAULT 1000 NOT NULL;

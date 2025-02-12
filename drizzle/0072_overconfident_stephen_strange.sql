@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."workflow_runs" ADD COLUMN "modal_function_call_id" text;

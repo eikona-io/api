@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."workflow_runs" ADD COLUMN "webhook_intermediate_status" boolean DEFAULT false NOT NULL;

@@ -5,9 +5,9 @@ from uuid import uuid4
 
 from api.database import get_db_context
 from sqlalchemy import update, select
-from database import get_clickhouse_client
-from models import Machine, MachineVersion
-from routes.utils import select
+from api.database import get_clickhouse_client
+from api.models import Machine, MachineVersion
+from api.routes.utils import select
 from pydantic import BaseModel, Field, field_validator
 from fastapi import (
     HTTPException,
@@ -27,7 +27,7 @@ import logging
 import modal
 from fastapi import APIRouter
 import tempfile
-from database import get_db
+from api.database import get_db
 import shutil
 
 machine_id_websocket_dict = {}
@@ -38,7 +38,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import Depends
-from database import get_clickhouse_client
+from api.database import get_clickhouse_client
 from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime as dt

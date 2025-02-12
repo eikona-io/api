@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "credit" real DEFAULT 0 NOT NULL;

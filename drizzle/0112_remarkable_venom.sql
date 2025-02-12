@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_workflow_version_workflow_id" ON "comfyui_deploy"."workflow_versions" USING btree (workflow_id);

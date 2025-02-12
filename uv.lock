@@ -169,6 +169,11 @@ dependencies = [
     { name = "websockets" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aioboto3", specifier = ">=7.0.0" },
@@ -208,6 +213,9 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.30.6" },
     { name = "websockets", specifier = ">=13.0.1" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.3.3" }]
 
 [[package]]
 name = "asgiref"

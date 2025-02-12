@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "keep_warm" integer DEFAULT 0 NOT NULL;

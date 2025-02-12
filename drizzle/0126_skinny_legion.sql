@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."deployments" ADD COLUMN "featured" boolean DEFAULT false NOT NULL;

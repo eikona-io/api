@@ -1,0 +1,1 @@
+ALTER TYPE "model_type" ADD VALUE 'unet';

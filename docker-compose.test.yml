@@ -1,0 +1,102 @@
+services:
+  ngrok:
+      image: ngrok/ngrok:latest
+      command:
+        - "http"
+        - "app:8000"  # Changed to use the service name instead of host.docker.internal
+      environment:
+        NGROK_AUTHTOKEN: 2svuqxtDj2r0cc84qYVZyKLHyYB_aiGBkFzNTTQowUmjJkMo
+      ports:
+        - 4040:4040  # Expose ngrok admin interface
+  app:
+      build:
+        context: .
+        dockerfile: Dockerfile.test  # Specify the test Dockerfile
+      command: /bin/sh -c "bun install && bun run migrate-local && uv run pytest -s"  # This will run your tests when the container starts
+      environment:
+        DATABASE_URL: "postgresql://postgres:postgres@host.docker.internal:5480/verceldb"
+        JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054"
+        UPSTASH_REDIS_META_REST_URL: "http://host.docker.internal:8079"
+        UPSTASH_REDIS_META_REST_TOKEN: "example_token"
+        CLICKHOUSE_HOST: "host.docker.internal"
+        CLICKHOUSE_USER: "default"
+        CLICKHOUSE_PASSWORD: "password"
+        CLICKHOUSE_PORT: 8123
+        MODAL_ENVIRONMENT: "dev"
+        MODAL_TOKEN_ID: "ak-vwbDuwIYnpGdbUOdxrc3TR"
+        MODAL_TOKEN_SECRET: "as-Wda0YMbUjYZCYIVsQwDa1Y"
+        SPACES_BUCKET_V2: "comfy-deploy-output-dev"
+        SPACES_ENDPOINT_V2: "https://comfy-deploy-output-dev.s3.amazonaws.com"
+        SPACES_REGION_V2: "us-east-2"
+        SPACES_KEY_V2: "AKIAYS2NQM4A6FALX4SJ"
+        SPACES_SECRET_V2: "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"
+        # CURRENT_API_URL: "" You need to expose from the host
+      volumes:
+        - .:/app
+      depends_on:
+        - ngrok
+        - serverless-redis-http
+        - postgres
+        - pg_proxy
+        - clickhouse
+        - redis
+      ports:
+        - "8000:8000"
+  postgres:
+    image: "postgres:15.2-alpine"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: verceldb
+    ports:
+      - "5480:5432"
+  pg_proxy:
+    image: ghcr.io/neondatabase/wsproxy:latest
+    environment:
+      APPEND_PORT: "postgres:5432"
+      ALLOW_ADDR_REGEX: ".*"
+      LOG_TRAFFIC: "true"
+    ports:
+      - "5481:80"
+    depends_on:
+      - postgres
+  # localstack:
+  #   image: localstack/localstack:latest
+  #   environment:
+  #     SERVICES: s3
+  #   ports:
+  #     - 4566:4566
+  #   volumes:
+  #     - ./aws:/etc/localstack/init/ready.d
+  #     - ./aws:/app/web/aws
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./clickhouse/data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PASSWORD: password
+  redis:
+    image: redis:latest
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis:/data
+  serverless-redis-http:
+    ports:
+      - "8079:80"
+    image: hiett/serverless-redis-http:latest
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: example_token
+      SRH_CONNECTION_STRING: "redis://redis:6379" # Using `redis` hostname since they're in the same Docker network.

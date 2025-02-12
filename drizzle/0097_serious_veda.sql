@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."subscription_status" ADD COLUMN "last_invoice_date" timestamp DEFAULT now() NOT NULL;

@@ -219,6 +219,7 @@ class ServerlessMachineModel(BaseModel):
     extra_args: Optional[str] = None
     prestart_command: Optional[str] = None
     keep_warm: Optional[int] = 0
+    wait_for_build: Optional[bool] = False
 
 
 class UpdateServerlessMachineModel(BaseModel):
@@ -292,6 +293,7 @@ async def create_serverless_machine(
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ) -> MachineModel:
     plan = request.state.current_user.get("plan")
+    wait_for_build = machine.wait_for_build
     
     if plan == "free":
         max_machine_count = 1
@@ -316,8 +318,9 @@ async def create_serverless_machine(
 
     # async with db.begin():  # Single transaction for entire operation
     # Create initial machine
+    machine_data = machine.model_dump(exclude={'wait_for_build'})
     machine = Machine(
-        **machine.model_dump(),
+        **machine_data,
         id=new_machine_id,
         type=MachineType.COMFY_DEPLOY_SERVERLESS,
         user_id=user_id,
@@ -385,7 +388,10 @@ async def create_serverless_machine(
         machine_hash=docker_commands_hash,
     )
 
-    background_tasks.add_task(build_logic, params)
+    if wait_for_build:
+        await build_logic(params)
+    else:
+        background_tasks.add_task(build_logic, params)
 
     return JSONResponse(content=machine.to_dict())
 

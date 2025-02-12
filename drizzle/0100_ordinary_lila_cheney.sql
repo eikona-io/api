@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "allow_background_volume_commits" boolean DEFAULT false NOT NULL;

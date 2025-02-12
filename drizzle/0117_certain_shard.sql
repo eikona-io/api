@@ -1,0 +1,1 @@
+ALTER TYPE "deployment_environment" ADD VALUE 'private-share';

@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_workflow_run_outputs_run_id" ON "comfyui_deploy"."workflow_run_outputs" ("run_id");

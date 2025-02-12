@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."models" ADD COLUMN "file_hash" text;

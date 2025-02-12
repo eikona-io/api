@@ -1,0 +1,2 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "run_timeout" integer DEFAULT 300 NOT NULL;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "idle_timeout" integer DEFAULT 60 NOT NULL;
