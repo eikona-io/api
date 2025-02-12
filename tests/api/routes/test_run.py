@@ -394,6 +394,7 @@ async def test_create_workflow_deployment(client, test_serverless_machine):
         "machine_id": test_serverless_machine,
         "environment": "production",
     }
+    print(f"Deployment data: {deployment_data}")
     response = await client.post("/deployment", json=deployment_data)
     assert response.status_code == 200
     deployment_id = response.json()["id"]
