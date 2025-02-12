@@ -36,6 +36,68 @@ class DeploymentCreate(BaseModel):
     machine_id: Optional[str] = None
     machine_version_id: Optional[str] = None
     environment: str
+
+class DeploymentUpdate(BaseModel):
+    workflow_version_id: Optional[str] = None
+    machine_id: Optional[str] = None
+    machine_version_id: Optional[str] = None
+    concurrency_limit: Optional[int] = None
+    gpu: Optional[GPUType] = None
+    run_timeout: Optional[int] = None
+    idle_timeout: Optional[int] = None
+    keep_warm: Optional[int] = None
+
+async def update_deployment_with_machine(
+    deployment: Deployment,
+    machine_id: str,
+    machine_version: Optional[MachineVersion],
+    db: AsyncSession,
+    update_data: Optional[DeploymentUpdate] = None,
+) -> Deployment:
+    """Update deployment with machine and machine version information."""
+    # Store original values to check for changes
+    original_modal_image_id = deployment.modal_image_id
+    original_run_timeout = deployment.run_timeout
+    original_idle_timeout = deployment.idle_timeout
+    original_concurrency_limit = deployment.concurrency_limit
+    original_keep_warm = deployment.keep_warm
+    
+    deployment.machine_id = machine_id
+            
+    if machine_version is not None and machine_version.modal_image_id is not None:
+        deployment.machine_version_id = machine_version.id
+        deployment.modal_image_id = machine_version.modal_image_id
+        
+        # Only update these fields from machine_version if not provided in update_data
+        if update_data is None or update_data.gpu is None:
+            deployment.gpu = machine_version.gpu
+        if update_data is None or update_data.run_timeout is None:
+            deployment.run_timeout = machine_version.run_timeout
+        if update_data is None or update_data.idle_timeout is None:
+            deployment.idle_timeout = machine_version.idle_timeout
+    
+    # Update fields from update_data if provided
+    if update_data is not None:
+        if update_data.concurrency_limit is not None:
+            deployment.concurrency_limit = update_data.concurrency_limit
+        if update_data.gpu is not None:
+            deployment.gpu = update_data.gpu
+        if update_data.run_timeout is not None:
+            deployment.run_timeout = update_data.run_timeout
+        if update_data.idle_timeout is not None:
+            deployment.idle_timeout = update_data.idle_timeout
+        if update_data.keep_warm is not None:
+            deployment.keep_warm = update_data.keep_warm
+
+    # Check if any deployment-critical parameters have changed
+    should_redeploy = (
+        (machine_version is not None and machine_version.modal_image_id is not None and original_modal_image_id != machine_version.modal_image_id) or
+        original_run_timeout != deployment.run_timeout or
+        original_idle_timeout != deployment.idle_timeout or
+        original_concurrency_limit != deployment.concurrency_limit
+    )
+
+
     description: Optional[str] = None
     share_slug: Optional[str] = None
 
@@ -100,6 +162,24 @@ async def update_deployment_with_machine(
     )
 
 
+    if should_redeploy:
+        # We should trigger a redeploy with the final values
+        await redeploy_comfy_deploy_runner_if_exists(machine_id, deployment.gpu, deployment)
+
+    # Handle keep_warm changes
+    keep_warm_changed = original_keep_warm != deployment.keep_warm
+    if keep_warm_changed:
+        logger.info(f"Keep warm changed for deployment {deployment.id} to {deployment.keep_warm}")
+        try:
+            await set_machine_always_on(
+                str(deployment.id),
+                KeepWarmBody(warm_pool_size=deployment.keep_warm, gpu=GPUType(deployment.gpu)),
+            )
+        except Exception as e:
+            # This is expected to fail if the deployment is not found
+            logger.warning(f"Error setting machine always on: {e}", exc_info=True)
+                
+    return deployment
     if should_redeploy:
         # We should trigger a redeploy with the final values
         await redeploy_comfy_deploy_runner_if_exists(machine_id, deployment.gpu, deployment)
