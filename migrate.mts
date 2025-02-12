@@ -28,7 +28,7 @@ const db = drizzle(sql, {
   logger: true,
 });
 
-let retries = 5;
+let retries = 20;
 while (retries) {
   try {
     await sql`SELECT NOW()`;
