@@ -744,7 +744,6 @@ async def create_workflow(
         )
 
         db.add(new_workflow)
-        await db.flush()
         workflow_id = new_workflow.id
 
         # Create workflow version
