@@ -380,12 +380,12 @@ async def test_create_workflow_deployment(client, test_serverless_machine):
         "machine_id": test_serverless_machine,
     }
     response = await client.post("/workflow", json=workflow_data)
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Workflow creation failed with response: {response.text}"
     workflow_id = response.json()["workflow_id"]
     
     # Get the workflow version id
     response = await client.get(f"/workflow/{workflow_id}/versions")
-    assert response.status_code == 200
+    assert response.status_code == 200, f"Getting workflow versions failed with response: {response.text}"
     workflow_version_id = response.json()[0]["id"]
     
     deployment_data = {
@@ -396,7 +396,10 @@ async def test_create_workflow_deployment(client, test_serverless_machine):
     }
     print(f"Deployment data: {deployment_data}")
     response = await client.post("/deployment", json=deployment_data)
-    assert response.status_code == 200
+    if response.status_code != 200:
+        print(f"Deployment creation failed with status {response.status_code}")
+        print(f"Response body: {response.text}")
+        raise AssertionError(f"Deployment creation failed: {response.text}")
     deployment_id = response.json()["id"]
     
     yield deployment_id
