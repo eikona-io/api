@@ -5,7 +5,7 @@ services:
         - "http"
         - "app:8000"  # Changed to use the service name instead of host.docker.internal
       environment:
-        NGROK_AUTHTOKEN: 2svuqxtDj2r0cc84qYVZyKLHyYB_aiGBkFzNTTQowUmjJkMo
+        NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
       ports:
         - 4040:4040  # Expose ngrok admin interface
   app:
