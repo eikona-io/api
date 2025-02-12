@@ -36,6 +36,8 @@ class DeploymentCreate(BaseModel):
     machine_id: Optional[str] = None
     machine_version_id: Optional[str] = None
     environment: str
+    description: Optional[str] = None
+    share_slug: Optional[str] = None
 
 class DeploymentUpdate(BaseModel):
     workflow_version_id: Optional[str] = None
@@ -97,9 +99,6 @@ async def update_deployment_with_machine(
         original_concurrency_limit != deployment.concurrency_limit
     )
 
-
-    description: Optional[str] = None
-    share_slug: Optional[str] = None
 
 class DeploymentUpdate(BaseModel):
     workflow_version_id: Optional[str] = None
