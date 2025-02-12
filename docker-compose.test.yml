@@ -11,14 +11,17 @@ services:
   app:
       build:
         context: .
-        dockerfile: Dockerfile.test  # Specify the test Dockerfile
-      command: /bin/sh -c "bun install && bun run migrate-local && uv run pytest -s"  # This will run your tests when the container starts
+        dockerfile: Dockerfile.test
+      command: /bin/sh -c "bun install && bun run migrate-local && uv run pytest -s"
       environment:
-        DATABASE_URL: "postgresql://postgres:postgres@host.docker.internal:5480/verceldb"
-        JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054" # This is a temporary secret
-        UPSTASH_REDIS_META_REST_URL: "http://host.docker.internal:8079"
+        # Default to host.docker.internal, override in CI
+        DATABASE_URL: "postgresql://postgres:postgres@${DB_HOST:-host.docker.internal}:5432/verceldb"
+        JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054"
+        # Default to host.docker.internal, override in CI
+        UPSTASH_REDIS_META_REST_URL: "http://${REDIS_HOST:-host.docker.internal}:80"
         UPSTASH_REDIS_META_REST_TOKEN: "example_token"
-        CLICKHOUSE_HOST: "host.docker.internal"
+        # Default to host.docker.internal, override in CI
+        CLICKHOUSE_HOST: "${CH_HOST:-host.docker.internal}"
         CLICKHOUSE_USER: "default"
         CLICKHOUSE_PASSWORD: "password"
         CLICKHOUSE_PORT: 8123
@@ -35,10 +38,11 @@ services:
       depends_on:
         - ngrok
         - serverless-redis-http
-        - postgres
         - pg_proxy
         - clickhouse
         - redis
+        - postgres:
+            condition: service_healthy
       ports:
         - "8000:8000"
   postgres:
@@ -49,6 +53,11 @@ services:
       POSTGRES_DB: verceldb
     ports:
       - "5480:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
   pg_proxy:
     image: ghcr.io/neondatabase/wsproxy:latest
     environment:
