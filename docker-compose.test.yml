@@ -8,6 +8,11 @@ services:
         NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
       ports:
         - 4040:4040  # Expose ngrok admin interface
+      healthcheck:
+        test: ["CMD", "curl", "-f", "http://localhost:4040/api/tunnels"]
+        interval: 5s
+        timeout: 10s
+        retries: 3
   app:
       build:
         context: .
@@ -37,7 +42,7 @@ services:
         - .:/app
       depends_on:
         ngrok:
-          condition: service_started
+          condition: service_healthy
         serverless-redis-http:
           condition: service_started
         pg_proxy:
