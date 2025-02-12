@@ -282,7 +282,7 @@ async def create_deployment(
     except Exception as e:
         logger.error(f"Error creating deployment: {e}", exc_info=True)
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error: " + str(e))
 
 @router.patch(
     "/deployment/{deployment_id}",
