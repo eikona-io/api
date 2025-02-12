@@ -36,13 +36,18 @@ services:
       volumes:
         - .:/app
       depends_on:
-        - ngrok
-        - serverless-redis-http
-        - pg_proxy
-        - clickhouse
-        - redis
-        - postgres:
-            condition: service_healthy
+        ngrok:
+          condition: service_started
+        serverless-redis-http:
+          condition: service_started
+        pg_proxy:
+          condition: service_started
+        clickhouse:
+          condition: service_started
+        redis:
+          condition: service_started
+        postgres:
+          condition: service_healthy
       ports:
         - "8000:8000"
   postgres:
