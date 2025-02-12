@@ -114,9 +114,10 @@ async def test_user():
         )
         db.add(user)
     yield user
-    async with get_db_context() as db:
-        db.delete(user)
-        await db.commit()
+    # Skip deleting the user, beucase other data might depends on this
+    # async with get_db_context() as db:
+    #     await db.delete(user)
+    #     await db.commit()
 
 
 @pytest_asyncio.fixture(scope="session")
