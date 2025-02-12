@@ -15,7 +15,7 @@ services:
       command: /bin/sh -c "bun install && bun run migrate-local && uv run pytest -s"  # This will run your tests when the container starts
       environment:
         DATABASE_URL: "postgresql://postgres:postgres@host.docker.internal:5480/verceldb"
-        JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054"
+        JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054" # This is a temporary secret
         UPSTASH_REDIS_META_REST_URL: "http://host.docker.internal:8079"
         UPSTASH_REDIS_META_REST_TOKEN: "example_token"
         CLICKHOUSE_HOST: "host.docker.internal"
@@ -23,14 +23,13 @@ services:
         CLICKHOUSE_PASSWORD: "password"
         CLICKHOUSE_PORT: 8123
         MODAL_ENVIRONMENT: "dev"
-        MODAL_TOKEN_ID: "ak-vwbDuwIYnpGdbUOdxrc3TR"
-        MODAL_TOKEN_SECRET: "as-Wda0YMbUjYZCYIVsQwDa1Y"
+        MODAL_TOKEN_ID: ${MODAL_TOKEN_ID}
+        MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET}
         SPACES_BUCKET_V2: "comfy-deploy-output-dev"
         SPACES_ENDPOINT_V2: "https://comfy-deploy-output-dev.s3.amazonaws.com"
         SPACES_REGION_V2: "us-east-2"
-        SPACES_KEY_V2: "AKIAYS2NQM4A6FALX4SJ"
-        SPACES_SECRET_V2: "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"
-        # CURRENT_API_URL: "" You need to expose from the host
+        SPACES_KEY_V2: ${SPACES_KEY_V2}
+        SPACES_SECRET_V2: ${SPACES_SECRET_V2}
       volumes:
         - .:/app
       depends_on:
