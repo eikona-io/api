@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."gpu_events" ADD COLUMN "machine_version_id" uuid;

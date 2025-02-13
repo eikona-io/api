@@ -117,6 +117,7 @@ class WorkflowVersion(SerializableMixin, Base):
 
     machine_version_id = Column(UUID(as_uuid=True))
     machine_id = Column(UUID(as_uuid=True))
+    comfyui_snapshot = Column(JSON)
 
     workflow_rel = relationship("Workflow", back_populates="versions")
     # user = relationship("User", back_populates="workflow_versions")

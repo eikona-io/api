@@ -3,12 +3,13 @@ import uuid
 from api.routes.run import redeploy_comfy_deploy_runner_if_exists
 from api.utils.inputs import get_inputs_from_workflow_api
 from api.utils.outputs import get_outputs_from_workflow
+from api.routes.platform import get_clerk_data_with_slug
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
-from .types import DeploymentModel, DeploymentEnvironment
+from .types import DeploymentModel, DeploymentEnvironment, DeploymentShareModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
-from api.models import Deployment, Machine, MachineVersion, Workflow
+from api.models import Deployment, Machine, MachineVersion, User, Workflow
 from api.database import get_db
 from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
@@ -35,6 +36,69 @@ class DeploymentCreate(BaseModel):
     machine_id: Optional[str] = None
     machine_version_id: Optional[str] = None
     environment: str
+    description: Optional[str] = None
+    share_slug: Optional[str] = None
+
+class DeploymentUpdate(BaseModel):
+    workflow_version_id: Optional[str] = None
+    machine_id: Optional[str] = None
+    machine_version_id: Optional[str] = None
+    concurrency_limit: Optional[int] = None
+    gpu: Optional[GPUType] = None
+    run_timeout: Optional[int] = None
+    idle_timeout: Optional[int] = None
+    keep_warm: Optional[int] = None
+
+async def update_deployment_with_machine(
+    deployment: Deployment,
+    machine_id: str,
+    machine_version: Optional[MachineVersion],
+    db: AsyncSession,
+    update_data: Optional[DeploymentUpdate] = None,
+) -> Deployment:
+    """Update deployment with machine and machine version information."""
+    # Store original values to check for changes
+    original_modal_image_id = deployment.modal_image_id
+    original_run_timeout = deployment.run_timeout
+    original_idle_timeout = deployment.idle_timeout
+    original_concurrency_limit = deployment.concurrency_limit
+    original_keep_warm = deployment.keep_warm
+    
+    deployment.machine_id = machine_id
+            
+    if machine_version is not None and machine_version.modal_image_id is not None:
+        deployment.machine_version_id = machine_version.id
+        deployment.modal_image_id = machine_version.modal_image_id
+        
+        # Only update these fields from machine_version if not provided in update_data
+        if update_data is None or update_data.gpu is None:
+            deployment.gpu = machine_version.gpu
+        if update_data is None or update_data.run_timeout is None:
+            deployment.run_timeout = machine_version.run_timeout
+        if update_data is None or update_data.idle_timeout is None:
+            deployment.idle_timeout = machine_version.idle_timeout
+    
+    # Update fields from update_data if provided
+    if update_data is not None:
+        if update_data.concurrency_limit is not None:
+            deployment.concurrency_limit = update_data.concurrency_limit
+        if update_data.gpu is not None:
+            deployment.gpu = update_data.gpu
+        if update_data.run_timeout is not None:
+            deployment.run_timeout = update_data.run_timeout
+        if update_data.idle_timeout is not None:
+            deployment.idle_timeout = update_data.idle_timeout
+        if update_data.keep_warm is not None:
+            deployment.keep_warm = update_data.keep_warm
+
+    # Check if any deployment-critical parameters have changed
+    should_redeploy = (
+        (machine_version is not None and machine_version.modal_image_id is not None and original_modal_image_id != machine_version.modal_image_id) or
+        original_run_timeout != deployment.run_timeout or
+        original_idle_timeout != deployment.idle_timeout or
+        original_concurrency_limit != deployment.concurrency_limit
+    )
+
 
 class DeploymentUpdate(BaseModel):
     workflow_version_id: Optional[str] = None
@@ -115,6 +179,24 @@ async def update_deployment_with_machine(
             logger.warning(f"Error setting machine always on: {e}", exc_info=True)
                 
     return deployment
+    if should_redeploy:
+        # We should trigger a redeploy with the final values
+        await redeploy_comfy_deploy_runner_if_exists(machine_id, deployment.gpu, deployment)
+
+    # Handle keep_warm changes
+    keep_warm_changed = original_keep_warm != deployment.keep_warm
+    if keep_warm_changed:
+        logger.info(f"Keep warm changed for deployment {deployment.id} to {deployment.keep_warm}")
+        try:
+            await set_machine_always_on(
+                str(deployment.id),
+                KeepWarmBody(warm_pool_size=deployment.keep_warm, gpu=GPUType(deployment.gpu)),
+            )
+        except Exception as e:
+            # This is expected to fail if the deployment is not found
+            logger.warning(f"Error setting machine always on: {e}", exc_info=True)
+                
+    return deployment
 
 @router.post(
     "/deployment",
@@ -156,7 +238,7 @@ async def create_deployment(
             result = await db.execute(machine_version_query)
             machine_version = result.scalar_one_or_none()
             machine_id = machine_version.machine_id
-            
+
         # Get current machine and machine version
         machine_query = select(Machine).where(Machine.id == machine_id)
         result = await db.execute(machine_query)
@@ -171,7 +253,9 @@ async def create_deployment(
 
         if existing_deployment:
             # Update existing deployment
+            existing_deployment.share_slug = deployment_data.share_slug
             existing_deployment.workflow_version_id = deployment_data.workflow_version_id
+            existing_deployment.description = deployment_data.description
             deployment = await update_deployment_with_machine(existing_deployment, machine_id, machine_version, db)
         else:
             # Create new deployment object
@@ -182,6 +266,8 @@ async def create_deployment(
                 workflow_version_id=deployment_data.workflow_version_id,
                 workflow_id=deployment_data.workflow_id,
                 environment=deployment_data.environment,
+                description=deployment_data.description,
+                share_slug=deployment_data.share_slug,
             )
             deployment = await update_deployment_with_machine(deployment, machine_id, machine_version, db)
             db.add(deployment)
@@ -192,11 +278,10 @@ async def create_deployment(
         # Convert to dict
         deployment_dict = deployment.to_dict()
         return deployment_dict
-
     except Exception as e:
         logger.error(f"Error creating deployment: {e}", exc_info=True)
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error: " + str(e))
 
 @router.patch(
     "/deployment/{deployment_id}",
@@ -313,3 +398,60 @@ async def get_deployments(
     except Exception as e:
         logger.error(f"Error getting deployments: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/share/{username}/{slug}",
+    response_model=DeploymentShareModel,
+)
+async def get_share_deployment(
+    request: Request,
+    username: str,
+    slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    user_data = await get_clerk_data_with_slug(username)
+    if user_data["type"] == "none":
+        raise HTTPException(status_code=404, detail="User or organization not found")
+
+    # get the deployment with the user id and slug (share_slug)
+    deployment_query = (
+        select(Deployment)
+        .options(
+            joinedload(Deployment.workflow).load_only(Workflow.name),
+            joinedload(Deployment.version),
+        )
+        .join(Workflow)
+        .where(
+            Deployment.share_slug == slug,
+            Deployment.environment == "public-share",
+            Workflow.deleted == False,
+        )
+    )
+    if user_data["type"] == "user":
+        deployment_query = deployment_query.where(Deployment.user_id == user_data["id"])
+    elif user_data["type"] == "org":
+        deployment_query = deployment_query.where(Deployment.org_id == user_data["id"])
+
+    result = await db.execute(deployment_query)
+    deployment = result.scalar_one_or_none()
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    # if the deployment is created in org, using userid should fail
+    if deployment.org_id and user_data["type"] == "user":
+        raise HTTPException(status_code=403, detail="You do not have access to this deployment")
+
+    workflow_api = deployment.version.workflow_api if deployment.version else None
+    inputs = get_inputs_from_workflow_api(workflow_api)
+
+    workflow = deployment.version.workflow if deployment.version else None
+    outputs = get_outputs_from_workflow(workflow)
+
+    # Just update the deployment with the additional fields
+    deployment_dict = deployment.to_dict()
+    deployment_dict["input_types"] = inputs
+    deployment_dict["output_types"] = outputs
+
+    # FastAPI will automatically filter based on DeploymentModel
+    return deployment_dict

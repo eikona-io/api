@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 import aiohttp
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import asyncio
 
 router = APIRouter(
     tags=["Platform"],
@@ -516,6 +517,7 @@ async def get_upgrade_plan(
 
     return None
 
+clerk_api_key = os.getenv("CLERK_SECRET_KEY")
 
 async def get_clerk_user(user_id: str) -> dict:
     """
@@ -530,7 +532,6 @@ async def get_clerk_user(user_id: str) -> dict:
     Raises:
         HTTPException: If the API call fails
     """
-    clerk_api_key = os.getenv("CLERK_SECRET_KEY")
     headers = {
         "Authorization": f"Bearer {clerk_api_key}",
         "Content-Type": "application/json",
@@ -547,6 +548,50 @@ async def get_clerk_user(user_id: str) -> dict:
                 detail=f"Failed to fetch user data from Clerk: {await response.text()}",
             )
 
+async def get_clerk_data_with_slug(slug: str) -> dict:
+    headers = {
+        "Authorization": f"Bearer {clerk_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    async def fetch_user():
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.clerk.com/v1/users",
+                headers=headers,
+                params={"username": slug, "limit": 1}
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    # Check if data is a list and has items
+                    if isinstance(data, list) and len(data) > 0:
+                        return {"id": data[0]["id"], "type": "user"}  # Return a dict with just the ID
+                    return None
+                return None
+
+    async def fetch_org():
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://api.clerk.com/v1/organizations/{slug}", headers=headers
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {"id": data["id"], "type": "org"}
+                return None
+
+    user_data, org_data = await asyncio.gather(
+        fetch_user(),
+        fetch_org(),
+        return_exceptions=True
+    )
+
+    if org_data:
+        return org_data
+    elif user_data:
+        return user_data
+
+    # If neither found, return None or empty dict
+    return {"type": "none", "id": None}
 
 @router.get("/platform/checkout")
 async def stripe_checkout(

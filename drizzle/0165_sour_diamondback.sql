@@ -1,0 +1,1 @@
+ALTER TYPE "machine_gpu" ADD VALUE 'L40S';

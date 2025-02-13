@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."trainings" ADD COLUMN "request_id" text;

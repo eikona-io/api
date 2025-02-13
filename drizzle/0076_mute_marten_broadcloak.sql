@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "install_custom_node_with_gpu" boolean DEFAULT false;

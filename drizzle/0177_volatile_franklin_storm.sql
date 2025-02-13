@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."deployments" DROP CONSTRAINT "deployments_share_slug_unique";

@@ -1,0 +1,2 @@
+ALTER TABLE "comfyui_deploy"."machine_versions" ADD COLUMN "status" "machine_status" DEFAULT 'ready' NOT NULL;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."machine_versions" ADD COLUMN "build_log" text;

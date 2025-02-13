@@ -55,7 +55,7 @@ async def get_clickhouse_client():
                 host=os.getenv("CLICKHOUSE_HOST"),
                 user=os.getenv("CLICKHOUSE_USER"),
                 password=os.getenv("CLICKHOUSE_PASSWORD"),
-                secure=False if os.getenv("CLICKHOUSE_HOST") == "localhost" else True,
+                secure=False if os.getenv("CLICKHOUSE_HOST") in ["localhost", "host.docker.internal", "clickhouse"] else True,
                 pool_mgr=big_pool_mgr,
                 port=os.getenv("CLICKHOUSE_PORT", None),
             )

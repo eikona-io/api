@@ -744,7 +744,6 @@ async def create_workflow(
         )
 
         db.add(new_workflow)
-        await db.flush()
         workflow_id = new_workflow.id
 
         # Create workflow version
@@ -787,6 +786,7 @@ class WorkflowVersionCreate(BaseModel):
     comment: Optional[str] = None
     machine_id: Optional[str] = None
     machine_version_id: Optional[str] = None
+    comfyui_snapshot: Optional[Dict[str, Any]] = None
 
 
 @router.post("/workflow/{workflow_id}/version")
@@ -837,6 +837,7 @@ async def create_workflow_version(
             comment=version_data.comment,
             machine_version_id=version_data.machine_version_id,
             machine_id=version_data.machine_id,
+            comfyui_snapshot=version_data.comfyui_snapshot,
         )
         db.add(new_version)
 

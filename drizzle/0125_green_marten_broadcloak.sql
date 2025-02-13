@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."workflow_run_outputs" ADD COLUMN "node_meta" jsonb;

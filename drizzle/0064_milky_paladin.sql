@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."workflow_runs" ADD COLUMN "is_realtime" boolean DEFAULT false NOT NULL;

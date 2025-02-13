@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ALTER COLUMN "api_version" SET DEFAULT 'v2';

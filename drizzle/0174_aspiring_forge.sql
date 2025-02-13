@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "is_workspace" boolean DEFAULT false NOT NULL;

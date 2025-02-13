@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machine_versions" ADD COLUMN "modal_image_id" text;

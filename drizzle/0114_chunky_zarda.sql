@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."workflow_runs" ADD COLUMN "updated_at" timestamp DEFAULT now() NOT NULL;

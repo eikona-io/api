@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "legacy_mode" boolean DEFAULT false NOT NULL;

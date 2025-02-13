@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."form_submissions" ADD COLUMN "discord_thread_id" text;

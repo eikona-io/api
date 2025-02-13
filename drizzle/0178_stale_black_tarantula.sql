@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "deployments_user_slug_unique" ON "comfyui_deploy"."deployments" USING btree (user_id,share_slug) WHERE "deployments"."org_id" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "deployments_org_slug_unique" ON "comfyui_deploy"."deployments" USING btree (org_id,share_slug) WHERE "deployments"."org_id" IS NOT NULL;

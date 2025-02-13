@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "custom_output_bucket" boolean DEFAULT false;

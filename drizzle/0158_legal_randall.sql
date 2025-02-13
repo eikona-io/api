@@ -1,0 +1,2 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "max_gpu" integer DEFAULT 0;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "enable_custom_output_bucket" boolean DEFAULT false;

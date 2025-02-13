@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_deleted" ON "comfyui_deploy"."assets" USING btree (deleted,path);

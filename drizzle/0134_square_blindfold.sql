@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_workflow_run_created_at" ON "comfyui_deploy"."workflow_runs" USING btree (workflow_id,created_at);

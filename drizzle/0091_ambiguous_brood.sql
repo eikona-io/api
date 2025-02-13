@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_machines_org_id_deleted" ON "comfyui_deploy"."machines" ("org_id","deleted");

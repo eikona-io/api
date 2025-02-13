@@ -1,0 +1,2 @@
+ALTER TABLE "comfyui_deploy"."subscription_status" ADD COLUMN "last_invoice_timestamp" timestamp DEFAULT now() NOT NULL;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."subscription_status" DROP COLUMN IF EXISTS "last_invoice_date";

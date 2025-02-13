@@ -1,0 +1,1 @@
+ALTER TYPE "gpu_provider" ADD VALUE 'fal';

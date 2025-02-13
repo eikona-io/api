@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."user_settings" ADD COLUMN "always_on_machine_limit" integer DEFAULT 0;

@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "gpu_workspace" boolean DEFAULT false NOT NULL;
