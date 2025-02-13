@@ -428,14 +428,17 @@ async def create_webhook_server():
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, 'localhost', 0)  # Port 0 means random free port
+    site = web.TCPSite(runner, '0.0.0.0', 0)  # Listen on all interfaces
     await site.start()
     
     # Get the assigned port
     port = site._server.sockets[0].getsockname()[1]
     
+    # Use the service name 'app' as the hostname
+    webhook_url = f'http://app:{port}/webhook'
+    
     try:
-        yield f'http://localhost:{port}/webhook', received_webhooks
+        yield webhook_url, received_webhooks
     finally:
         await runner.cleanup()
 
