@@ -113,6 +113,22 @@ async def test_user():
     # async with get_db_context() as db:
     #     await db.delete(user)
     #     await db.commit()
+    
+@pytest_asyncio.fixture(scope="session")
+async def test_user_2():
+    async with get_db_context() as db:
+        user = User(
+            id=str(uuid4()),
+            username="test_user_2",
+            name="Test User 2",
+        )
+        db.add(user)
+    yield user
+    # Skip deleting the user, beucase other data might depends on this
+    # async with get_db_context() as db:
+    #     await db.delete(user)
+    #     await db.commit()
+
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -484,3 +500,15 @@ async def test_run_deployment_with_webhook(app, test_user, test_create_workflow_
                 assert "status" in webhook, "Webhook missing status field"
                 assert "progress" in webhook, "Webhook missing progress field"
                 assert webhook["run_id"] == run_id, "Run ID mismatch in webhook"
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_on_a_wrong_user(app, test_user, test_user_2, test_create_workflow_deployment):
+    """Test running a deployment with webhook notifications and machine"""
+    deployment_id = test_create_workflow_deployment
+    
+    async with get_test_client(app, test_user_2) as client:
+        response = await client.post("/run/deployment/sync", json={"deployment_id": deployment_id})
+        print(f"Response status: {response.status_code}")
+        print(f"Response content: {response.text}")
+        assert response.status_code == 404, "Expected 403 status code for wrong user"
