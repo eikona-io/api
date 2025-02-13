@@ -97,7 +97,7 @@ router = APIRouter(tags=["Session"])
 beta_router = APIRouter(tags=["Beta"])
 
 status_endpoint = os.environ.get("CURRENT_API_URL") + "/api/update-run"
-
+print("status_endpoint", status_endpoint)
 
 async def get_comfy_runner(
     machine_id: str, session_id: str | UUID, timeout: int, gpu: str

@@ -38,6 +38,7 @@ import math
 from typing import Dict, List, Set
 from pydantic import ValidationError, BaseModel
 from uuid import UUID
+import random
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -642,11 +643,19 @@ async def retry_fetch(url, options, num_retries=3):
         try:
             response = await fetch_with_timeout(url, options)
             if not response.ok and i < num_retries - 1:
-                continue  # Retry if the response is not ok and retries are left
+                # Calculate exponential backoff with jitter
+                base_delay = 0.5 * (2 ** i)  # 0.5s, 1s, 2s, 4s, etc.
+                jitter = random.uniform(0, 0.1 * base_delay)  # Add up to 10% jitter
+                await asyncio.sleep(base_delay + jitter)
+                continue
             return response
         except Exception as error:
             if i == num_retries - 1:
-                raise error  # Throw error if it's the last retry
+                raise error
+            # Same exponential backoff for exceptions
+            base_delay = 0.5 * (2 ** i)
+            jitter = random.uniform(0, 0.1 * base_delay)
+            await asyncio.sleep(base_delay + jitter)
 
 
 PermissionType = Literal[

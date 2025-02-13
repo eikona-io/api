@@ -9,7 +9,8 @@
     "start": "uv run src/api/__init__.py",
     "migrate-production": "bun run migrate.mts",
     "migrate-local": "SSL=false LOCAL=true bun run migrate.mts",
-    "generate": "bunx drizzle-kit generate"
+    "generate": "bunx drizzle-kit generate",
+    "test": "docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans"
   },
   "dependencies": {
     "nodemon": "3.1.4",
