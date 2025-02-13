@@ -32,6 +32,7 @@ from enum import Enum
 import asyncio
 import time
 from collections import deque
+import shutil
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 
@@ -1227,6 +1228,31 @@ class ComfyDeployRunner:
     async def close_container(self):
         await self.timeout_and_exit(0, True)
 
+    def disable_customnodes(self, nodes_to_disable: list[str]):
+        """
+        Disable specified custom nodes by renaming their directories
+        Args:
+            nodes_to_disable: List of custom node directory names to disable
+        """
+        import shutil
+        from datetime import datetime
+        import time
+        
+        for node in nodes_to_disable:
+            node_path = f"/comfyui/custom_nodes/{node}"
+            node_disabled_path = f"/comfyui/custom_nodes/{node}.disabled"
+            if os.path.exists(node_path):
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f"[{timestamp}] Disabling custom node: {node}")
+                try:
+                    start_time = time.time()
+                    shutil.move(node_path, node_disabled_path)
+                    elapsed_time = time.time() - start_time
+                    print(f"[{timestamp}] Successfully disabled {node} (took {elapsed_time:.2f} seconds)")
+                except Exception as e:
+                    elapsed_time = time.time() - start_time
+                    print(f"[{timestamp}] Failed to disable {node}: {e} (took {elapsed_time:.2f} seconds)")
+
     @enter()
     async def setup(self):
         # Make sure that the ComfyUI API is available
@@ -1235,16 +1261,19 @@ class ComfyDeployRunner:
         public_model_volume.reload()
         self.private_volume.reload()
 
-        directory_path = "/comfyui/models"
-        if os.path.exists(directory_path):
-            directory_contents = os.listdir(directory_path)
-            directory_path = "/comfyui/models/ipadapter"
-            print(directory_contents)
-            if os.path.exists(directory_path):
-                directory_contents = os.listdir(directory_path)
-                print(directory_contents)
-        else:
-            print(f"Directory {directory_path} does not exist.")
+        # Disable specified custom nodes
+        self.disable_customnodes(["ComfyUI-Manager"])
+
+        # directory_path = "/comfyui/models"
+        # if os.path.exists(directory_path):
+        #     directory_contents = os.listdir(directory_path)
+        #     directory_path = "/comfyui/models/ipadapter"
+        #     print(directory_contents)
+        #     if os.path.exists(directory_path):
+        #         directory_contents = os.listdir(directory_path)
+        #         print(directory_contents)
+        # else:
+        #     print(f"Directory {directory_path} does not exist.")
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
             comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU")
