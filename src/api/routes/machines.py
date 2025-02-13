@@ -22,7 +22,7 @@ from api.utils.docker import (
     generate_all_docker_commands,
     comfyui_hash,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, constr
 from .types import (
     GPUEventModel,
     MachineGPU,
@@ -200,10 +200,11 @@ class DockerCommand(BaseModel):
     when: Literal["before", "after"]
     commands: List[str]
 
+GitCommitHash = constr(pattern=r'^[a-fA-F0-9]{40}$')
 
 class ServerlessMachineModel(BaseModel):
     name: str
-    comfyui_version: Optional[str] = comfyui_hash
+    comfyui_version: Optional[GitCommitHash] = comfyui_hash
     gpu: MachineGPU
     docker_command_steps: Optional[Dict[str, Any]] = {"steps": []}
     allow_concurrent_inputs: int = 1
@@ -224,7 +225,7 @@ class ServerlessMachineModel(BaseModel):
 
 class UpdateServerlessMachineModel(BaseModel):
     name: Optional[str] = None
-    comfyui_version: Optional[str] = None
+    comfyui_version: Optional[GitCommitHash] = None
     gpu: Optional[MachineGPU] = None
     docker_command_steps: Optional[Dict[str, Any]] = None
     allow_concurrent_inputs: Optional[int] = None
