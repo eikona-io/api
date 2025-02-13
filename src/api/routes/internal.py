@@ -328,21 +328,36 @@ async def update_run(
         workflow_run = cast(WorkflowRun, workflow_run)
         
         if workflow_run.webhook is not None:
-            # Parse the webhook URL and get query parameters
-            parsed_url = urlparse(workflow_run.webhook)
-            query_params = dict(pair.split('=') for pair in parsed_url.query.split('&')) if parsed_url.query else {}
-            
-            # Get target_events from query params and split into list
-            target_events = query_params.get('target_events', '').split(',')
-            target_events = [event.strip() for event in target_events if event.strip()]
-            
-            # Send webhook if no target_events specified or if the event type is in target_events
-            if not target_events or "run.output" in target_events:
-                workflow_run_data = workflow_run.to_dict()
-                workflow_run_data["outputs"] = [newOutput.to_dict()]
-                asyncio.create_task(
-                    send_webhook(workflow_run_data, updated_at, workflow_run.id, "run.output")
-                )
+            try:
+                # Parse the webhook URL and get query parameters
+                parsed_url = urlparse(workflow_run.webhook)
+                query_params = {}
+                
+                if parsed_url.query:
+                    # Safely parse query parameters
+                    for param in parsed_url.query.split('&'):
+                        try:
+                            if '=' in param:
+                                key, value = param.split('=', 1)
+                                query_params[key] = value
+                        except Exception:
+                            # Skip malformed query parameters
+                            continue
+                
+                # Get target_events from query params and split into list
+                target_events = query_params.get('target_events', '').split(',')
+                target_events = [event.strip() for event in target_events if event.strip()]
+                
+                # Send webhook if no target_events specified or if the event type is in target_events
+                if not target_events or "run.output" in target_events:
+                    workflow_run_data = workflow_run.to_dict()
+                    workflow_run_data["outputs"] = [newOutput.to_dict()]
+                    asyncio.create_task(
+                        send_webhook(workflow_run_data, updated_at, workflow_run.id, "run.output")
+                    )
+            except Exception as e:
+                # Log the error but don't send webhook
+                logging.error(f"Error processing webhook URL parameters: {str(e)}")
 
         # TODO: Send to upload to clickhouse
         output_data = [
