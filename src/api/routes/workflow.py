@@ -48,6 +48,7 @@ from api.models import (
 from api.database import get_db
 import logging
 from typing import Any, Dict, List, Optional
+from .share import get_dub_link
 # from fastapi_pagination import Page, add_pagination, paginate
 
 logger = logging.getLogger(__name__)
@@ -681,6 +682,11 @@ async def get_deployments(
 
         if outputs:
             deployment_dict["output_types"] = outputs
+            
+        if deployment.environment == "public-share" and deployment.share_slug:
+            dub_link = await get_dub_link(deployment.share_slug)
+            if dub_link:
+                deployment_dict["dub_link"] = dub_link.short_link
 
         deployments_data.append(deployment_dict)
 

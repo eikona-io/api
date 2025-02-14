@@ -23,6 +23,8 @@ import aiohttp
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import asyncio
+import unicodedata
+import re
 
 router = APIRouter(
     tags=["Platform"],
@@ -548,50 +550,48 @@ async def get_clerk_user(user_id: str) -> dict:
                 detail=f"Failed to fetch user data from Clerk: {await response.text()}",
             )
 
-async def get_clerk_data_with_slug(slug: str) -> dict:
+async def get_clerk_org(org_id: str) -> dict:
     headers = {
         "Authorization": f"Bearer {clerk_api_key}",
         "Content-Type": "application/json",
     }
 
-    async def fetch_user():
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "https://api.clerk.com/v1/users",
-                headers=headers,
-                params={"username": slug, "limit": 1}
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    # Check if data is a list and has items
-                    if isinstance(data, list) and len(data) > 0:
-                        return {"id": data[0]["id"], "type": "user"}  # Return a dict with just the ID
-                    return None
-                return None
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"https://api.clerk.com/v1/organizations/{org_id}", headers=headers
+        ) as response:
+            if response.status == 200:
+                return await response.json()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to fetch org data from Clerk: {await response.text()}",
+            )
 
-    async def fetch_org():
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"https://api.clerk.com/v1/organizations/{slug}", headers=headers
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return {"id": data["id"], "type": "org"}
-                return None
+async def slugify(workflow_name: str, current_user_id: str) -> str:
+    slug_part = re.sub(
+        r'[-\s]+',                                # Replace spaces or multiple dashes with single dash
+        '-',
+        re.sub(
+            r'[^\w\s-]',                          # Remove special chars
+            '',
+            unicodedata.normalize('NFKD', workflow_name)    # Normalize Unicode
+            .encode('ascii', 'ignore')             # Remove non-ascii
+            .decode('ascii')                       # Convert back to string
+        ).strip().lower()
+    ).strip('-')                                  # Remove leading/trailing dashes
 
-    user_data, org_data = await asyncio.gather(
-        fetch_user(),
-        fetch_org(),
-        return_exceptions=True
-    )
+    user_part = None
+    prefix, _, _ = current_user_id.partition("_")
 
-    if org_data:
-        return org_data
-    elif user_data:
-        return user_data
+    if prefix == "org":
+        org_data = await get_clerk_org(current_user_id)
+        user_part = org_data["slug"].lower()
+    elif prefix == "user":
+        user_data = await get_clerk_user(current_user_id)
+        user_part = user_data["username"].lower()
 
-    # If neither found, return None or empty dict
-    return {"type": "none", "id": None}
+    return f"{user_part}_{slug_part}"
+
 
 @router.get("/platform/checkout")
 async def stripe_checkout(
@@ -1124,3 +1124,4 @@ async def get_dashboard_url(
     return JSONResponse({
         "url": session.url
     })
+

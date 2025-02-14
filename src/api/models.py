@@ -325,7 +325,7 @@ class Deployment(SerializableMixin, Base):
         nullable=False,
     )
     machine_id = Column(UUID(as_uuid=True), ForeignKey("machines.id"), nullable=False)
-    share_slug = Column(String, unique=True)
+    share_slug = Column(String)
     description = Column(String)
     share_options = Column(JSON)
     showcase_media = Column(JSON)

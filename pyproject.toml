@@ -41,6 +41,7 @@ dependencies = [
     "stripe>=11.3.0",
     "resend>=2.5.1",
     "discord-py>=2.4.0",
+    "dub==0.18.2",
 ]
 
 [build-system]
