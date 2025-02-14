@@ -35,7 +35,7 @@ async def create_dub_link(url: str, slug: str) -> Optional[str]:
                 "external_id": slug,
                 "proxy": True,
                 "title": f"Comfy Deploy Share - {slug}",
-                "rewrite": True,
+                # "rewrite": True,
             }
         )
     except Exception as e:
@@ -81,7 +81,7 @@ async def update_dub_link(link_id: str, url: str, slug: str) -> Optional[str]:
                 "external_id": slug,
                 "proxy": True,
                 "title": f"Comfy Deploy Share - {slug}",
-                "rewrite": True,
+                # "rewrite": True,
             },
         )
     except Exception as e:
