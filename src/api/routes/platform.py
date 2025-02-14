@@ -16,7 +16,7 @@ from api.middleware.auth import (
   create_api_key as create_api_key_auth
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text
+from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import JSONResponse, RedirectResponse
 import aiohttp
@@ -887,6 +887,11 @@ async def get_usage_details(
                 GPUEvent.user_id == user_id,
             )
         )
+        
+    # Filter out public share workflows
+    conditions.append(
+        GPUEvent.environment != "public-share"
+    )
 
     # Create the query
     query = (
