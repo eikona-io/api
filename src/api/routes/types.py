@@ -615,7 +615,7 @@ class DeploymentShareModel(BaseModel):
     user_id: str
     org_id: Optional[str]
     share_slug: str
-    description: str
+    description: Optional[str] = None
     workflow: Dict[str, Optional[str]]
     input_types: Optional[List[Dict[str, Any]]]
     output_types: Optional[List[Dict[str, Any]]]
