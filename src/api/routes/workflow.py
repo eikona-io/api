@@ -762,6 +762,18 @@ async def create_workflow(
             new_version.workflow_api = json.loads(body.workflow_api)
 
         db.add(new_version)
+        
+        if body.machine_id is not None:
+            await create_deployment(
+                request,
+                DeploymentCreate(
+                    workflow_version_id=str(new_version.id),
+                    workflow_id=str(workflow_id),
+                    machine_id=body.machine_id,
+                    environment="preview",
+                ),
+                db=db,
+            )
 
         await db.commit()
 
@@ -800,7 +812,7 @@ async def create_workflow_version(
         current_user = request.state.current_user
         user_id = current_user["user_id"]
         org_id = current_user["org_id"] if "org_id" in current_user else None
-        
+
         workflow = await db.execute(
             select(Workflow)
             .where(Workflow.id == workflow_id)
@@ -809,14 +821,16 @@ async def create_workflow_version(
             .apply_org_check(request)
         )
         workflow = workflow.scalar_one_or_none()
-        
+
         if not workflow:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         # async with db.begin():
-        if version_data.machine_id and workflow.selected_machine_id != UUID(version_data.machine_id):
+        if version_data.machine_id and workflow.selected_machine_id != UUID(
+            version_data.machine_id
+        ):
             workflow.selected_machine_id = UUID(version_data.machine_id)
-        
+
         # Get the next version number
         version_query = select(
             func.coalesce(func.max(WorkflowVersion.version), 0) + 1
