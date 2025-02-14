@@ -597,6 +597,8 @@ class DeploymentModel(BaseModel):
     input_types: Optional[List[InputModel]] = None
     output_types: Optional[List[OutputModel]] = None
     
+    dub_link: Optional[str] = None
+    
     gpu: Optional[str] = None
     machine_version_id: Optional[UUID] = None
     modal_image_id: Optional[str] = None
