@@ -18,10 +18,12 @@ from urllib.parse import urlparse
 
 
 async def extract_repo_name(repo_url: str) -> str:
-    url = urlparse(repo_url)
+    cleaned_url = repo_url.strip("'\"")
+    url = urlparse(cleaned_url)
     path_parts = url.path.split("/")
-    repo_name = path_parts[2].replace(".git", "")
-    author = path_parts[1]
+    path_parts = [p for p in path_parts if p]
+    repo_name = path_parts[1].replace(".git", "")
+    author = path_parts[0]
     return f"{author}/{repo_name}"
 
 
@@ -44,6 +46,7 @@ async def _get_branch_info(git_url: str) -> Dict[str, Any] | None:
         repo_data = await fetch_github_data(repo_url, headers)
 
         branch = repo_data.get("default_branch")
+        print(f"Branch: {branch}")
         if not branch:
             return None
 
