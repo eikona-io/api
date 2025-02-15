@@ -308,7 +308,7 @@ def clean_up_outputs(outputs: List):
             try:
                 WorkflowRunOutputModel.model_validate(output)
             except ValidationError:
-                logfire.warn("Invalid output", output=output)
+                logfire.info("Invalid output", output=output)
                 outputs.pop(i)
                 
     return outputs
