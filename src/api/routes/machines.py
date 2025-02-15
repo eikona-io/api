@@ -786,7 +786,6 @@ async def redeploy_machine_deployment_internal(
     )
     await build_logic(params)
 
-
 @router.get("/machine/serverless/{machine_id}/versions")
 async def get_machine_versions(
     request: Request,

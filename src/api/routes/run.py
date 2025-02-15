@@ -1051,6 +1051,7 @@ async def _create_run(
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
             model_id=model_id,  # Use the extracted model_id
+            deployment_id=data.deployment_id,
         )
 
         if is_native_run:

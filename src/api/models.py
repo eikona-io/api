@@ -208,6 +208,7 @@ class WorkflowRun(SerializableMixin, Base):
 
     batch_id = Column(UUID(as_uuid=True))
     model_id = Column(String)
+    deployment_id = Column(UUID(as_uuid=True))
 
     workflow = relationship("Workflow", back_populates="runs")
     outputs = relationship("WorkflowRunOutput", back_populates="run")
@@ -360,6 +361,8 @@ class Deployment(SerializableMixin, Base):
     run_timeout = Column(Integer, nullable=False, default=300)
     idle_timeout = Column(Integer, nullable=False, default=0)
     keep_warm = Column(Integer, nullable=False, default=0)
+    activated_at = Column(DateTime(timezone=True))
+    modal_app_id = Column(String)
 
     machine = relationship("Machine")
     version = relationship("WorkflowVersion")
