@@ -463,14 +463,13 @@ async def get_deployments(
 
 @router.get(
     "/share/{username}/{slug}",
-    response_model=DeploymentShareModel,
 )
 async def get_share_deployment(
     request: Request,
     username: str,
     slug: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> DeploymentShareModel:
     slug = f"{username}_{slug}".lower()
 
     deployment_query = (
