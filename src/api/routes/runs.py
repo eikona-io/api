@@ -1,22 +1,39 @@
 import logging
-from typing import List, Optional
-from .types import WorkflowRunModel
-from fastapi import APIRouter, Depends, Request
+from typing import Any, Dict, List, Optional
+from .types import (
+    WorkflowRunModel, 
+    MachineGPU,
+    WorkflowRunOrigin,
+    WorkflowRunStatus,
+)
+from fastapi import APIRouter, Depends, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db, AsyncSessionLocal
 from .utils import select
 from api.models import WorkflowRun, Workflow, WorkflowVersion, Machine
 from fastapi.responses import JSONResponse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, case
 from collections import defaultdict
 import asyncio
+import json
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Runs"])
 
 MAX_DAYS = 30
+
+# Define valid filters that can be used in the count endpoint
+VALID_FILTERS = {
+    "gpu": str,  # GPU type/name
+    "status": str,  # run status (success, failed, etc)
+    "origin": str,  # origin of the run
+    "workflow_id": str,  # workflow identifier
+    "machine_id": str,  # machine identifier
+    "deployment_id": str,  # deployment identifier
+}
 
 @router.get("/runs", response_model=List[WorkflowRunModel])
 async def get_runs(
@@ -285,3 +302,189 @@ async def get_runs(
             },
         }
     )
+    
+async def get_runs_count(
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    filters: Optional[Dict[str, Any]] = None
+) -> int:
+    """
+    Get the total number of runs within the specified time range and filters.
+    This is an optimized version that only returns the count without fetching full run data.
+    
+    Args:
+        start_time (datetime, optional): Start time to filter runs
+        end_time (datetime, optional): End time to filter runs
+        filters (Dict, optional): Additional filters to apply. Valid filters are:
+            - gpu (str): GPU type/name
+            - status (str): Run status (success, failed, etc)
+            - origin (str): Origin of the run
+            - workflow_id (str): Workflow identifier
+            - machine_id (str): Machine identifier
+            - deployment_id (str): Deployment identifier
+    
+    Returns:
+        int: Total number of runs matching the criteria
+    """
+    async with AsyncSessionLocal() as db:
+        query = select(func.count(WorkflowRun.id))
+        
+        if start_time:
+            query = query.filter(WorkflowRun.created_at >= start_time)
+        if end_time:
+            query = query.filter(WorkflowRun.created_at <= end_time)
+            
+        if filters:
+            # Apply only whitelisted filters
+            for key, value in filters.items():
+                if key in VALID_FILTERS:
+                    # Convert value to expected type
+                    try:
+                        typed_value = VALID_FILTERS[key](value)
+                        query = query.filter(getattr(WorkflowRun, key) == typed_value)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Invalid value for filter {key}: {value}")
+                        continue
+        
+        return await db.scalar(query)
+
+class RunFilter(BaseModel):
+    """Filter model for run counts"""
+    gpu: Optional[MachineGPU] = Field(None, description="GPU type to filter by")
+    status: Optional[WorkflowRunStatus] = Field(None, description="Run status (e.g. success, failed)")
+    origin: Optional[WorkflowRunOrigin] = Field(None, description="Origin of the run (e.g. api, manual)")
+    workflow_id: Optional[str] = Field(None, description="Workflow identifier")
+    machine_id: Optional[str] = Field(None, description="Machine identifier")
+    deployment_id: Optional[str] = Field(None, description="Deployment identifier")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "success",
+                "gpu": "A100",
+                "workflow_id": "123e4567-e89b-12d3-a456-426614174000"
+            }
+        }
+        use_enum_values = True  # This ensures enum values are used in the JSON schema
+
+class RunCountResponse(BaseModel):
+    """Response model for the run count endpoint"""
+    count: int = Field(description="Number of runs matching the criteria")
+    start_time: Optional[str] = Field(None, description="ISO formatted start time if provided")
+    end_time: Optional[str] = Field(None, description="ISO formatted end time if provided")
+    filters: Optional[RunFilter] = Field(None, description="Applied filters")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "count": 42,
+                "start_time": "2024-03-15T10:00:00",
+                "end_time": "2024-03-15T11:00:00",
+                "filters": {
+                    "status": "success",
+                    "gpu": "A100"
+                }
+            }
+        }
+
+@router.get("/runs/count", response_model=RunCountResponse)
+async def count_runs(
+    request: Request,
+    start_time: Optional[str] = Query(
+        None, 
+        description="UTC ISO format datetime string (e.g. '2024-03-15T10:00:00Z')"
+    ),
+    end_time: Optional[str] = Query(
+        None, 
+        description="UTC ISO format datetime string (e.g. '2024-03-15T10:00:00Z')"
+    ),
+    gpu: Optional[MachineGPU] = Query(
+        None, 
+        description="GPU type to filter by"
+    ),
+    status: Optional[WorkflowRunStatus] = Query(
+        None, 
+        description="Run status to filter by (e.g. 'success', 'failed')"
+    ),
+    origin: Optional[WorkflowRunOrigin] = Query(
+        None, 
+        description="Origin of the run to filter by (e.g. 'api', 'manual')"
+    ),
+    workflow_id: Optional[str] = Query(
+        None, 
+        description="Workflow identifier to filter by"
+    ),
+    machine_id: Optional[str] = Query(
+        None, 
+        description="Machine identifier to filter by"
+    ),
+    deployment_id: Optional[str] = Query(
+        None, 
+        description="Deployment identifier to filter by"
+    ),
+):
+    """
+    REST endpoint to get run counts.
+
+    Examples
+    --------
+    ```
+    # Get counts within a time range (UTC)
+    GET /runs/count?start_time=2024-03-15T10:00:00Z&end_time=2024-03-15T11:00:00Z
+
+    # Get counts with status and GPU filters
+    GET /runs/count?status=success&gpu=A100
+
+    # Get counts for a specific workflow
+    GET /runs/count?workflow_id=123e4567-e89b-12d3-a456-426614174000
+
+    # Get counts for a specific deployment with status
+    GET /runs/count?deployment_id=456e7890-f12d-34e5-b678-426614174000&status=success
+
+    # Combine multiple filters
+    GET /runs/count?gpu=A100&status=success&origin=api
+    ```
+    """
+    try:
+        if start_time:
+            # Ensure UTC timezone
+            start_time = datetime.fromisoformat(start_time.rstrip('Z')).replace(tzinfo=timezone.utc)
+            
+        if end_time:
+            # Ensure UTC timezone
+            end_time = datetime.fromisoformat(end_time.rstrip('Z')).replace(tzinfo=timezone.utc)
+            
+        # Build filters dict from query parameters
+        filters = {}
+        for key in VALID_FILTERS:
+            value = locals().get(key)
+            if value is not None:
+                filters[key] = value
+            
+        count = await get_runs_count(
+            start_time=start_time,
+            end_time=end_time,
+            filters=filters if filters else None
+        )
+        
+        # Convert filters to RunFilter model for response
+        filter_model = RunFilter(**filters) if filters else None
+        
+        return RunCountResponse(
+            count=count,
+            start_time=start_time.isoformat() if start_time else None,
+            end_time=end_time.isoformat() if end_time else None,
+            filters=filter_model
+        )
+        
+    except ValueError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Invalid time format. Please provide UTC time in ISO format (e.g. 2024-03-15T10:00:00Z): {str(e)}"}
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in count_runs: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error"}
+        )
