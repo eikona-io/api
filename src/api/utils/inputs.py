@@ -54,6 +54,14 @@ custom_input_nodes: Dict[str, Dict[str, str]] = {
         "type": "string",
         "description": "Enumerated string options",
     },
+    "ComfyUIDeployExternalEXR": {
+        "type": "string",
+        "description": "Public EXR download URL",
+    },
+    "ComfyUIDeployExternalAudio": {
+        "type": "string",
+        "description": "Public audio URL",
+    },
 }
 
 # This is a type hint for the CustomInputNodesTypeMap
