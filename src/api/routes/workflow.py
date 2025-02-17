@@ -38,6 +38,7 @@ from sqlalchemy import text
 from api.models import (
     Deployment,
     Machine,
+    MachineVersion,
     Workflow,
     WorkflowRun,
     WorkflowRunWithExtra,
@@ -698,6 +699,8 @@ class WorkflowCreateRequest(BaseModel):
     workflow_json: str
     workflow_api: Optional[str] = None
     machine_id: Optional[str] = None
+    machine_version_id: Optional[str] = None
+    comfyui_snapshot: Optional[Dict[str, Any]] = None
 
 
 @router.post("/workflow", response_model=WorkflowModel)
@@ -720,8 +723,23 @@ async def create_workflow(
     except json.JSONDecodeError:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON format"})
 
-    # Check if machine exists
-    if body.machine_id:
+    # Check if machine exists and get machine version info if provided
+    machine_id = None
+    machine_version_id = None
+
+    if body.machine_version_id:
+        machine_version = await db.execute(
+            select(MachineVersion)
+            .join(Machine, Machine.id == MachineVersion.machine_id)
+            .where(MachineVersion.id == body.machine_version_id)
+            .apply_org_check_by_type(Machine, request)
+        )
+        machine_version = machine_version.scalar_one_or_none()
+        if not machine_version:
+            return JSONResponse(status_code=404, content={"error": "Machine version not found"})
+        machine_id = machine_version.machine_id
+        machine_version_id = machine_version.id
+    elif body.machine_id:
         machine = await db.execute(
             select(Machine)
             .where(Machine.id == body.machine_id)
@@ -730,6 +748,7 @@ async def create_workflow(
         machine = machine.scalar_one_or_none()
         if not machine:
             return JSONResponse(status_code=404, content={"error": "Machine not found"})
+        machine_id = machine.id
 
     try:
         # Your existing workflow creation code...
@@ -744,7 +763,7 @@ async def create_workflow(
             user_id=user_id,
             org_id=org_id,
             name=body.name,
-            selected_machine_id=UUID(body.machine_id) if body.machine_id else None,
+            selected_machine_id=machine_id,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -762,6 +781,9 @@ async def create_workflow(
             user_id=user_id,
             version=1,
             comment="initial version",
+            machine_id=machine_id,
+            machine_version_id=machine_version_id,
+            comfyui_snapshot=body.comfyui_snapshot,
         )
 
         if body.workflow_api:
@@ -769,13 +791,14 @@ async def create_workflow(
 
         db.add(new_version)
         
-        if body.machine_id is not None:
+        if machine_id is not None:
             await create_deployment(
                 request,
                 DeploymentCreate(
                     workflow_version_id=str(new_version.id),
                     workflow_id=str(workflow_id),
-                    machine_id=body.machine_id,
+                    machine_id=str(machine_id),
+                    machine_version_id=str(machine_version_id) if machine_version_id else None,
                     environment="preview",
                 ),
                 db=db,
@@ -787,15 +810,16 @@ async def create_workflow(
             status_code=200,
             content={
                 "workflow_id": str(workflow_id),
-                "machine_id": body.machine_id if body.machine_id else None,
+                "machine_id": str(machine_id) if machine_id else None,
             },
         )
 
     except Exception as e:
         await db.rollback()
-        return JSONResponse(
-            status_code=500, content={"error": f"Failed to create workflow: {str(e)}"}
-        )
+        raise
+        # return JSONResponse(
+        #     status_code=500, content={"error": f"Failed to create workflow: {str(e)}"}
+        # )
 
 
 class WorkflowVersionCreate(BaseModel):

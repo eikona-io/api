@@ -606,7 +606,8 @@ class DeploymentModel(BaseModel):
     run_timeout: Optional[int] = None
     idle_timeout: Optional[int] = None
     keep_warm: Optional[int] = None
-
+    activated_at: Optional[datetime] = None
+    modal_app_id: Optional[str] = None
     class Config:
         from_attributes = True
 

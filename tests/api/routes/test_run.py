@@ -1,9 +1,7 @@
 import requests
 import os
-import aiohttp
 from aiohttp import web
 import asyncio
-from contextlib import asynccontextmanager
 
 def get_ngrok_url_with_retry(max_retries=5, delay=1):
     """Get ngrok URL with retries"""
@@ -26,7 +24,8 @@ ngrok_url = get_ngrok_url_with_retry()
 
 os.environ["CURRENT_API_URL"] = ngrok_url
 
-from api.models import User  # noqa: E402
+from api.models import User, GPUEvent  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 from api.routes.utils import generate_persistent_token  # noqa: E402
 import pytest  # noqa: E402
 from httpx import AsyncClient  # noqa: E402
@@ -155,6 +154,7 @@ async def app(test_user):
 
     for attempt in range(max_retries):
         try:
+            print(f"Attempt {attempt + 1} of {max_retries}")
             response = requests.get("http://localhost:8000/")
             if response.status_code == 200:
                 break
@@ -512,3 +512,113 @@ async def test_run_deployment_on_a_wrong_user(app, test_user, test_user_2, test_
         print(f"Response status: {response.status_code}")
         print(f"Response content: {response.text}")
         assert response.status_code == 404, "Expected 403 status code for wrong user"
+
+@pytest_asyncio.fixture(scope="session")
+async def test_free_user():
+    """Fixture for a test user with free plan"""
+    async with get_db_context() as db:
+        user = User(
+            id=str(uuid4()),
+            username="test_free_user",
+            name="Test Free User",
+            # The plan will be handled by the backend based on user's subscription
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    yield user
+
+@pytest.mark.asyncio
+async def test_free_user_session_timeout_limit(app, test_user, test_serverless_machine):
+    """Test that free users cannot set timeout beyond 30 minutes"""
+    async with get_test_client(app, test_user) as client:
+        # Test creating session with timeout > 30 minutes
+        response = await client.post("/session/dynamic", json={
+            "machine_id": test_serverless_machine,
+            "timeout": 31,
+            "gpu": "CPU",
+            "wait_for_server": True
+        })
+        assert response.status_code == 400
+        assert "Free plan users are limited to 30 minutes timeout" in response.json()["detail"]
+        
+        # Test creating session with valid timeout
+        response = await client.post("/session/dynamic", json={
+            "machine_id": test_serverless_machine,
+            "timeout": 15,
+            "gpu": "CPU",
+            "wait_for_server": True
+        })
+        print(f"Response status: {response.status_code}")
+        print(f"Target Response body: {response.text}")
+        assert response.status_code == 200
+        session_id = response.json()["session_id"]
+        
+        # Test increasing timeout beyond 30 minutes total
+        response = await client.post(f"/session/{session_id}/increase-timeout", json={
+            "minutes": 20
+        })
+        assert response.status_code == 400
+        assert "Free plan users are limited to 30 minutes total timeout" in response.json()["detail"]
+        
+        # Test increasing timeout within limit
+        response = await client.post(f"/session/{session_id}/increase-timeout", json={
+            "minutes": 10
+        })
+        assert response.status_code == 200
+        assert response.json()["message"] == "Timeout increased successfully"
+
+        # Cleanup: Delete the session
+        response = await client.delete(f"/session/{session_id}?wait_for_shutdown=true")
+        print(f"Response status: {response.status_code}")
+        print(f"Response content: {response.text}")
+        assert response.status_code == 200
+
+# test_serverless_machine
+
+@pytest.mark.asyncio
+async def test_free_user_concurrent_sessions(app, test_user, test_serverless_machine):
+    """Test that free users cannot create concurrent sessions"""
+    print(f"\nTest user: {test_user.id}, {test_user.username}")
+    # test_serverless_machine = None
+    print(f"Test machine: {test_serverless_machine}")
+    
+    async with get_test_client(app, test_user) as client:
+        # Create first session
+        print("\nCreating first session...")
+        response = await client.post("/session/dynamic", json={
+            "machine_id": test_serverless_machine,
+            "timeout": 15,
+            "gpu": "CPU",
+            "wait_for_server": True
+        })
+        print(f"Response status: {response.status_code}")
+        print(f"Response body: {response.text}")
+        
+        if response.status_code != 200:
+            # Get all active sessions for debugging
+            sessions_response = await client.get("/sessions")
+            print(f"\nCurrent active sessions: {sessions_response.text}")
+            print(f"\nError message: {response.json().get('detail', 'No detail provided')}")
+        
+        assert response.status_code == 200
+        session_id = response.json()["session_id"]
+        
+        # Try to create second session
+        print("\nTrying to create second session...")
+        response = await client.post("/session/dynamic", json={
+            "machine_id": test_serverless_machine,
+            "timeout": 15,
+            "gpu": "CPU",
+            "wait_for_server": True
+        })
+        print(f"Response status: {response.status_code}")
+        print(f"Response body: {response.text}")
+        assert response.status_code == 400
+        assert "Free plan does not support concurrent sessions" in response.json()["detail"]
+
+        # Cleanup: Delete the session
+        response = await client.delete(f"/session/{session_id}?wait_for_shutdown=true")
+        print(f"Response status: {response.status_code}")
+        print(f"Response content: {response.text}")
+        assert response.status_code == 200

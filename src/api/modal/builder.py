@@ -4,9 +4,9 @@ from typing import Optional, Dict, List, Any
 from uuid import uuid4
 
 from api.database import get_db_context
-from sqlalchemy import update, select
+from sqlalchemy import func, update, select
 from api.database import get_clickhouse_client
-from api.models import Machine, MachineVersion
+from api.models import Deployment, Machine, MachineVersion
 from api.routes.utils import select
 from pydantic import BaseModel, Field, field_validator
 from fastapi import (
@@ -375,49 +375,49 @@ def find_app_id(app_list, app_name):
     return None
 
 
-@router.post("/stop-app")
-async def stop_app(item: StopAppItem):
-    # cmd = f"modal app list | grep {item.machine_id} | awk -F '│' '{{print $2}}'"
-    cmd = f"modal app list --json"
+# @router.post("/stop-app")
+# async def stop_app(item: StopAppItem):
+#     # cmd = f"modal app list | grep {item.machine_id} | awk -F '│' '{{print $2}}'"
+#     cmd = "modal app list --json"
 
-    env = os.environ.copy()
-    env["COLUMNS"] = "10000"  # Set the width to a large value
-    find_id_process = await asyncio.subprocess.create_subprocess_shell(
-        cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
-    )
-    await find_id_process.wait()
+#     env = os.environ.copy()
+#     env["COLUMNS"] = "10000"  # Set the width to a large value
+#     find_id_process = await asyncio.subprocess.create_subprocess_shell(
+#         cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
+#     )
+#     await find_id_process.wait()
 
-    stdout, stderr = await find_id_process.communicate()
-    if stdout:
-        app_id = stdout.decode().strip()
-        app_list = json.loads(app_id)
-        app_id = find_app_id(app_list, item.machine_id)
-        logger.info(f"cp_process stdout: {app_id}")
-    if stderr:
-        logger.info(f"cp_process stderr: {stderr.decode()}")
+#     stdout, stderr = await find_id_process.communicate()
+#     if stdout:
+#         app_id = stdout.decode().strip()
+#         app_list = json.loads(app_id)
+#         app_id = find_app_id(app_list, item.machine_id)
+#         logger.info(f"cp_process stdout: {app_id}")
+#     if stderr:
+#         logger.info(f"cp_process stderr: {stderr.decode()}")
 
-    cp_process = await asyncio.subprocess.create_subprocess_exec(
-        "modal",
-        "app",
-        "stop",
-        app_id,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    await cp_process.wait()
-    logger.info(f"Stopping app {item.machine_id}")
-    stdout, stderr = await cp_process.communicate()
-    if stdout:
-        logger.info(f"cp_process stdout: {stdout.decode()}")
-    if stderr:
-        logger.info(f"cp_process stderr: {stderr.decode()}")
+#     cp_process = await asyncio.subprocess.create_subprocess_exec(
+#         "modal",
+#         "app",
+#         "stop",
+#         app_id,
+#         stdout=asyncio.subprocess.PIPE,
+#         stderr=asyncio.subprocess.PIPE,
+#     )
+#     await cp_process.wait()
+#     logger.info(f"Stopping app {item.machine_id}")
+#     stdout, stderr = await cp_process.communicate()
+#     if stdout:
+#         logger.info(f"cp_process stdout: {stdout.decode()}")
+#     if stderr:
+#         logger.info(f"cp_process stderr: {stderr.decode()}")
 
-    if cp_process.returncode == 0:
-        return JSONResponse(status_code=200, content={"status": "success"})
-    else:
-        return JSONResponse(
-            status_code=500, content={"status": "error", "error": stderr.decode()}
-        )
+#     if cp_process.returncode == 0:
+#         return JSONResponse(status_code=200, content={"status": "success"})
+#     else:
+#         return JSONResponse(
+#             status_code=500, content={"status": "error", "error": stderr.decode()}
+#         )
 
 
 # Initialize the logs cache
@@ -961,5 +961,17 @@ async def build_logic(item: BuildMachineItem):
                 "status": "succuss",
             },
         )
+        
+    if item.is_deployment:
+        async with get_db_context() as db:
+            await db.execute(
+                update(Deployment)
+                # This will be deployment id
+                .where(Deployment.id == item.name)
+                .values(
+                    activated_at=func.now(),
+                    modal_app_id=app_id,
+                )
+            )
 
     await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)

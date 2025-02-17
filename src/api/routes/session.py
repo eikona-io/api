@@ -9,6 +9,9 @@ from api.routes.machines import (
     redeploy_machine,
     update_serverless_machine,
 )
+from api.utils.docker import (
+    comfyui_hash,
+)
 from api.routes.types import GPUEventModel, MachineGPU, MachineType
 from api.utils.docker import (
     CustomNode,
@@ -387,6 +390,8 @@ async def increase_timeout_2(
     body: IncreaseTimeoutBody2,
     db: AsyncSession = Depends(get_db),
 ):
+    plan = request.state.current_user.get("plan")
+    
     gpu_event = (
         await db.execute(
             select(GPUEvent)
@@ -407,6 +412,18 @@ async def increase_timeout_2(
 
     # Parse the current timeout end time
     current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
+    
+    if plan == "free":
+        max_timeout_minutes = 30
+        # Calculate total timeout duration including the requested increase
+        current_duration = (current_timeout_end - datetime.utcnow()).total_seconds() / 60
+        total_duration = current_duration + body.minutes
+        
+        if total_duration > max_timeout_minutes:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Free plan users are limited to {max_timeout_minutes} minutes total timeout. Current duration: {int(current_duration)} minutes"
+            )
 
     # Calculate the new timeout end time
     new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
@@ -443,6 +460,12 @@ async def create_session(
     
     if plan == "free":
         max_concurrent_sessions = 1
+        max_timeout_minutes = 30
+        
+        # Check timeout limit
+        if body.timeout and body.timeout > max_timeout_minutes:
+            raise HTTPException(status_code=400, detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout")
+        
         # find all gpu event on this account
         gpu_events = (await db.execute(
             select(GPUEvent)
@@ -590,267 +613,290 @@ async def create_dynamic_sesssion_background_task(
     status_queue: Optional[asyncio.Queue] = None,
 ):
     app = modal.App(str(session_id))
+    if status_queue is not None:
+        print("status_queue is not None")
     # app = modal.App.lookup("dynamic-comfyui", create_if_missing=True)
-
-    org_id = request.state.current_user.get("org_id")
-    user_id = request.state.current_user.get("user_id")
-
-    machine_version: Optional[MachineVersion] = None
-    machine: Optional[Machine] = None
-
-    # Get machine and its version info
-    modal_image_id = None
-    if body.machine_id is not None:
-        async with get_db_context() as db:
-            machine = await db.execute(
-                select(Machine)
-                .where(Machine.id == body.machine_id)
-                .apply_org_check(request)
-            )
-            machine = machine.scalars().first()
-
-            if not machine:
-                raise HTTPException(status_code=404, detail="Machine not found")
-            
-            target_machine_version_id = body.machine_version_id or machine.machine_version_id
-
-            # Get machine version if it exists
-            if target_machine_version_id:
-                machine_version = await db.execute(
-                    select(MachineVersion).where(
-                        MachineVersion.id == target_machine_version_id,
-                        MachineVersion.machine_id == body.machine_id
-                    )
-                )
-                machine_version = machine_version.scalars().first()
-
-                if machine_version and machine_version.modal_image_id:
-                    # Use existing modal image ID from version
-                    modal_image_id = machine_version.modal_image_id
-
-            if not modal_image_id:
-                logger.info("No dependencies, using machine current settings")
-                body.dependencies = DepsBody(
-                    comfyui_version=machine.comfyui_version,
-                    docker_command_steps=machine.docker_command_steps,
-                )
-
-    logger.info("Dependencies configuration " + str(body.dependencies))
-
-    logger.info("creating dynamic session")
-
-    if (
-        not modal_image_id and body.dependencies is not None
-    ) or body.machine_id is None:
-        print(body.machine_id)
-
-        if body.dependencies is None:
-            body.dependencies = []
-
-        if isinstance(body.dependencies, list):
-            # Handle shorthand dependencies
-            deps_body = DepsBody(
-                comfyui_version=body.comfyui_hash,
-                docker_command_steps=DockerSteps(
-                    steps=[
-                        DockerStep(
-                            type="custom-node",
-                            data=CustomNode(
-                                install_type="git-clone",
-                                url=extract_url(dep),
-                                hash=extract_hash(dep),
-                                name=dep.split("/")[-1],
-                            ),
-                        )
-                        for dep in body.dependencies
-                    ]
-                ),
-            )
-            converted = generate_all_docker_commands(
-                deps_body, include_comfyuimanager=True
-            )
-        else:
-            converted = generate_all_docker_commands(
-                body.dependencies, include_comfyuimanager=True
-            )
-
-        # pprint(converted)
-
-        dockerfile_image: modal.Image = None
-
-        python_version = "3.11"
-
-        # Python version to override - first check body, then machine_version
-        if body.python_version is not None:
-            python_version = body.python_version
-        elif machine_version is not None:
-            python_version = machine_version.python_version
-
-        # Base docker image to use - first check body, then machine_version, then fallback to debian slim
-        if body.base_docker_image is not None:
-            dockerfile_image = modal.Image.from_registry(
-                body.base_docker_image, add_python=python_version
-            )
-        elif (
-            machine_version is not None
-            and machine_version.base_docker_image is not None
-        ):
-            dockerfile_image = modal.Image.from_registry(
-                machine_version.base_docker_image, add_python=python_version
-            )
-        else:
-            dockerfile_image = modal.Image.debian_slim(python_version=python_version)
-
-        docker_commands = converted.docker_commands
-        if docker_commands is not None:
-            for commands in docker_commands:
-                dockerfile_image = dockerfile_image.dockerfile_commands(
-                    commands,
-                )
-
-        dockerfile_image = dockerfile_image.run_commands(
-            [
-                "rm -rf /private_models /comfyui/models /public_models",
-                "ln -s /private_models /comfyui/models",
-            ],
-        )
-
-        current_directory = os.path.dirname(os.path.realpath(__file__))
-
-        dockerfile_image = dockerfile_image.add_local_file(
-            current_directory + "/extra_model_paths.yaml",
-            "/comfyui/extra_model_paths.yaml",
-        )
-    else:
-        logger.info(f"Using existing modal image {modal_image_id}")
-        dockerfile_image = modal.Image.from_id(modal_image_id)
-
-    if not dockerfile_image and body.dependencies is None:
-        raise HTTPException(
-            status_code=400, detail="No dependencies or modal image id provided"
-        )
-
-    logger.info("creating dynamic session")
-
+    
     try:
-        with CustomOutputManager.enable_output_with_context(
-            str(session_id), body.machine_id
-        ):
-            async with app.run.aio():
-                print("creating sandbox")
-                print(dockerfile_image)
-                with modal.enable_output():
-                    sb = await modal.Sandbox.create.aio(
-                        # "bash",
-                        # "-c",
-                        # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
-                        image=dockerfile_image,
-                        # timeout=(body.timeout or 15) * 60,
-                        timeout=6 * 60 * 60,
-                        gpu=body.gpu.value
-                        if body.gpu is not None and body.gpu.value != "CPU"
-                        else None,
-                        app=app,
-                        workdir="/comfyui",
-                        encrypted_ports=[8188],
-                        volumes={
-                            "/public_models": modal.Volume.from_name(
-                                os.environ.get("SHARED_MODEL_VOLUME_NAME"),
-                                create_if_missing=True,
-                            ),
-                            "/private_models": modal.Volume.from_name(
-                                "models_" + org_id if org_id is not None else user_id,
-                                create_if_missing=True,
-                            ),
-                        },
-                    )
+        org_id = request.state.current_user.get("org_id")
+        user_id = request.state.current_user.get("user_id")
 
-                    # logger.info("creating gpu event")
+        machine_version: Optional[MachineVersion] = None
+        machine: Optional[Machine] = None
+        
+        # Get machine and its version info
+        modal_image_id = None
+        if body.machine_id is not None:
+            async with get_db_context() as db:
+                machine = await db.execute(
+                    select(Machine)
+                    .where(Machine.id == body.machine_id)
+                    .apply_org_check(request)
+                )
+                machine = machine.scalars().first()
+                
+                if not machine:
+                    raise HTTPException(status_code=404, detail="Machine not found")
+                
+                target_machine_version_id = body.machine_version_id or machine.machine_version_id
 
-                    # logger.info(sb.tunnels())
-                    tunnels = await sb.tunnels.aio()
-                    tunnel = tunnels[8188]  # Access the tunnel after awaiting
-
-                    async with get_db_context() as db:
-                        await db.execute(
-                            update(GPUEvent)
-                            .where(GPUEvent.id == gpu_event_id)
-                            .values(
-                                tunnel_url=tunnel.url,
-                                modal_function_id=sb.object_id,
-                                start_time=datetime.now(),
-                                machine_version_id=machine_version.id if machine_version else None,
-                            )
+                # Get machine version if it exists
+                if target_machine_version_id:
+                    machine_version = await db.execute(
+                        select(MachineVersion).where(
+                            MachineVersion.id == target_machine_version_id,
+                            MachineVersion.machine_id == body.machine_id
                         )
-                        await db.commit()
-
-                    if status_queue:
-                        status_queue.put_nowait(tunnel.url)
-
-                    p = await sb.exec.aio(
-                        "bash",
-                        "-c",
-                        comfyui_cmd(
-                            cpu=True if body.gpu == "CPU" else False,
-                            install_latest_comfydeploy=True,
-                        ),
                     )
-                    logger.info(tunnel.url)
+                    machine_version = machine_version.scalars().first()
 
-                    # async with await get_clickhouse_client() as client:
-                    async def log_stream(stream, stream_type: str):
-                        try:
-                            async for line in stream:
-                                try:
-                                    # Add debug logging to see what we're receiving
-                                    if isinstance(line, bytes):
-                                        logger.debug(f"Received bytes: {repr(line)}")
-                                        
-                                        # Handle decoding in a separate try block
-                                        try:
-                                            line = line.decode("utf-8", errors="replace")
-                                        except UnicodeDecodeError as decode_err:
-                                            logger.error(f"Decode error: {decode_err}")
-                                            continue  # Skip this line and continue with the next one
+                    if machine_version and machine_version.modal_image_id:
+                        # Use existing modal image ID from version
+                        modal_image_id = machine_version.modal_image_id
 
-                                        # Skip progress bar lines
-                                        if any(char in line for char in [
-                                            "█", "▮", "▯", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "\r"
-                                        ]):
-                                            continue
+                if not modal_image_id:
+                    logger.info("No dependencies, using machine current settings")
+                    body.dependencies = DepsBody(
+                        comfyui_version=machine.comfyui_version or comfyui_hash,
+                        docker_command_steps=machine.docker_command_steps,
+                    )
 
-                                    print(line, end="")
-                                    data = [(
-                                        uuid4(),
-                                        session_id,
-                                        None,
-                                        body.machine_id,
-                                        datetime.now(),
-                                        stream_type,
-                                        line,
-                                    )]
-                                    asyncio.create_task(
-                                        insert_to_clickhouse("log_entries", data)
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Inner error processing log line: {str(e)}")
-                                    continue  # Ensure we continue processing next lines
-                        except Exception as e:
-                            logger.error(f"Outer error in log stream: {str(e)}")
-                            # Re-raise if this is a critical error that should stop the stream
-                            # raise
+        logger.info("Dependencies configuration " + str(body.dependencies))
 
-                    # Create tasks for both stdout and stderr
-                    stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
-                    stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
-                    
-                    # Wait for both streams to complete
-                    await asyncio.gather(stdout_task, stderr_task)
-                    
-                await sb.wait.aio()
+        logger.info("creating dynamic session")
+
+        if (
+            not modal_image_id and body.dependencies is not None
+        ) or body.machine_id is None:
+            print(body.machine_id)
+
+            if body.dependencies is None:
+                body.dependencies = []
+
+            if isinstance(body.dependencies, list):
+                # Handle shorthand dependencies
+                deps_body = DepsBody(
+                    comfyui_version=body.comfyui_hash or comfyui_hash,
+                    docker_command_steps=DockerSteps(
+                        steps=[
+                            DockerStep(
+                                type="custom-node",
+                                data=CustomNode(
+                                    install_type="git-clone",
+                                    url=extract_url(dep),
+                                    hash=extract_hash(dep),
+                                    name=dep.split("/")[-1],
+                                ),
+                            )
+                            for dep in body.dependencies
+                        ]
+                    ),
+                )
+                converted = generate_all_docker_commands(
+                    deps_body, include_comfyuimanager=True
+                )
+            else:
+                converted = generate_all_docker_commands(
+                    body.dependencies, include_comfyuimanager=True
+                )
+
+            # pprint(converted)
+
+            dockerfile_image: modal.Image = None
+
+            python_version = "3.11"
+
+            # Python version to override - first check body, then machine_version
+            if body.python_version is not None:
+                python_version = body.python_version
+            elif machine_version is not None:
+                python_version = machine_version.python_version
+
+            # Base docker image to use - first check body, then machine_version, then fallback to debian slim
+            if body.base_docker_image is not None:
+                dockerfile_image = modal.Image.from_registry(
+                    body.base_docker_image, add_python=python_version
+                )
+            elif (
+                machine_version is not None
+                and machine_version.base_docker_image is not None
+            ):
+                dockerfile_image = modal.Image.from_registry(
+                    machine_version.base_docker_image, add_python=python_version
+                )
+            else:
+                dockerfile_image = modal.Image.debian_slim(python_version=python_version)
+
+            docker_commands = converted.docker_commands
+            if docker_commands is not None:
+                for commands in docker_commands:
+                    dockerfile_image = dockerfile_image.dockerfile_commands(
+                        commands,
+                    )
+
+            dockerfile_image = dockerfile_image.run_commands(
+                [
+                    "rm -rf /private_models /comfyui/models /public_models",
+                    "ln -s /private_models /comfyui/models",
+                ],
+            )
+
+            current_directory = os.path.dirname(os.path.realpath(__file__))
+
+            dockerfile_image = dockerfile_image.add_local_file(
+                current_directory + "/extra_model_paths.yaml",
+                "/comfyui/extra_model_paths.yaml",
+            )
+        else:
+            logger.info(f"Using existing modal image {modal_image_id}")
+            dockerfile_image = modal.Image.from_id(modal_image_id)
+
+        if not dockerfile_image and body.dependencies is None:
+            raise HTTPException(
+                status_code=400, detail="No dependencies or modal image id provided"
+            )
+
+        logger.info("creating dynamic session")
+        
+        shared_model_volume_name = os.environ.get("SHARED_MODEL_VOLUME_NAME")
+
+        volumes = {}
+        # Mount shared models only if shared_model_volume_name is present
+        if shared_model_volume_name:
+            volumes["/public_models"] = modal.Volume.from_name(
+                shared_model_volume_name,
+                create_if_missing=True,
+            )
+
+        volumes["/private_models"] = modal.Volume.from_name(
+            "models_" + org_id if org_id is not None else user_id,
+            create_if_missing=True,
+        )
+
+        try:
+            with CustomOutputManager.enable_output_with_context(
+                str(session_id), body.machine_id
+            ):
+                async with app.run.aio():
+                    print("creating sandbox")
+                    print(dockerfile_image)
+                    with modal.enable_output():
+                        sb = await modal.Sandbox.create.aio(
+                            # "bash",
+                            # "-c",
+                            # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
+                            image=dockerfile_image,
+                            # timeout=(body.timeout or 15) * 60,
+                            timeout=6 * 60 * 60,
+                            gpu=body.gpu.value
+                            if body.gpu is not None and body.gpu.value != "CPU"
+                            else None,
+                            app=app,
+                            workdir="/comfyui",
+                            encrypted_ports=[8188],
+                            volumes=volumes,
+                        )
+
+                        # logger.info("creating gpu event")
+
+                        # logger.info(sb.tunnels())
+                        tunnels = await sb.tunnels.aio()
+                        tunnel = tunnels[8188]  # Access the tunnel after awaiting
+
+                        async with get_db_context() as db:
+                            await db.execute(
+                                update(GPUEvent)
+                                .where(GPUEvent.id == gpu_event_id)
+                                .values(
+                                    tunnel_url=tunnel.url,
+                                    modal_function_id=sb.object_id,
+                                    start_time=datetime.now(),
+                                    machine_version_id=machine_version.id if machine_version else None,
+                                )
+                            )
+                            await db.commit()
+
+                        if status_queue is not None:
+                            status_queue.put_nowait(tunnel.url)
+
+                        p = await sb.exec.aio(
+                            "bash",
+                            "-c",
+                            comfyui_cmd(
+                                cpu=True if body.gpu == "CPU" else False,
+                                install_latest_comfydeploy=True,
+                            ),
+                        )
+                        logger.info(tunnel.url)
+
+                        # async with await get_clickhouse_client() as client:
+                        async def log_stream(stream, stream_type: str):
+                            try:
+                                async for line in stream:
+                                    try:
+                                        # Add debug logging to see what we're receiving
+                                        if isinstance(line, bytes):
+                                            logger.debug(f"Received bytes: {repr(line)}")
+                                            
+                                            # Handle decoding in a separate try block
+                                            try:
+                                                line = line.decode("utf-8", errors="replace")
+                                            except UnicodeDecodeError as decode_err:
+                                                logger.error(f"Decode error: {decode_err}")
+                                                continue  # Skip this line and continue with the next one
+
+                                            # Skip progress bar lines
+                                            if any(char in line for char in [
+                                                "█", "▮", "▯", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "\r"
+                                            ]):
+                                                continue
+
+                                        print(line, end="")
+                                        data = [(
+                                            uuid4(),
+                                            session_id,
+                                            None,
+                                            body.machine_id,
+                                            datetime.now(),
+                                            stream_type,
+                                            line,
+                                        )]
+                                        asyncio.create_task(
+                                            insert_to_clickhouse("log_entries", data)
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Inner error processing log line: {str(e)}")
+                                        continue  # Ensure we continue processing next lines
+                            except Exception as e:
+                                logger.error(f"Outer error in log stream: {str(e)}")
+                                # Re-raise if this is a critical error that should stop the stream
+                                # raise
+
+                        # Create tasks for both stdout and stderr
+                        stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
+                        stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
+                        
+                        # Wait for both streams to complete
+                        await asyncio.gather(stdout_task, stderr_task)
+                        
+                    await sb.wait.aio()
+        except Exception as e:
+            pass
+        finally:
+            async with get_db_context() as db:
+                gpu_event = await db.execute(
+                    select(GPUEvent).where(GPUEvent.id == gpu_event_id)
+                )
+                gpu_event = gpu_event.scalar_one_or_none()
+                
+                if (gpu_event.start_time is None):
+                    gpu_event.start_time = datetime.now()
+                
+                gpu_event.end_time = datetime.now()
+                await db.commit()
+                await db.refresh(gpu_event)
     except Exception as e:
-        pass
-    finally:
+        logger.error(f"Error creating dynamic session: {str(e)}")
         async with get_db_context() as db:
             gpu_event = await db.execute(
                 select(GPUEvent).where(GPUEvent.id == gpu_event_id)
@@ -863,7 +909,9 @@ async def create_dynamic_sesssion_background_task(
             gpu_event.end_time = datetime.now()
             await db.commit()
             await db.refresh(gpu_event)
-
+        if status_queue is not None:
+            status_queue.put_nowait({"error": str(e)})
+        raise
 
 @beta_router.post(
     "/session/dynamic",
@@ -881,6 +929,12 @@ async def create_dynamic_session(
     
     if plan == "free":
         max_concurrent_sessions = 1
+        max_timeout_minutes = 30
+        
+        # Check timeout limit
+        if body.timeout and body.timeout > max_timeout_minutes:
+            raise HTTPException(status_code=400, detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout")
+            
         # find all gpu event on this account
         gpu_events = (await db.execute(
             select(GPUEvent)
@@ -939,11 +993,15 @@ async def create_dynamic_session(
 
     if body.wait_for_server:
         try:
+            print("Waiting for tunnel_url")
             tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
+            if isinstance(tunnel_url, dict) and tunnel_url.get("error") is not None:
+                raise HTTPException(status_code=400, detail=tunnel_url.get("error"))
         except asyncio.TimeoutError:
             print("Timed out waiting for tunnel_url")
             tunnel_url = None
 
+        print("Tunnel URL received")
         return {
             "session_id": session_id,
             "url": tunnel_url,
@@ -1102,7 +1160,7 @@ class DeleteSessionResponse(BaseModel):
     },
 )
 async def delete_session(
-    request: Request, session_id: str, db: AsyncSession = Depends(get_db)
+    request: Request, session_id: str, wait_for_shutdown: bool = False, db: AsyncSession = Depends(get_db)
 ) -> DeleteSessionResponse:
     gpuEvent = cast(
         Optional[GPUEvent],
@@ -1131,6 +1189,23 @@ async def delete_session(
         await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
 
     await redis.delete("session:" + session_id + ":timeout_end")
+    
+    if wait_for_shutdown:
+        max_wait_time = 30  # Maximum wait time in seconds
+        start_time = datetime.now()
+        
+        while True:
+            # Check if we've exceeded max wait time
+            if (datetime.now() - start_time).total_seconds() > max_wait_time:
+                break
+                
+            # Refresh GPU event to get latest status
+            await db.refresh(gpuEvent)
+            
+            if gpuEvent.end_time is not None:
+                break
+                
+            await asyncio.sleep(1)
 
     return {"success": True}
 

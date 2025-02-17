@@ -318,10 +318,12 @@ export const workflowRunsTable = dbSchema.table(
         webhook: text("webhook"),
         webhook_status: webhook_status("webhook_status"),
         webhook_intermediate_status: boolean("webhook_intermediate_status").default(false).notNull(),
-
+        
         batch_id: uuid("batch_id"),
         favorite: boolean("favorite").default(false).notNull(),
         model_id: text("model_id"),
+
+        deployment_id: uuid("deployment_id"),
     },
     (table) => {
         return {
@@ -624,6 +626,8 @@ export const deploymentsTable = dbSchema.table("deployments", {
     run_timeout: integer("run_timeout").default(60 * 5).notNull(),
     idle_timeout: integer("idle_timeout").default(0).notNull(),
     keep_warm: integer("keep_warm").default(0).notNull(),
+    activated_at: timestamp("activated_at"),
+    modal_app_id: text("modal_app_id"),
 },
     (table) => {
         return {

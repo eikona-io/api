@@ -25,7 +25,7 @@ if (isDevContainer)
 
 const sql = postgres(connectionString, { max: 1, ssl: sslMode as any });
 const db = drizzle(sql, {
-  logger: true,
+  // logger: true,
 });
 
 let retries = 20;

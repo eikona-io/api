@@ -18,6 +18,7 @@ services:
         context: .
         dockerfile: Dockerfile.test
       command: /bin/sh -c "bun install && bun run migrate-local && uv run pytest -s"
+      #  -v tests/api/routes/test_run.py::test_free_user_concurrent_sessions
       environment:
         # Default to host.docker.internal, override in CI
         DATABASE_URL: "postgresql://postgres:postgres@${DB_HOST:-host.docker.internal}:5432/verceldb"
@@ -39,6 +40,7 @@ services:
         SPACES_KEY_V2: ${SPACES_KEY_V2}
         SPACES_SECRET_V2: ${SPACES_SECRET_V2}
         NGROK_HOST: ${NGROK_HOST:-host.docker.internal}
+        LOGFIRE_TOKEN: ${LOGFIRE_TOKEN}
       volumes:
         - .:/app
       depends_on:
