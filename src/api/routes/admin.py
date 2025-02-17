@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
+import logfire
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,6 +104,14 @@ async def scan_deployment_ttl(
 
         if not dry_run:
             await db.commit()
+            
+        logfire.log(
+            "admin.scan_deployment_ttl",
+            {
+                "deactivated": deactivated_deployments,
+                "would_deactivate": would_deactivate_deployments
+            }
+        )
         
         return TTLScanResponse(
             deactivated=deactivated_deployments,
