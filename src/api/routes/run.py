@@ -1030,6 +1030,8 @@ async def _create_run(
         if isinstance(data, ModelRunRequest):
             model_id = data.model_id
             print(f"Debug - Found ModelRunRequest with model_id: {model_id}")
+            
+        safe_deployment_id = getattr(data, "deployment_id", None)
 
         # Create a new run
         new_run = WorkflowRun(
@@ -1051,7 +1053,7 @@ async def _create_run(
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
             model_id=model_id,  # Use the extracted model_id
-            deployment_id=data.deployment_id,
+            deployment_id=safe_deployment_id,
         )
 
         if is_native_run:
