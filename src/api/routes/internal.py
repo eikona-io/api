@@ -349,7 +349,7 @@ async def update_run(
                 target_events = [event.strip() for event in target_events if event.strip()]
                 
                 # Send webhook if no target_events specified or if the event type is in target_events
-                if not target_events or "run.output" in target_events:
+                if "run.output" in target_events:
                     workflow_run_data = workflow_run.to_dict()
                     workflow_run_data["outputs"] = [newOutput.to_dict()]
                     asyncio.create_task(
