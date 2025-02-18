@@ -501,6 +501,48 @@ async def test_run_deployment_with_webhook(app, test_user, test_create_workflow_
                 assert "progress" in webhook, "Webhook missing progress field"
                 assert webhook["run_id"] == run_id, "Run ID mismatch in webhook"
 
+@pytest.mark.asyncio
+async def test_run_deployment_with_webhook_no_target_events(app, test_user, test_create_workflow_deployment):
+    """Test running a deployment with webhook notifications without specifying target_events - should receive run.updated by default but not run.output"""
+    deployment_id = test_create_workflow_deployment
+    
+    async with create_webhook_server() as (webhook_url, received_webhooks):
+        # Note: Not specifying target_events in the webhook URL - should get run.updated by default
+        
+        async with get_test_client(app, test_user) as client:
+            response = await client.post(
+                "/run/deployment/sync", 
+                json={
+                    "deployment_id": deployment_id,
+                    "webhook": webhook_url
+                }
+            )
+            assert response.status_code == 200
+            run_id = response.json()[0]["run_id"]
+            assert run_id is not None
+            
+            # Wait a bit for webhooks to be received
+            for _ in range(30):
+                if len(received_webhooks) >= 1:  # We expect run.updated events
+                    break
+                await asyncio.sleep(0.1)
+            
+            # Verify we received webhooks
+            assert len(received_webhooks) > 0, "Did not receive any webhooks"
+            
+            # Verify we received run.updated events by default
+            status_webhooks = [w for w in received_webhooks if w["event_type"] == "run.updated"]
+            assert len(status_webhooks) > 0, "No run.updated webhooks received when they should be default"
+            
+            # Verify we did not receive run.output events since they weren't requested
+            output_webhooks = [w for w in received_webhooks if w["event_type"] == "run.output"]
+            assert len(output_webhooks) == 0, "Received run.output webhooks when not requested"
+            
+            # Verify the structure of run.updated webhooks
+            for webhook in status_webhooks:
+                assert "status" in webhook, "Webhook missing status field"
+                assert "progress" in webhook, "Webhook missing progress field"
+                assert webhook["run_id"] == run_id, "Run ID mismatch in webhook"
 
 @pytest.mark.asyncio
 async def test_run_deployment_on_a_wrong_user(app, test_user, test_user_2, test_create_workflow_deployment):
