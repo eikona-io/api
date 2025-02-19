@@ -989,7 +989,12 @@ async def create_dynamic_session(
         task,
     )
 
-    asyncio.create_task(check_and_close_sessions(request, str(session_id)))
+    check_and_close_sessions_task = asyncio.create_task(check_and_close_sessions(request, str(session_id)))
+    
+    background_tasks.add_task(
+        ensure_session_creation_complete,
+        check_and_close_sessions_task,
+    )
 
     if body.wait_for_server:
         try:
