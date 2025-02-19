@@ -20,7 +20,7 @@ dependencies = [
     "protobuf>=4.25.4",
     "pytest-asyncio>=0.24.0",
     "trio>=0.26.2",
-    "logfire[fastapi]==2.4.1",
+    "logfire[fastapi]==3.5.3",
     "opentelemetry-instrumentation-sqlalchemy>=0.47b0",
     "opentelemetry-instrumentation-asyncio>=0.47b0",
     "clickhouse-connect>=0.7.19",

@@ -1185,7 +1185,7 @@ class ComfyDeployRunner:
         self.start_time = time.time()
         # timeout input is in minutes, so we need to convert it to seconds
         self.session_timeout = timeout * 60
-        print("status_endpoint", status_endpoint)
+        # print("status_endpoint", status_endpoint)
 
         async for event in check_server_with_log(
             f"http://{COMFY_HOST}",

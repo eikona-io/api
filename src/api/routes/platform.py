@@ -20,11 +20,22 @@ from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import JSONResponse, RedirectResponse
 import aiohttp
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import asyncio
 import unicodedata
 import re
+import functools
+from upstash_redis.asyncio import Redis
+import json
+
+redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
+redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
+if redis_token is None:
+    print("Redis token is None", redis_url)
+    redisMeta = Redis(url="http://localhost:8079", token="example_token")
+else:
+    redisMeta = Redis(url=redis_url, token=redis_token)
 
 router = APIRouter(
     tags=["Platform"],
@@ -99,30 +110,300 @@ from fastapi import HTTPException
 # You'll need to configure stripe with your API key
 stripe.api_key = os.getenv("STRIPE_API_KEY")
 
-# Define pricing plan mappings similar to TypeScript
-PRICING_PLAN_MAPPING = {
-    "ws_basic": os.getenv("STRIPE_PR_WS_BASIC"),
-    "ws_pro": os.getenv("STRIPE_PR_WS_PRO"),
-    "pro": os.getenv("STRIPE_PR_PRO"),
-    "basic": os.getenv("STRIPE_PR_BASIC"),
-    "creator": os.getenv("STRIPE_PR_ENTERPRISE"),
-    "business": os.getenv("STRIPE_PR_BUSINESS"),
+# Stripe price lookup keys for each plan
+PLAN_LOOKUP_KEYS = {
+    "creator_monthly": "creator_monthly",
+    "creator_yearly": "creator_yearly",
+    "creator_legacy_monthly": "creator_legacy_monthly",
+    "business_monthly": "business_monthly",
+    "business_yearly": "business_yearly",
+    "deployment_monthly": "deployment_monthly",
+    "deployment_yearly": "deployment_yearly",
 }
 
-PRICING_PLAN_NAMES = {
-    "ws_basic": "Workspace Basic",
-    "ws_pro": "Workspace Pro",
-    "pro": "API Pro (Early Adopter)",
-    "creator": "API Creator (Early Adopter)",
-    "business": "API Business",
-    "basic": "API Basic",
-}
+@functools.lru_cache(maxsize=1)
+def get_pricing_plan_mapping():
+    """
+    Fetches and caches Stripe pricing IDs using lookup keys.
+    The cache is used to avoid repeated Stripe API calls.
+    """
+    try:
+        prices = stripe.Price.list(active=True, expand=['data.product'])
+        mapping = {}
+        reverse_mapping = {}
+        
+        for price in prices.data:
+            lookup_key = price.lookup_key
+            if lookup_key in PLAN_LOOKUP_KEYS.values():
+                mapping[lookup_key] = price.id
+                reverse_mapping[price.id] = lookup_key
+                
+        return mapping, reverse_mapping
+    except stripe.error.StripeError as e:
+        logfire.error(f"Failed to fetch Stripe prices: {str(e)}")
+        return {}, {}
+
+def get_price_id(plan_key: str) -> str:
+    """Get Stripe price ID for a given plan key"""
+    mapping, _ = get_pricing_plan_mapping()
+    return mapping.get(plan_key)
+
+def get_plan_key(price_id: str) -> str:
+    """Get plan key for a given Stripe price ID"""
+    _, reverse_mapping = get_pricing_plan_mapping()
+    return reverse_mapping.get(price_id)
 
 # Update reverse mapping to use actual Stripe price IDs
-PRICING_PLAN_REVERSE_MAPPING = {
-    v: k for k, v in PRICING_PLAN_MAPPING.items() if v is not None
+@functools.lru_cache(maxsize=1)
+def get_pricing_plan_reverse_mapping():
+    """Get reverse mapping from price ID to plan key, lazily loaded and cached"""
+    mapping, _ = get_pricing_plan_mapping()
+    return {v: k for k, v in mapping.items() if v is not None}
+
+PRICING_PLAN_NAMES = {
+    "creator_monthly": "Creator Monthly",
+    "creator_yearly": "Creator Yearly",
+    "creator_legacy_monthly": "Creator (Legacy)",
+    "business_monthly": "Business Monthly",
+    "business_yearly": "Business Yearly",
+    "deployment_monthly": "Deployment Monthly",
+    "deployment_yearly": "Deployment Yearly",
 }
 
+
+async def update_subscription_redis_data(
+    subscription_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    last_invoice_timestamp: Optional[int] = None,
+    db: Optional[AsyncSession] = None,
+) -> dict:
+    """
+    Helper function to create and update subscription data in Redis with versioning.
+    Always fetches fresh data from Stripe if subscription_id is provided.
+    Preserves existing fields if they're not in the new data.
+    """
+    # Generate Redis key from org_id or user_id
+    if not (org_id or user_id):
+        raise ValueError("Either org_id or user_id must be provided")
+    redis_key = f"plan:{org_id or user_id}"
+    
+    # Get existing data from Redis
+    redis_data = {}
+    try:
+        raw_data = await redisMeta.get(redis_key)
+        if raw_data:
+            existing_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+            # Preserve fields we want to keep
+            if "spent" in existing_data:
+                redis_data["spent"] = existing_data["spent"]
+    except Exception as e:
+        logfire.error(f"Error fetching existing Redis data: {str(e)}")
+        existing_data = None
+            
+    # If we have a subscription ID, fetch latest data from Stripe
+    stripe_sub = None
+    subscription_items = []
+    if subscription_id:
+        try:
+            # Fetch the full subscription object with expanded items
+            stripe_sub = stripe.Subscription.retrieve(
+                subscription_id,
+                expand=["items.data.price.product", "discounts"]
+            )
+            subscription_items = await get_subscription_items(subscription_id)
+            logfire.info(f"Fetched latest subscription data for {subscription_id}")
+        except stripe.error.StripeError as e:
+            logfire.error(f"Error fetching subscription data: {str(e)}")
+            
+    # If we have Stripe subscription data, update core fields
+    if stripe_sub:
+        # Debug logging
+        logfire.info(f"Subscription items: {subscription_items}")
+        
+        # Determine plan from subscription items
+        plan = None
+        if subscription_items and len(subscription_items) > 0:
+            first_item = subscription_items[0]
+            plan = get_plan_key(first_item.price.id)
+            logfire.info(f"Got plan from subscription items: {plan}")
+            
+        # Fall back to existing data if no plan found
+        if not plan and existing_data and existing_data.get("plan"):
+            plan = existing_data["plan"]
+            logfire.info(f"Using existing plan: {plan}")
+            
+        logfire.info(f"Final determined plan: {plan}")
+            
+        redis_data.update({
+            "status": stripe_sub.get("status"),
+            "stripe_customer_id": stripe_sub.get("customer"),
+            "subscription_id": stripe_sub.get("id"),
+            "trial_end": stripe_sub.get("trial_end"),
+            "trial_start": stripe_sub.get("trial_start"),
+            "cancel_at_period_end": stripe_sub.get("cancel_at_period_end"),
+            "current_period_start": stripe_sub.get("current_period_start"),
+            "current_period_end": stripe_sub.get("current_period_end"),
+            "canceled_at": stripe_sub.get("canceled_at"),
+            "payment_issue": stripe_sub.get("status") in ["past_due", "unpaid"],
+            "payment_issue_reason": "Subscription payment is overdue" 
+                if stripe_sub.get("status") in ["past_due", "unpaid"] else None,
+            "plan": plan,
+        })
+    
+        # Add subscription items
+        redis_data["subscription_items"] = [
+            {
+                "id": item.id,
+                "price_id": item.price.id,
+                "plan_key": get_plan_key(item.price.id),
+                "unit_amount": item.price.unit_amount,
+                "nickname": item.price.nickname,
+            }
+            for item in subscription_items
+            if get_plan_key(item.price.id) is not None
+        ]
+        
+        # Calculate charges with discounts
+        if stripe_sub.get("discounts"):
+            charges = []
+            for item in subscription_items:
+                if not get_plan_key(item.price.id):
+                    continue
+                    
+                base_amount = item.price.unit_amount
+                if base_amount is None:
+                    continue
+                    
+                final_amount = float(base_amount)
+                
+                # Apply subscription-level discounts
+                for discount in stripe_sub.get("discounts", []):
+                    if discount.get("coupon", {}).get("percent_off"):
+                        final_amount = final_amount * (1 - discount["coupon"]["percent_off"] / 100)
+                    elif discount.get("coupon", {}).get("amount_off"):
+                        total_items = len(subscription_items)
+                        final_amount = max(0, final_amount - (discount["coupon"]["amount_off"] / total_items))
+                            
+                charges.append(round(final_amount))
+                
+            redis_data["charges"] = charges
+    
+    # Add user/org IDs
+    if user_id:
+        redis_data["user_id"] = user_id
+    if org_id:
+        redis_data["org_id"] = org_id
+        
+    # Handle last_invoice_timestamp
+    if last_invoice_timestamp is not None:
+        redis_data["last_invoice_timestamp"] = last_invoice_timestamp
+    elif "last_invoice_timestamp" not in redis_data and db is not None:
+        # If last_invoice_timestamp is missing, try to fetch from subscription table
+        try:
+            query = (
+                select(SubscriptionStatus.last_invoice_timestamp)
+                .where(
+                    and_(
+                        SubscriptionStatus.status != "deleted",
+                        or_(
+                            and_(
+                                SubscriptionStatus.org_id.is_(None),
+                                SubscriptionStatus.user_id == user_id,
+                            )
+                            if not org_id
+                            else SubscriptionStatus.org_id == org_id
+                        ),
+                    )
+                )
+                .order_by(SubscriptionStatus.created_at.desc())
+                .limit(1)
+            )
+            result = await db.execute(query)
+            db_last_invoice = result.scalar_one_or_none()
+            
+            if db_last_invoice:
+                redis_data["last_invoice_timestamp"] = int(db_last_invoice.timestamp())
+                logfire.info(f"Retrieved last_invoice_timestamp from subscription table: {db_last_invoice}")
+        except Exception as e:
+            logfire.error(f"Error fetching last_invoice_timestamp from subscription table: {str(e)}")
+        
+    # Add data version
+    redis_data["version"] = 2
+    
+    # Write to Redis
+    await redisMeta.set(redis_key, redis_data)
+    
+    return redis_data
+
+async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Helper function to find Stripe subscription by user_id/org_id or email.
+    Returns a tuple of (customer_id, subscription_id)
+    """
+    try:
+        # First try to search subscriptions by metadata
+        query = f"metadata['userId']:'{user_id}'"
+        if org_id:
+            query = f"metadata['orgId']:'{org_id}'"
+            
+        subscriptions = stripe.Subscription.search(
+            query=query,
+            limit=1,
+            expand=["data.customer"]
+        )
+        if subscriptions.data:
+            sub = subscriptions.data[0]
+            return sub.customer.id, sub.id
+            
+        # If not found, try searching customers
+        customer_query = f"metadata['userId']:'{user_id}'"
+        if org_id:
+            customer_query = f"metadata['orgId']:'{org_id}'"
+            
+        customers = stripe.Customer.search(
+            query=customer_query,
+            limit=1,
+            expand=["data.subscriptions"]
+        )
+        if customers.data:
+            customer = customers.data[0]
+            if customer.subscriptions and customer.subscriptions.data:
+                return customer.id, customer.subscriptions.data[0].id
+            return customer.id, None
+            
+        # If not found and we have user_id, try to find by email using Clerk
+        if user_id and user_id.startswith("user_"):
+            try:
+                user_data = await get_clerk_user(user_id)
+                if user_data:
+                    email = next(
+                        (
+                            email["email_address"]
+                            for email in user_data["email_addresses"]
+                            if email["id"] == user_data["primary_email_address_id"]
+                        ),
+                        None,
+                    )
+                    if email:
+                        # Search Stripe by email
+                        customers = stripe.Customer.search(
+                            query=f"email:'{email}'",
+                            limit=1,
+                            expand=["data.subscriptions"]
+                        )
+                        if customers.data:
+                            customer = customers.data[0]
+                            if customer.subscriptions and customer.subscriptions.data:
+                                return customer.id, customer.subscriptions.data[0].id
+                            return customer.id, None
+            except Exception as e:
+                logfire.error(f"Error fetching user data from Clerk: {str(e)}")
+                
+    except stripe.error.StripeError as e:
+        logfire.error(f"Error searching Stripe: {str(e)}")
+    
+    return None, None
 
 async def get_current_plan(
     db: AsyncSession, user_id: str, org_id: Optional[str] = None
@@ -151,50 +432,121 @@ async def get_current_plan(
             "last_invoice_timestamp": None,
         }
 
-    # Query subscription status table
-    # Note: This is a simplified version - you'll need to adapt the actual DB query
-    # based on your SQLAlchemy models and schema
-    query = (
-        select(SubscriptionStatus)
-        .where(
-            and_(
-                SubscriptionStatus.status != "deleted",
-                or_(
-                    and_(
-                        SubscriptionStatus.org_id.is_(None),
-                        SubscriptionStatus.user_id == user_id,
-                    )
-                    if not org_id
-                    else SubscriptionStatus.org_id == org_id
-                ),
+    # First try to get from Redis
+    redis_key = f"plan:{org_id or user_id}"
+    plan_data = None
+    
+    try:
+        raw_data = await redisMeta.get(redis_key)
+        if raw_data:
+            plan_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+    except json.JSONDecodeError:
+        logfire.error(f"Failed to parse Redis data for key {redis_key}")
+        plan_data = None
+
+    # If Redis data is missing or invalid, try to recover from DB and Stripe
+    if not plan_data or not plan_data.get("subscription_id"):
+        # First try to get customer ID from subscription status table
+        query = (
+            select(SubscriptionStatus)
+            .where(
+                and_(
+                    SubscriptionStatus.status != "deleted",
+                    or_(
+                        and_(
+                            SubscriptionStatus.org_id.is_(None),
+                            SubscriptionStatus.user_id == user_id,
+                        )
+                        if not org_id
+                        else SubscriptionStatus.org_id == org_id
+                    ),
+                )
             )
+            .order_by(SubscriptionStatus.created_at.desc())
+            .limit(1)
         )
-        .order_by(SubscriptionStatus.created_at.desc())
-        .limit(1)
-    )
+        result = await db.execute(query)
+        subscription = result.scalar_one_or_none()
 
-    result = await db.execute(query)
-    subscription = result.scalar_one_or_none()
+        # Get customer ID and subscription ID either from DB or by searching
+        customer_id = None
+        subscription_id = None
+        
+        if subscription and subscription.stripe_customer_id:
+            # This is old data
+            customer_id = subscription.stripe_customer_id
+            subscription_id = subscription.subscription_id
+        else:
+            # Try to find customer and subscription by user_id/org_id or email
+            customer_id, found_sub_id = await find_stripe_subscription(user_id, org_id)
+            if customer_id:
+                logfire.info(f"Found Stripe customer {customer_id} by searching")
+                if found_sub_id:
+                    subscription_id = found_sub_id
+                    logfire.info(f"Found Stripe subscription {subscription_id} by searching")
 
-    if subscription:
-        return {
-            "stripe_customer_id": subscription.stripe_customer_id,
-            "user_id": subscription.user_id,
-            "org_id": subscription.org_id,
-            "plan": subscription.plan,
-            "status": subscription.status,
-            "subscription_id": subscription.subscription_id,
-            "trial_start": subscription.trial_start,
-            "cancel_at_period_end": subscription.cancel_at_period_end,
-            "created_at": subscription.created_at,
-            "updated_at": subscription.updated_at,
-            "subscription_item_api_id": subscription.subscription_item_api_id,
-            "subscription_item_plan_id": subscription.subscription_item_plan_id,
-            "trial_end": subscription.trial_end,
-            "last_invoice_timestamp": subscription.last_invoice_timestamp,
-        }
+        if customer_id:
+            try:
+                # If we don't have a subscription ID yet, search for active/trialing ones
+                if not subscription_id:
+                    # Search for active subscriptions for this customer
+                    subscriptions = stripe.Subscription.list(
+                        customer=customer_id,
+                        status="active",
+                        expand=["data.items.data.price.product", "data.discounts"]
+                    )
+                    
+                    if subscriptions.data:
+                        # Use the most recent active subscription
+                        active_sub = subscriptions.data[0]
+                        subscription_id = active_sub.id
+                    else:
+                        # Also check for trialing subscriptions
+                        trial_subs = stripe.Subscription.list(
+                            customer=customer_id,
+                            status="trialing",
+                            expand=["data.items.data.price.product", "data.discounts"]
+                        )
+                        if trial_subs.data:
+                            subscription_id = trial_subs.data[0].id
 
-    return None
+                if subscription_id:
+                    # Update Redis with the found subscription
+                    plan_data = await update_subscription_redis_data(
+                        subscription_id=subscription_id,
+                        user_id=user_id,
+                        org_id=org_id,
+                        last_invoice_timestamp=int(subscription.last_invoice_timestamp.timestamp()) if subscription and subscription.last_invoice_timestamp else None,
+                        db=db
+                    )
+                    logfire.info(f"Recovered subscription data for customer {customer_id}")
+            except stripe.error.StripeError as e:
+                logfire.error(f"Error fetching Stripe subscriptions: {str(e)}")
+                return None
+
+    if not plan_data:
+        return None
+
+    # Get the first subscription item as the main plan
+    subscription_items = plan_data.get("subscription_items", [])
+    main_plan = next(iter(subscription_items), {}) if subscription_items else {}
+    
+    return {
+        "stripe_customer_id": plan_data.get("stripe_customer_id"),
+        "user_id": plan_data.get("user_id"),
+        "org_id": plan_data.get("org_id"),
+        "plan": main_plan.get("plan_key", plan_data.get("plan", "free")),  # Fallback to old plan field
+        "status": plan_data.get("status"),
+        "subscription_id": plan_data.get("subscription_id"),
+        "trial_start": plan_data.get("trial_start"),
+        "cancel_at_period_end": plan_data.get("cancel_at_period_end", False),
+        "created_at": plan_data.get("current_period_start"),
+        "updated_at": None,
+        "subscription_item_api_id": main_plan.get("id"),
+        "subscription_item_plan_id": main_plan.get("price_id"),
+        "trial_end": plan_data.get("trial_end"),
+        "last_invoice_timestamp": plan_data.get("last_invoice_timestamp"),
+    }
 
 
 async def get_stripe_plan(
@@ -230,79 +582,54 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
             "canceled_at": None,
         }
 
-    stripe_plan = await get_stripe_plan(db, user_id, org_id)
+    # Get current plan data using get_current_plan
+    plan_data = await get_current_plan(db, user_id, org_id)
+    if not plan_data:
+        return {
+            "plans": [],
+            "names": [],
+            "prices": [],
+            "amount": [],
+            "charges": [],
+            "cancel_at_period_end": False,
+            "canceled_at": None,
+            "payment_issue": False,
+            "payment_issue_reason": "",
+        }
 
-    if not stripe_plan:
-        return None
-
-    # Check for payment issues
-    payment_issue = False
-    payment_issue_reason = ""
-
-    if stripe_plan.status in ["past_due", "unpaid"]:
-        payment_issue = True
-        payment_issue_reason = "Subscription payment is overdue"
-    elif stripe_plan.status == "canceled" and stripe_plan.canceled_at:
-        payment_issue = True
-        payment_issue_reason = "Subscription has been canceled"
-    elif stripe_plan.latest_invoice:
-        try:
-            invoice = stripe.Invoice.retrieve(stripe_plan.latest_invoice)
-            if invoice.status == "uncollectible":
-                payment_issue = True
-                payment_issue_reason = "Your latest payment has failed. Update your payment method to continue this plan."
-        except stripe.error.StripeError:
-            pass
-
-    # Extract plans from stripe subscription
-    plans = [
-        PRICING_PLAN_REVERSE_MAPPING.get(item.price.id)
-        for item in stripe_plan.get("items", {}).get("data", [])
-        if PRICING_PLAN_REVERSE_MAPPING.get(item.price.id)
-    ]
-
-    # Calculate charges with discounts
-    charges = []
-    for item in stripe_plan.get("items", {}).get("data", []):
-        base_amount = item.get("price", {}).get("unit_amount", 0)
-        if base_amount is None:
-            continue
+    # Get Redis data for additional fields not in plan_data
+    redis_key = f"plan:{org_id or user_id}"
+    try:
+        raw_data = await redisMeta.get(redis_key)
+        if raw_data:
+            redis_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+            subscription_items = redis_data.get("subscription_items", [])
             
-        final_amount = float(base_amount)
-
-        # Apply subscription-level discounts
-        if hasattr(stripe_plan, "discounts") and stripe_plan.discounts:
-            for discount in stripe_plan.discounts:
-                if isinstance(discount, str):
-                    continue
-
-                if discount.coupon.percent_off:
-                    final_amount = final_amount * (1 - discount.coupon.percent_off / 100)
-                elif discount.coupon.amount_off:
-                    total_items = len(stripe_plan.get("items", {}).get("data", []))
-                    final_amount = max(0, final_amount - (discount.coupon.amount_off / total_items))
-
-        charges.append(round(final_amount))
-
+            return {
+                "plans": [item["plan_key"] for item in subscription_items],
+                "names": [item["nickname"] for item in subscription_items],
+                "prices": [item["price_id"] for item in subscription_items],
+                "amount": [item["unit_amount"] for item in subscription_items],
+                "charges": redis_data.get("charges", []),
+                "cancel_at_period_end": plan_data.get("cancel_at_period_end", False),
+                "canceled_at": plan_data.get("canceled_at"),
+                "payment_issue": plan_data.get("payment_issue", False),
+                "payment_issue_reason": plan_data.get("payment_issue_reason", ""),
+            }
+    except Exception as e:
+        logfire.error(f"Error getting Redis data in get_plans: {str(e)}")
+    
+    # Fallback to empty response if Redis data is not available
     return {
-        "plans": plans,
-        "names": [
-            item.get("plan", {}).get("nickname", "")
-            for item in stripe_plan.get("items", {}).get("data", [])
-        ],
-        "prices": [
-            item.get("price", {}).get("id", "")
-            for item in stripe_plan.get("items", {}).get("data", [])
-        ],
-        "amount": [
-            item.get("price", {}).get("unit_amount", 0)
-            for item in stripe_plan.get("items", {}).get("data", [])
-        ],
-        "charges": charges,
-        "cancel_at_period_end": stripe_plan.cancel_at_period_end,
-        "canceled_at": stripe_plan.canceled_at,
-        "payment_issue": payment_issue,
-        "payment_issue_reason": payment_issue_reason,
+        "plans": [],
+        "names": [],
+        "prices": [],
+        "amount": [],
+        "charges": [],
+        "cancel_at_period_end": False,
+        "canceled_at": None,
+        "payment_issue": False,
+        "payment_issue_reason": "",
     }
 
 
@@ -314,6 +641,23 @@ DEFAULT_FEATURE_LIMITS = {
     "enterprise": {"machine": 100, "workflow": 300, "private_model": True},
 }
 
+# Map plan keys to feature sets
+PLAN_FEATURE_MAPPING = {
+    # Legacy plans
+    "creator_legacy_monthly": "creator",  # old pro plan
+    
+    # Current plans
+    "creator_monthly": "creator",
+    "creator_yearly": "creator",
+    "business_monthly": "business",
+    "business_yearly": "business",
+    "deployment_monthly": "business",  # deployment plans have same limits as business
+    "deployment_yearly": "business",
+}
+
+def get_feature_set_for_plan(plan_key: str) -> str:
+    """Get the feature set name for a given plan key"""
+    return PLAN_FEATURE_MAPPING.get(plan_key, "free")
 
 async def get_machine_count(db: AsyncSession, request: Request) -> int:
     query = (
@@ -359,29 +703,25 @@ async def get_api_plan(
     if plans is None:
         plans = {"plans": []}  # Provide default empty plans
 
-    # Check if user has subscription
+    # Check if user has subscription by checking if any plan maps to a paid feature set
     has_subscription = any(
-        p in ["creator", "pro", "business"] for p in plans.get("plans", [])
+        get_feature_set_for_plan(p) in ["creator", "business"] 
+        for p in plans.get("plans", [])
     )
     plan = await get_current_plan(db, user_id, org_id) if has_subscription else None
 
     # Calculate limits based on plan
-    if not plans.get("plans"):
+    # Get the highest tier feature set from all active plans
+    feature_sets = [get_feature_set_for_plan(p) for p in plans.get("plans", [])]
+    if "business" in feature_sets:
+        machine_max_count = DEFAULT_FEATURE_LIMITS["business"]["machine"]
+        workflow_max_count = DEFAULT_FEATURE_LIMITS["business"]["workflow"]
+    elif "creator" in feature_sets:
+        machine_max_count = DEFAULT_FEATURE_LIMITS["creator"]["machine"]
+        workflow_max_count = DEFAULT_FEATURE_LIMITS["creator"]["workflow"]
+    else:
         machine_max_count = DEFAULT_FEATURE_LIMITS["free"]["machine"]
         workflow_max_count = DEFAULT_FEATURE_LIMITS["free"]["workflow"]
-    else:
-        if "business" in plans["plans"]:
-            machine_max_count = DEFAULT_FEATURE_LIMITS["business"]["machine"]
-            workflow_max_count = DEFAULT_FEATURE_LIMITS["business"]["workflow"]
-        elif "creator" in plans["plans"]:
-            machine_max_count = DEFAULT_FEATURE_LIMITS["creator"]["machine"]
-            workflow_max_count = DEFAULT_FEATURE_LIMITS["creator"]["workflow"]
-        elif "pro" in plans["plans"]:
-            machine_max_count = DEFAULT_FEATURE_LIMITS["pro"]["machine"]
-            workflow_max_count = DEFAULT_FEATURE_LIMITS["pro"]["workflow"]
-        else:
-            machine_max_count = DEFAULT_FEATURE_LIMITS["free"]["machine"]
-            workflow_max_count = DEFAULT_FEATURE_LIMITS["free"]["workflow"]
 
     # Use updated limits if available
     effective_machine_limit = max(user_settings.machine_limit or 0, machine_max_count)
@@ -392,8 +732,10 @@ async def get_api_plan(
     machine_limited = machine_count >= effective_machine_limit
     workflow_limited = workflow_count >= effective_workflow_limit
 
-    plan_key = plan.get("plan", "free") if plan else "free"
-    target_plan = DEFAULT_FEATURE_LIMITS.get(plan_key, DEFAULT_FEATURE_LIMITS["free"])
+    # Get feature set for current plan
+    current_plan_key = plan.get("plan", "free") if plan else "free"
+    feature_set = get_feature_set_for_plan(current_plan_key)
+    target_plan = DEFAULT_FEATURE_LIMITS.get(feature_set, DEFAULT_FEATURE_LIMITS["free"])
 
     return {
         "sub": plan,
@@ -431,36 +773,45 @@ async def get_upgrade_plan(
         return None
 
     # Find workspace and API plans
-    ws_plan = next(
-        (
-            item
-            for item in stripe_plan.get("items", {}).get("data", [])
-            if item.get("price", {}).get("id")
-            in [PRICING_PLAN_MAPPING["ws_basic"], PRICING_PLAN_MAPPING["ws_pro"]]
-        ),
-        None,
-    )
+    # ws_plan = next(
+    #     (
+    #         item
+    #         for item in stripe_plan.get("items", {}).get("data", [])
+    #         if item.get("price", {}).get("id") in [
+    #             get_price_id("creator_monthly"),
+    #             get_price_id("creator_yearly"),
+    #             get_price_id("business_monthly"),
+    #             get_price_id("business_yearly"),
+    #             get_price_id("deployment_monthly"),
+    #             get_price_id("deployment_yearly"),
+    #             get_price_id("creator_legacy_monthly"),
+    #         ]
+    #     ),
+    #     None,
+    # )
 
     api_plan = next(
         (
             item
             for item in stripe_plan.get("items", {}).get("data", [])
-            if item.get("price", {}).get("id")
-            in [
-                PRICING_PLAN_MAPPING["creator"],
-                PRICING_PLAN_MAPPING["pro"],
-                PRICING_PLAN_MAPPING["basic"],
-                PRICING_PLAN_MAPPING["business"],
+            if item.get("price", {}).get("id") in [
+                get_price_id("creator_monthly"),
+                get_price_id("creator_yearly"),
+                get_price_id("business_monthly"),
+                get_price_id("business_yearly"),
+                get_price_id("deployment_monthly"),
+                get_price_id("deployment_yearly"),
+                get_price_id("creator_legacy_monthly"),
             ]
         ),
         None,
     )
 
     # Determine conflicting plan
-    conflicting_plan = ws_plan if not plan.startswith("ws_") else api_plan
+    conflicting_plan = api_plan
 
     # Get target price ID
-    target_price_id = PRICING_PLAN_MAPPING.get(plan)
+    target_price_id = get_price_id(plan)
     if not target_price_id:
         raise HTTPException(status_code=400, detail="Invalid plan type")
 
@@ -593,6 +944,227 @@ async def slugify(workflow_name: str, current_user_id: str) -> str:
     return f"{user_part}_{slug_part}"
 
 
+# Define allowed Stripe webhook events
+ALLOWED_STRIPE_EVENTS = [
+    "customer.subscription.created",
+    "checkout.session.completed",
+    "customer.subscription.paused",
+    "customer.subscription.resumed",
+    "customer.subscription.deleted",
+    "customer.subscription.updated",
+    "customer.subscription.trial_will_end",
+    "invoice.created",
+    "invoice.finalized",
+    "invoice.paid",
+    "payment_intent.succeeded",
+    "customer.updated",
+    "invoice.payment_succeeded",
+    "invoice.updated",
+    "charge.succeeded"
+]
+
+# PostHog event mapping
+POSTHOG_EVENT_MAPPING = {
+    "customer.subscription.created": "create_subscription",
+    "customer.subscription.paused": "pause_subscription",
+    "customer.subscription.resumed": "resume_subscription",
+    "customer.subscription.deleted": "delete_subscription",
+    "customer.subscription.updated": "update_subscription"
+}
+
+async def calculate_usage_charges(
+    user_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    db: Optional[AsyncSession] = None,
+) -> Tuple[float, int]:
+    """
+    Calculate GPU compute usage charges for a given time period.
+    Returns a tuple of (final_cost, last_invoice_timestamp).
+    This function doesn't depend on Stripe and can be used for testing.
+    
+    Args:
+        user_id: Optional user ID
+        org_id: Optional organization ID
+        start_time: Start time for usage calculation
+        end_time: End time for usage calculation
+        db: Optional database session
+        
+    Returns:
+        Tuple[float, int]: (final_cost, last_invoice_timestamp)
+        final_cost is in dollars (not cents)
+        last_invoice_timestamp is Unix timestamp
+    """
+    if not user_id and not org_id:
+        raise ValueError("Either user_id or org_id must be provided")
+        
+    if not db:
+        async with AsyncSession(get_db()) as db:
+            return await calculate_usage_charges(user_id, org_id, start_time, end_time, db)
+            
+    # If start_time not provided, try to get from Redis
+    if not start_time:
+        redis_key = f"plan:{org_id or user_id}"
+        try:
+            raw_data = await redisMeta.get(redis_key)
+            if raw_data:
+                redis_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+                if redis_data.get("last_invoice_timestamp"):
+                    start_time = datetime.fromtimestamp(redis_data.get("last_invoice_timestamp"))
+        except Exception as e:
+            logfire.error(f"Error getting Redis data: {str(e)}")
+            
+    # If still no start_time, use subscription start or user creation date
+    if not start_time:
+        query = (
+            select(SubscriptionStatus)
+            .where(
+                and_(
+                    SubscriptionStatus.status != "deleted",
+                    or_(
+                        and_(
+                            SubscriptionStatus.org_id.is_(None),
+                            SubscriptionStatus.user_id == user_id,
+                        )
+                        if not org_id
+                        else SubscriptionStatus.org_id == org_id
+                    ),
+                )
+            )
+            .order_by(SubscriptionStatus.created_at.desc())
+            .limit(1)
+        )
+        result = await db.execute(query)
+        subscription = result.scalar_one_or_none()
+        
+        if subscription and subscription.last_invoice_timestamp:
+            start_time = subscription.last_invoice_timestamp
+        else:
+            # Try user creation date
+            query = select(User.created_at).where(User.id == user_id)
+            result = await db.execute(query)
+            user_created_at = result.scalar_one_or_none()
+            start_time = user_created_at or datetime.now()
+            
+    end_time = end_time or datetime.now()
+    
+    # Get usage details
+    usage_details = await get_usage_details(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        org_id=org_id,
+        user_id=user_id
+    )
+    
+    # Calculate total cost
+    total_cost = sum(get_gpu_event_cost(event) for event in usage_details)
+    
+    # Apply free tier credit ($5 = 500 cents)
+    final_cost = max(total_cost - FREE_TIER_USAGE / 100, 0)
+    
+    return final_cost, int(end_time.timestamp())
+
+async def charge_usage_details(invoice_id: str, customer_id: str) -> Optional[int]:
+    """
+    Add GPU compute usage charges to a Stripe invoice.
+    This is called when a new invoice is created for subscription billing cycle.
+    Returns the last invoice timestamp used for billing period calculation.
+    """
+    try:
+        # Get subscription from invoice
+        invoice = stripe.Invoice.retrieve(
+            invoice_id,
+            expand=["subscription", "subscription.default_payment_method"]
+        )
+        
+        if not invoice.subscription:
+            logfire.error(f"No subscription found for invoice {invoice_id}")
+            return None
+            
+        # Get metadata from subscription
+        subscription = stripe.Subscription.retrieve(invoice.subscription.id)
+        metadata = subscription.metadata
+        
+        user_id = metadata.get("userId")
+        org_id = metadata.get("orgId")
+        
+        if not user_id and not org_id:
+            logfire.error(f"No user_id or org_id found in subscription metadata for invoice {invoice_id}")
+            return None
+            
+        # Calculate usage charges
+        final_cost, last_invoice_timestamp = await calculate_usage_charges(
+            user_id=user_id,
+            org_id=org_id,
+            end_time=datetime.fromtimestamp(invoice.created),
+            db=None  # Let the function create its own session
+        )
+        
+        if final_cost > 0:
+            # Convert to cents for Stripe
+            amount = int(final_cost * 100)
+            
+            # Create invoice item
+            stripe.InvoiceItem.create(
+                customer=customer_id,
+                invoice=invoice_id,
+                amount=amount,
+                currency="usd",
+                description="GPU Compute Usage",
+            )
+            
+            logfire.info(f"Added GPU Compute Usage ({amount} cents) to invoice {invoice_id}")
+            
+        return last_invoice_timestamp
+                
+    except Exception as e:
+        logfire.error(f"Error charging usage details: {str(e)}")
+        raise
+
+@router.post("/platform/stripe/webhook")
+async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Handle Stripe webhook events"""
+    try:
+        # Get the raw request body
+        body = await request.body()
+        body_str = body.decode('utf-8')
+        
+        # Get Stripe signature from headers
+        stripe_signature = request.headers.get('stripe-signature')
+        if not stripe_signature:
+            raise HTTPException(status_code=400, detail="No Stripe signature found")
+            
+        # Verify webhook signature
+        webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+        if not webhook_secret:
+            raise HTTPException(status_code=500, detail="Webhook secret not configured")
+            
+        try:
+            event = stripe.Webhook.construct_event(
+                body_str,
+                stripe_signature,
+                webhook_secret
+            )
+        except stripe.error.SignatureVerificationError:
+            raise HTTPException(status_code=400, detail="Invalid signature")
+            
+        print(f"Webhook event type: {event.get('type')}")
+        # print(f"Webhook metadata: {event.get('data', {}).get('object', {}).get('metadata', {})}")
+        
+        # Use the generic event handler
+        await handle_stripe_event(event, db)
+        return {"result": event, "ok": True}
+        
+    except Exception as e:
+        print(f"Error processing webhook: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error processing webhook: {str(e)}"
+        )
+
+
 @router.get("/platform/checkout")
 async def stripe_checkout(
     request: Request,
@@ -605,7 +1177,10 @@ async def stripe_checkout(
     """Handle Stripe checkout process"""
     user_id = request.state.current_user.get("user_id")
     org_id = request.state.current_user.get("org_id")
-
+    
+    if plan in ["creator", "business"]:
+        plan = f"{plan}_monthly"
+        
     if not user_id:
         return {"url": redirect_url or "/"}
     if not plan:
@@ -623,7 +1198,7 @@ async def stripe_checkout(
     )
 
     # Get target price ID
-    target_price_id = PRICING_PLAN_MAPPING.get(plan)
+    target_price_id = get_price_id(plan)
     if not target_price_id:
         raise HTTPException(status_code=400, detail="Invalid plan type")
 
@@ -668,38 +1243,46 @@ async def stripe_checkout(
                     return {"url": portal_session.url}
 
                 # Handle plan updates
-                ws_plan = next(
-                    (
-                        item
-                        for item in stripe_plan.get("items", {}).get("data", [])
-                        if item.get("price", {}).get("id")
-                        in [
-                            PRICING_PLAN_MAPPING["ws_basic"],
-                            PRICING_PLAN_MAPPING["ws_pro"],
-                        ]
-                    ),
-                    None,
-                )
+                # ws_plan = next(
+                #     (
+                #         item
+                #         for item in stripe_plan.get("items", {}).get("data", [])
+                #         if item.get("price", {}).get("id")
+                #         in [
+                #             get_price_id("creator_monthly"),
+                #             get_price_id("creator_yearly"),
+                #             get_price_id("business_monthly"),
+                #             get_price_id("business_yearly"),
+                #             get_price_id("deployment_monthly"),
+                #             get_price_id("deployment_yearly"),
+                #             get_price_id("creator_legacy_monthly"),
+                #         ]
+                #     ),
+                #     None,
+                # )
                 api_plan = next(
                     (
                         item
                         for item in stripe_plan.get("items", {}).get("data", [])
                         if item.get("price", {}).get("id")
                         in [
-                            PRICING_PLAN_MAPPING["creator"],
-                            PRICING_PLAN_MAPPING["pro"],
-                            PRICING_PLAN_MAPPING["basic"],
-                            PRICING_PLAN_MAPPING["business"],
+                            get_price_id("creator_monthly"),
+                            get_price_id("creator_yearly"),
+                            get_price_id("business_monthly"),
+                            get_price_id("business_yearly"),
+                            get_price_id("deployment_monthly"),
+                            get_price_id("deployment_yearly"),
+                            get_price_id("creator_legacy_monthly"),
                         ]
                     ),
                     None,
                 )
 
-                conflicting_plan = ws_plan if not plan.startswith("ws_") else api_plan
+                conflicting_plan = api_plan
 
                 if conflicting_plan:
                     # Update subscription with plan replacement
-                    await stripe.Subscription.modify(
+                    stripe.Subscription.modify(
                         current_plan["subscription_id"],
                         proration_behavior="always_invoice",
                         metadata=metadata,
@@ -713,7 +1296,7 @@ async def stripe_checkout(
                     )
                 else:
                     # Add new plan to subscription
-                    await stripe.Subscription.modify(
+                    stripe.Subscription.modify(
                         current_plan["subscription_id"],
                         proration_behavior="always_invoice",
                         metadata=metadata,
@@ -1128,3 +1711,96 @@ async def get_dashboard_url(
         "url": session.url
     })
 
+
+async def get_subscription_items(subscription_id: str) -> List[Dict]:
+    """Helper function to get subscription items from Stripe"""
+    try:
+        items = stripe.SubscriptionItem.list(
+            subscription=subscription_id,
+            limit=5
+        )
+        return items.data  # Return just the data array
+    except stripe.error.StripeError as e:
+        print(f"Error fetching subscription items: {e}")
+        return []
+
+async def handle_stripe_event(event: dict, db: AsyncSession):
+    """Generic event handler for Stripe webhook events"""
+    event_type = event.get("type")
+    if event_type not in ALLOWED_STRIPE_EVENTS:
+        print(f"Unhandled event type: {event_type}")
+        return
+        
+    event_object = event.get("data", {}).get("object", {})
+    
+    # Extract common fields
+    customer_id = event_object.get("customer")
+    if isinstance(customer_id, dict):
+        customer_id = customer_id.get("id")
+        
+    # For invoice events, get the subscription from the invoice
+    subscription_id = None
+    if event_type.startswith("invoice."):
+        subscription_id = event_object.get("subscription")
+        if subscription_id:
+            try:
+                # Fetch the full subscription object
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                event_object = subscription
+            except stripe.error.StripeError as e:
+                logfire.error(f"Error fetching subscription from invoice: {str(e)}")
+                return
+    else:
+        subscription_id = event_object.get("id")
+    
+    metadata = event_object.get("metadata", {})
+    
+    # If metadata is empty in the event object, try to get it from the subscription
+    if not metadata and customer_id:
+        try:
+            # Get customer to find associated subscription
+            customer = stripe.Customer.retrieve(customer_id, expand=['subscriptions'])
+            if customer.get('subscriptions') and customer.subscriptions.data:
+                latest_sub = customer.subscriptions.data[0]
+                metadata = latest_sub.metadata
+                if not subscription_id:
+                    subscription_id = latest_sub.id
+                    event_object = latest_sub
+        except stripe.error.StripeError as e:
+            logfire.error(f"Error fetching customer data: {str(e)}")
+    
+    user_id = metadata.get("userId")
+    org_id = metadata.get("orgId")
+    
+    # Skip if we can't identify the user/org
+    if not user_id and not org_id:
+        logfire.error(f"Could not identify user/org from event: {event_type}")
+        return
+    
+    # Handle invoice.created event for GPU usage billing
+    last_invoice_timestamp = None
+    if event_type == "invoice.created":
+        invoice = event.get("data", {}).get("object", {})
+        
+        # Only process subscription cycle invoices
+        if invoice.get("billing_reason") == "subscription_cycle":
+            try:
+                last_invoice_timestamp = await charge_usage_details(
+                    invoice_id=invoice.get("id"),
+                    customer_id=customer_id
+                )
+                logfire.info(f"Successfully charged GPU usage for invoice {invoice.get('id')}")
+            except Exception as e:
+                logfire.error(f"Failed to charge GPU usage: {str(e)}")
+    
+    try:
+        await update_subscription_redis_data(
+            subscription_id=subscription_id,
+            user_id=user_id,
+            org_id=org_id,
+            last_invoice_timestamp=last_invoice_timestamp,
+            db=db
+        )
+        logfire.info(f"Updated Redis data for plan:{org_id or user_id} after {event_type}")
+    except Exception as e:
+        logfire.error(f"Error updating Redis data: {str(e)}")

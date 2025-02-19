@@ -1,4 +1,4 @@
-import inspect
+# import inspect
 from sqlalchemy import (
     BigInteger,
     Column,

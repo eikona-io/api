@@ -65,13 +65,12 @@ class NullPropagator(TextMapPropagator):
         return set()
 
 
-set_global_textmap(NullPropagator())
-
-load_dotenv()
-logfire.configure(
-    service_name="comfydeploy-api",
-    # send_to_logfire=False
-)
+if __name__ == "__main__":
+    set_global_textmap(NullPropagator())
+    load_dotenv()
+    logfire.configure(
+        service_name="comfydeploy-api",
+    )
 logger = logfire
 logging.basicConfig(level=logging.INFO)
 
@@ -302,10 +301,11 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-logfire.instrument_fastapi(app)
-logfire.instrument_sqlalchemy(
-    engine=engine.sync_engine,
-)
+if __name__ == "__main__":
+    logfire.instrument_fastapi(app)
+    logfire.instrument_sqlalchemy(
+        engine=engine.sync_engine,
+    )
 
 if __name__ == "__main__":
     reload = os.getenv("ENV", "production").lower() == "development"
@@ -317,7 +317,7 @@ if __name__ == "__main__":
         "api:app",
         host="0.0.0.0",
         port=port,
-        workers=4,
+        workers=4 if not reload else 1,
         reload=reload,
         reload_dirs=[project_root + "/api/src"],
     )

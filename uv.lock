@@ -191,7 +191,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=0.26.0" },
-    { name = "logfire", extras = ["fastapi"], specifier = "==2.4.1" },
+    { name = "logfire", extras = ["fastapi"], specifier = "==3.5.3" },
     { name = "modal", specifier = "==0.72.33" },
     { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
@@ -875,7 +875,7 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "2.4.1"
+version = "3.5.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "executing" },
@@ -886,9 +886,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/b2/b2952ce05b11a50b684a86562e04dbd622c2971e08975a30f98f1b8ac600/logfire-2.4.1.tar.gz", hash = "sha256:df8a3ba01e358170c189543e98d3244267a72b771ee338daccc657c3c56daf1f", size = 251008 }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/58/4fc12194521c42e1c098415d9fd95d58a56be0fb5536547b112e3455730a/logfire-3.5.3.tar.gz", hash = "sha256:cb4863cde51a4784fcdf78ac178c2a6f739b1c6c6061bb8662edf7eed7b643ac", size = 265097 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/93/7e/3d5f68a7d8c8d21fc0af1fd88ea04070240dedb88b1e40334424120762e5/logfire-2.4.1-py3-none-any.whl", hash = "sha256:54c7d2c3d1169850a3fe492186337d50f47e3a5d83cc021d37c58bea1adfff41", size = 171178 },
+    { url = "https://files.pythonhosted.org/packages/ef/8a/fed343129493077b8a959b7b0eb0eaf604f59027a474a1d7253ba2bb58d3/logfire-3.5.3-py3-none-any.whl", hash = "sha256:d06186aaf08fc9d144a71548ba3e3a3fcbe4dddd84241243957167b870c4a731", size = 178617 },
 ]
 
 [package.optional-dependencies]
