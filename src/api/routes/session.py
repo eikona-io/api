@@ -1232,7 +1232,7 @@ async def check_and_close_sessions(request: Request, session_id: str):
             if datetime.utcnow() > timeout_end:
                 # Close the session
                 async with get_db_context() as db:
-                    await delete_session(request, session_id, db)
+                    await delete_session(request, session_id, db=db)
                 # Optionally, delete the key from Redis
                 logger.info(f"Session {session_id} closed due to timeout")
                 break
