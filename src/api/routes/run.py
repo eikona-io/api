@@ -1030,6 +1030,8 @@ async def _create_run(
         if isinstance(data, ModelRunRequest):
             model_id = data.model_id
             print(f"Debug - Found ModelRunRequest with model_id: {model_id}")
+            
+        safe_deployment_id = getattr(data, "deployment_id", None)
 
         # Create a new run
         new_run = WorkflowRun(
