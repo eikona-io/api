@@ -2,12 +2,10 @@ from typing import Optional
 from api.middleware.subscriptionMiddleware import SubscriptionMiddleware
 from sqlalchemy import select
 
-import modal
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse  # Import JSONResponse from here
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
 import os
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
@@ -52,6 +50,11 @@ from opentelemetry.context import get_current
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.textmap import TextMapPropagator
 
+logger = logfire
+load_dotenv()
+logfire.configure(
+    service_name="comfydeploy-api",
+)
 
 class NullPropagator(TextMapPropagator):
     def extract(self, *args, **kwargs):
@@ -65,13 +68,8 @@ class NullPropagator(TextMapPropagator):
         return set()
 
 
-if __name__ == "__main__":
-    set_global_textmap(NullPropagator())
-    load_dotenv()
-    logfire.configure(
-        service_name="comfydeploy-api",
-    )
-logger = logfire
+set_global_textmap(NullPropagator())
+    
 logging.basicConfig(level=logging.INFO)
 
 # logger = logging.getLogger(__name__)
@@ -135,7 +133,7 @@ def custom_openapi(with_code_samples: bool = True):
             response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
             openapi_schema = response.json()
         except Exception as e:
-            logger.error(f"Failed to fetch Speakeasy schema: {e}")
+            # logger.error(f"Failed to fetch Speakeasy schema: {e}")
             # Fallback to default schema generation
             openapi_schema = get_openapi(
                 title="ComfyDeploy API",
@@ -301,13 +299,14 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-if __name__ == "__main__":
-    logfire.instrument_fastapi(app)
-    logfire.instrument_sqlalchemy(
-        engine=engine.sync_engine,
-    )
+logfire.instrument_fastapi(app)
+logfire.instrument_sqlalchemy(
+    engine=engine.sync_engine,
+)
 
 if __name__ == "__main__":
+    import uvicorn
+    
     reload = os.getenv("ENV", "production").lower() == "development"
     port = int(os.getenv("PORT", 8000))
     current_dir = os.path.dirname(os.path.abspath(__file__))
