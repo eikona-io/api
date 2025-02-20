@@ -66,6 +66,7 @@ class WorkflowModel(BaseModel):
     pinned: bool = False
     deleted: bool = False
     description: Optional[str] = None
+    cover_image: Optional[str] = None
     class Config:
         from_attributes = True
 

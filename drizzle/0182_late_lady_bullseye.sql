@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."workflows" ADD COLUMN "cover_image" text;
