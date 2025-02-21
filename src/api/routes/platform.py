@@ -2,7 +2,7 @@ import os
 import logfire
 from pydantic import BaseModel
 from api.database import get_db
-from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent
+from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent, UserSettings
 from api.routes.utils import (
     fetch_user_icon,
     get_user_settings as get_user_settings_util,
@@ -1055,7 +1055,8 @@ async def process_all_active_subscriptions(
                     user_id=user_id,
                     org_id=org_id,
                     end_time=datetime.now(),
-                    db=db
+                    db=db,
+                    dry_run=dry_run
                 )
                 
                 # Extract only essential customer info
@@ -1850,6 +1851,7 @@ async def calculate_usage_charges(
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     db: Optional[AsyncSession] = None,
+    dry_run: bool = False,
 ) -> Tuple[float, int]:
     """
     Calculate GPU compute usage charges for a given time period.
@@ -1862,6 +1864,7 @@ async def calculate_usage_charges(
         start_time: Start time for usage calculation
         end_time: End time for usage calculation
         db: Optional database session
+        dry_run: If True, simulate the calculation without updating credits
         
     Returns:
         Tuple[float, int]: (final_cost, last_invoice_timestamp)
@@ -1873,7 +1876,7 @@ async def calculate_usage_charges(
         
     if not db:
         async with AsyncSession(get_db()) as db:
-            return await calculate_usage_charges(user_id, org_id, start_time, end_time, db)
+            return await calculate_usage_charges(user_id, org_id, start_time, end_time, db, dry_run)
             
     # Get current plan to ensure Redis data exists and is up to date
     current_plan = await get_current_plan(db, user_id, org_id)
@@ -1933,5 +1936,36 @@ async def calculate_usage_charges(
     
     # Apply free tier credit ($5 = 500 cents)
     final_cost = max(total_cost - FREE_TIER_USAGE / 100, 0)
+
+    # Try to get and apply user settings credit if available
+    try:
+        query = select(UserSettings).where(
+            or_(
+                and_(
+                    UserSettings.org_id.is_(None),
+                    UserSettings.user_id == user_id,
+                )
+                if not org_id
+                else UserSettings.org_id == org_id
+            )
+        )
+        result = await db.execute(query)
+        user_settings = result.scalar_one_or_none()
+        
+        if user_settings and user_settings.credit:
+            credit_to_apply = min(user_settings.credit, final_cost)
+            final_cost = max(final_cost - credit_to_apply, 0)
+            
+            # Update the remaining credit if not in dry run mode
+            if not dry_run and credit_to_apply > 0:
+                remaining_credit = max(user_settings.credit - credit_to_apply, 0)
+                user_settings.credit = remaining_credit
+                await db.commit()
+                logfire.info(f"Updated credit for {'org' if org_id else 'user'} {org_id or user_id} from {user_settings.credit} to {remaining_credit}")
+            elif dry_run and credit_to_apply > 0:
+                logfire.info(f"[DRY RUN] Would update credit for {'org' if org_id else 'user'} {org_id or user_id} from {user_settings.credit} to {max(user_settings.credit - credit_to_apply, 0)}")
+                
+    except Exception as e:
+        logfire.warning(f"Failed to apply user settings credit: {str(e)}")
     
     return final_cost, int(end_time.timestamp())
