@@ -1111,23 +1111,24 @@ async def process_all_active_subscriptions(
                                     email = user_data["email"]
                                     
                                 if email:
+                                    message = f"""
+                                    <h2>GPU Usage Invoice</h2>
+                                    <p>Here's your GPU usage summary:</p>
+                                    <ul>
+                                        <li>Total Usage Cost: ${final_cost:.2f}</li>
+                                        <li>Period End: {datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d %H:%M:%S')}</li>
+                                    </ul>
+                                    <p>{'This is a dry run notification.' if dry_run else 'An invoice will be generated for this usage.'}</p>
+                                    """
                                     params: resend.Emails.SendParams = {
                                         "from": "Comfy Deploy <billing@comfydeploy.com>",
                                         "to": email,
-                                        "subject": "Comfy Deploy - GPU Usage Invoice",
-                                        "html": f"""
-                                        <h2>GPU Usage Invoice</h2>
-                                        <p>Here's your GPU usage summary:</p>
-                                        <ul>
-                                            <li>Total Usage Cost: ${final_cost:.2f}</li>
-                                            <li>Period End: {datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d %H:%M:%S')}</li>
-                                        </ul>
-                                        <p>{'This is a dry run notification.' if dry_run else 'An invoice will be generated for this usage.'}</p>
-                                        """
+                                        "subject": "Comfy Deploy - GPU Usage Summary" if final_cost == 0 else "Comfy Deploy - GPU Usage Invoice",
+                                        "html": message
                                     }
-                                    email_result: resend.Email = resend.Emails.send(params)
+                                    email_result = resend.Emails.send(params)
                                     subscription_info["email_sent"] = True
-                                    subscription_info["email_id"] = email_result.id
+                                    subscription_info["email_id"] = email_result["id"]
                                     logfire.info(f"Sent usage email to {email}")
                         except Exception as e:
                             logfire.error(f"Error sending email for subscription {subscription.id}: {str(e)}")
