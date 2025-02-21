@@ -1088,12 +1088,17 @@ async def process_all_active_subscriptions(
                         )
 
                         # Create invoice item and associate it with the invoice
+                        current_time = datetime.now()
                         invoice_item = stripe.InvoiceItem.create(
                             customer=subscription.customer.id,
                             amount=amount,
                             currency="usd",
-                            description=f"GPU Compute Usage ({datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d')} to {datetime.now().strftime('%Y-%m-%d')})",
+                            description=f"GPU Compute Usage ({datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d')} to {current_time.strftime('%Y-%m-%d')})",
                             invoice=invoice.id,  # Associate with the specific invoice
+                            period={
+                                "start": int(last_invoice_timestamp),
+                                "end": int(current_time.timestamp())
+                            }
                         )
                         logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
                         
