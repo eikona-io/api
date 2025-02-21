@@ -1080,11 +1080,12 @@ async def process_all_active_subscriptions(
                     subscription_info["amount_cents"] = amount
                     
                     if not dry_run:
-                        # Create and pay invoice immediately
+                        # Create invoice immediately
                         invoice = stripe.Invoice.create(
                             customer=subscription.customer.id,
                             auto_advance=True,  # Auto-finalize the invoice
                             collection_method="charge_automatically",
+                            subscription=subscription.id,
                         )
 
                         # Create invoice item and associate it with the invoice
@@ -1093,7 +1094,7 @@ async def process_all_active_subscriptions(
                             customer=subscription.customer.id,
                             amount=amount,
                             currency="usd",
-                            description=f"GPU Compute Usage ({datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d')} to {current_time.strftime('%Y-%m-%d')})",
+                            description="GPU Compute Usage",
                             invoice=invoice.id,  # Associate with the specific invoice
                             period={
                                 "start": int(last_invoice_timestamp),
@@ -1102,15 +1103,12 @@ async def process_all_active_subscriptions(
                         )
                         logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
                         
-                        # Finalize and pay the invoice immediately
+                        # Finalize the invoice - payment will be collected automatically
                         try:
-                            # Finalize the invoice to include the item
                             invoice = stripe.Invoice.finalize_invoice(invoice.id)
-                            # Pay the invoice
-                            stripe.Invoice.pay(invoice.id)
-                            logfire.info(f"Created and paid invoice {invoice.id} immediately")
+                            logfire.info(f"Created and finalized invoice {invoice.id}, payment will be collected automatically")
                         except stripe.error.StripeError as e:
-                            logfire.error(f"Failed to pay invoice immediately: {str(e)}")
+                            logfire.error(f"Failed to finalize invoice: {str(e)}")
                             # The invoice item will still be added to the next regular invoice
                     else:
                         logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
