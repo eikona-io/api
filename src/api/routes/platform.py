@@ -1080,14 +1080,33 @@ async def process_all_active_subscriptions(
                     subscription_info["amount_cents"] = amount
                     
                     if not dry_run:
-                        # Create invoice item
-                        stripe.InvoiceItem.create(
+                        # Create and pay invoice immediately
+                        invoice = stripe.Invoice.create(
+                            customer=subscription.customer.id,
+                            auto_advance=True,  # Auto-finalize the invoice
+                            collection_method="charge_automatically",
+                        )
+
+                        # Create invoice item and associate it with the invoice
+                        invoice_item = stripe.InvoiceItem.create(
                             customer=subscription.customer.id,
                             amount=amount,
                             currency="usd",
-                            description="GPU Compute Usage",
+                            description=f"GPU Compute Usage ({datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d')} to {datetime.now().strftime('%Y-%m-%d')})",
+                            invoice=invoice.id,  # Associate with the specific invoice
                         )
                         logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
+                        
+                        # Finalize and pay the invoice immediately
+                        try:
+                            # Finalize the invoice to include the item
+                            invoice = stripe.Invoice.finalize_invoice(invoice.id)
+                            # Pay the invoice
+                            stripe.Invoice.pay(invoice.id)
+                            logfire.info(f"Created and paid invoice {invoice.id} immediately")
+                        except stripe.error.StripeError as e:
+                            logfire.error(f"Failed to pay invoice immediately: {str(e)}")
+                            # The invoice item will still be added to the next regular invoice
                     else:
                         logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
                     
@@ -1623,7 +1642,7 @@ async def get_usage(
         start_time=effective_start_time,
         end_time=effective_end_time,
         org_id=org_id,
-        user_id=user_id,
+        user_id=user_id
     )
     
     user_settings = await get_user_settings_util(request, db)
@@ -1803,28 +1822,12 @@ async def handle_stripe_event(event: dict, db: AsyncSession):
         logfire.error(f"Could not identify user/org from event: {event_type}")
         return
     
-    # Handle invoice.created event for GPU usage billing
-    last_invoice_timestamp = None
-    # if event_type == "invoice.created":
-    #     invoice = event.get("data", {}).get("object", {})
-        
-    #     # Only process subscription cycle invoices
-    #     if invoice.get("billing_reason") == "subscription_cycle":
-    #         try:
-    #             last_invoice_timestamp = await charge_usage_details(
-    #                 invoice_id=invoice.get("id"),
-    #                 customer_id=customer_id
-    #             )
-    #             logfire.info(f"Successfully charged GPU usage for invoice {invoice.get('id')}")
-    #         except Exception as e:
-    #             logfire.error(f"Failed to charge GPU usage: {str(e)}")
-    
     try:
         await update_subscription_redis_data(
             subscription_id=subscription_id,
             user_id=user_id,
             org_id=org_id,
-            last_invoice_timestamp=last_invoice_timestamp,
+            last_invoice_timestamp=int(event_object.get("current_period_end")) if event_type == "invoice.finalized" else None,
             db=db
         )
         logfire.info(f"Updated Redis data for plan:{org_id or user_id} after {event_type}")
