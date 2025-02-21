@@ -1597,42 +1597,22 @@ async def get_usage(
     if not user_id and not org_id:
         raise HTTPException(status_code=400, detail="User or org id is required")
 
-    # Get current subscription
-    query = (
-        select(SubscriptionStatus)
-        .where(
-            and_(
-                SubscriptionStatus.status != "deleted",
-                or_(
-                    and_(
-                        SubscriptionStatus.org_id.is_(None),
-                        SubscriptionStatus.user_id == user_id,
-                    )
-                    if not org_id
-                    else SubscriptionStatus.org_id == org_id
-                ),
-            )
-        )
-        .order_by(SubscriptionStatus.created_at.desc())
-        .limit(1)
-    )
-    result = await db.execute(query)
-    subscription = result.scalar_one_or_none()
+    # Get current plan to get last invoice timestamp
+    current_plan = await get_current_plan(db, user_id, org_id)
 
-    # If no subscription, get user creation date
+    # If no subscription or last invoice timestamp, get user creation date
     user_created_at = None
-    if not subscription or not subscription.subscription_id:
+    if not current_plan or not current_plan.get("last_invoice_timestamp"):
         query = select(User.created_at).where(User.id == user_id)
         result = await db.execute(query)
         user_created_at = result.scalar_one_or_none()
 
     # Determine start time based on billing period
     effective_start_time = (
-        start_time or subscription.last_invoice_timestamp
-        if subscription
-        else None or user_created_at
-        if user_created_at
-        else None or datetime.now()
+        start_time
+        or (datetime.fromtimestamp(current_plan["last_invoice_timestamp"]) if current_plan and current_plan.get("last_invoice_timestamp") else None)
+        or user_created_at
+        or datetime.now()
     )
 
     effective_end_time = end_time or datetime.now()
