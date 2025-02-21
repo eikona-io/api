@@ -1653,6 +1653,12 @@ async def get_usage(
 
     # Apply free tier credit ($5 = 500 cents)
     final_cost = max(total_cost - FREE_TIER_USAGE / 100, 0)
+    
+    # Apply user settings credit if available
+    credit_to_apply = 0
+    if user_settings and user_settings.credit:
+        credit_to_apply = min(user_settings.credit, final_cost)
+        final_cost = max(final_cost - credit_to_apply, 0)
 
     return {
         "usage": usage_details,
