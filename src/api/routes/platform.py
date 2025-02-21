@@ -28,6 +28,7 @@ import re
 import functools
 from upstash_redis.asyncio import Redis
 import json
+import resend
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -1005,156 +1006,154 @@ POSTHOG_EVENT_MAPPING = {
     "customer.subscription.updated": "update_subscription"
 }
 
-async def calculate_usage_charges(
-    user_id: Optional[str] = None,
-    org_id: Optional[str] = None,
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    db: Optional[AsyncSession] = None,
-) -> Tuple[float, int]:
+async def process_all_active_subscriptions(
+    db: AsyncSession,
+    dry_run: bool = False,
+    send_email: bool = False
+) -> List[Dict]:
     """
-    Calculate GPU compute usage charges for a given time period.
-    Returns a tuple of (final_cost, last_invoice_timestamp).
-    This function doesn't depend on Stripe and can be used for testing.
+    Process all active subscriptions and charge for GPU usage.
+    This function is meant to be called by a cron job via the admin endpoint.
     
     Args:
-        user_id: Optional user ID
-        org_id: Optional organization ID
-        start_time: Start time for usage calculation
-        end_time: End time for usage calculation
-        db: Optional database session
+        db: Database session
+        dry_run: If True, only simulate the process without creating invoices
+        send_email: If True, send email notifications about usage
         
     Returns:
-        Tuple[float, int]: (final_cost, last_invoice_timestamp)
-        final_cost is in dollars (not cents)
-        last_invoice_timestamp is Unix timestamp
+        List of processed subscription details
     """
-    if not user_id and not org_id:
-        raise ValueError("Either user_id or org_id must be provided")
-        
-    if not db:
-        async with AsyncSession(get_db()) as db:
-            return await calculate_usage_charges(user_id, org_id, start_time, end_time, db)
-            
-    # If start_time not provided, try to get from Redis
-    if not start_time:
-        redis_key = f"plan:{org_id or user_id}"
-        try:
-            raw_data = await redisMeta.get(redis_key)
-            if raw_data:
-                redis_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-                if redis_data.get("last_invoice_timestamp"):
-                    start_time = datetime.fromtimestamp(redis_data.get("last_invoice_timestamp"))
-        except Exception as e:
-            logfire.error(f"Error getting Redis data: {str(e)}")
-            
-    # If still no start_time, use subscription start or user creation date
-    if not start_time:
-        query = (
-            select(SubscriptionStatus)
-            .where(
-                and_(
-                    SubscriptionStatus.status != "deleted",
-                    or_(
-                        and_(
-                            SubscriptionStatus.org_id.is_(None),
-                            SubscriptionStatus.user_id == user_id,
-                        )
-                        if not org_id
-                        else SubscriptionStatus.org_id == org_id
-                    ),
-                )
-            )
-            .order_by(SubscriptionStatus.created_at.desc())
-            .limit(1)
-        )
-        result = await db.execute(query)
-        subscription = result.scalar_one_or_none()
-        
-        if subscription and subscription.last_invoice_timestamp:
-            start_time = subscription.last_invoice_timestamp
-        else:
-            # Try user creation date
-            query = select(User.created_at).where(User.id == user_id)
-            result = await db.execute(query)
-            user_created_at = result.scalar_one_or_none()
-            start_time = user_created_at or datetime.now()
-            
-    end_time = end_time or datetime.now()
-    
-    # Get usage details
-    usage_details = await get_usage_details(
-        db=db,
-        start_time=start_time,
-        end_time=end_time,
-        org_id=org_id,
-        user_id=user_id
-    )
-    
-    # Calculate total cost
-    total_cost = sum(get_gpu_event_cost(event) for event in usage_details)
-    
-    # Apply free tier credit ($5 = 500 cents)
-    final_cost = max(total_cost - FREE_TIER_USAGE / 100, 0)
-    
-    return final_cost, int(end_time.timestamp())
-
-async def charge_usage_details(invoice_id: str, customer_id: str) -> Optional[int]:
-    """
-    Add GPU compute usage charges to a Stripe invoice.
-    This is called when a new invoice is created for subscription billing cycle.
-    Returns the last invoice timestamp used for billing period calculation.
-    """
+    processed_subscriptions = []
     try:
-        # Get subscription from invoice
-        invoice = stripe.Invoice.retrieve(
-            invoice_id,
-            expand=["subscription", "subscription.default_payment_method"]
+        # Get all active subscriptions from Stripe
+        subscriptions = stripe.Subscription.list(
+            status="active",
+            expand=["data.customer"]
         )
         
-        if not invoice.subscription:
-            logfire.error(f"No subscription found for invoice {invoice_id}")
-            return None
-            
-        # Get metadata from subscription
-        subscription = stripe.Subscription.retrieve(invoice.subscription.id)
-        metadata = subscription.metadata
+        logfire.info(f"Processing {len(subscriptions.data)} active subscriptions")
         
-        user_id = metadata.get("userId")
-        org_id = metadata.get("orgId")
-        
-        if not user_id and not org_id:
-            logfire.error(f"No user_id or org_id found in subscription metadata for invoice {invoice_id}")
-            return None
-            
-        # Calculate usage charges
-        final_cost, last_invoice_timestamp = await calculate_usage_charges(
-            user_id=user_id,
-            org_id=org_id,
-            end_time=datetime.fromtimestamp(invoice.created),
-            db=None  # Let the function create its own session
-        )
-        
-        if final_cost > 0:
-            # Convert to cents for Stripe
-            amount = int(final_cost * 100)
-            
-            # Create invoice item
-            stripe.InvoiceItem.create(
-                customer=customer_id,
-                invoice=invoice_id,
-                amount=amount,
-                currency="usd",
-                description="GPU Compute Usage",
-            )
-            
-            logfire.info(f"Added GPU Compute Usage ({amount} cents) to invoice {invoice_id}")
-            
-        return last_invoice_timestamp
+        for subscription in subscriptions.data:
+            try:
+                # Get metadata from subscription
+                metadata = subscription.metadata
+                user_id = metadata.get("userId")
+                org_id = metadata.get("orgId")
                 
-    except Exception as e:
-        logfire.error(f"Error charging usage details: {str(e)}")
+                if not user_id and not org_id:
+                    logfire.warning(f"Subscription {subscription.id} has no user_id or org_id in metadata")
+                    continue
+                
+                # Get current plan to ensure Redis data exists and is up to date
+                current_plan = await get_current_plan(db, user_id, org_id)
+                if not current_plan:
+                    logfire.warning(f"No plan data found for subscription {subscription.id}")
+                    continue
+                
+                # Calculate usage charges
+                final_cost, last_invoice_timestamp = await calculate_usage_charges(
+                    user_id=user_id,
+                    org_id=org_id,
+                    end_time=datetime.now(),
+                    db=db
+                )
+                
+                subscription_info = {
+                    "subscription_id": subscription.id,
+                    "customer_id": subscription.customer,
+                    "user_id": user_id,
+                    "org_id": org_id,
+                    "final_cost": final_cost,
+                    "last_invoice_timestamp": last_invoice_timestamp
+                }
+                
+                if final_cost > 0:
+                    # Convert to cents for Stripe
+                    amount = int(final_cost * 100)
+                    subscription_info["amount_cents"] = amount
+                    
+                    if not dry_run:
+                        # Create invoice item
+                        stripe.InvoiceItem.create(
+                            customer=subscription.customer,
+                            amount=amount,
+                            currency="usd",
+                            description="GPU Compute Usage",
+                        )
+                        logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
+                    else:
+                        logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
+                    
+                    if send_email:
+                        try:
+                            # Get user email from Clerk
+                            user_data = None
+                            if user_id and user_id.startswith("user_"):
+                                user_data = await get_clerk_user(user_id)
+                            elif org_id and org_id.startswith("org_"):
+                                user_data = await get_clerk_org(org_id)
+                                
+                            if user_data:
+                                email = None
+                                if "email_addresses" in user_data:
+                                    email = next(
+                                        (email["email_address"] for email in user_data["email_addresses"]
+                                         if email["id"] == user_data["primary_email_address_id"]),
+                                        None
+                                    )
+                                elif "email" in user_data:
+                                    email = user_data["email"]
+                                    
+                                if email:
+                                    params: resend.Emails.SendParams = {
+                                        "from": "Comfy Deploy <billing@comfydeploy.com>",
+                                        "to": email,
+                                        "subject": "Comfy Deploy - GPU Usage Invoice",
+                                        "html": f"""
+                                        <h2>GPU Usage Invoice</h2>
+                                        <p>Here's your GPU usage summary:</p>
+                                        <ul>
+                                            <li>Total Usage Cost: ${final_cost:.2f}</li>
+                                            <li>Period End: {datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d %H:%M:%S')}</li>
+                                        </ul>
+                                        <p>{'This is a dry run notification.' if dry_run else 'An invoice will be generated for this usage.'}</p>
+                                        """
+                                    }
+                                    email_result: resend.Email = resend.Emails.send(params)
+                                    subscription_info["email_sent"] = True
+                                    subscription_info["email_id"] = email_result.id
+                                    logfire.info(f"Sent usage email to {email}")
+                        except Exception as e:
+                            logfire.error(f"Error sending email for subscription {subscription.id}: {str(e)}")
+                            subscription_info["email_error"] = str(e)
+                
+                if not dry_run:
+                    # Update Redis with new last invoice timestamp
+                    await update_subscription_redis_data(
+                        subscription_id=subscription.id,
+                        user_id=user_id,
+                        org_id=org_id,
+                        last_invoice_timestamp=last_invoice_timestamp,
+                        db=db
+                    )
+                
+                processed_subscriptions.append(subscription_info)
+                
+            except Exception as e:
+                logfire.error(f"Error processing subscription {subscription.id}: {str(e)}")
+                continue
+                
+    except stripe.error.StripeError as e:
+        logfire.error(f"Error fetching subscriptions from Stripe: {str(e)}")
         raise
+    except Exception as e:
+        logfire.error(f"Unexpected error in process_all_active_subscriptions: {str(e)}")
+        raise
+        
+    return processed_subscriptions
+
+# Add Resend client
+resend.api_key = os.getenv("RESEND_API_KEY")
 
 @router.post("/platform/stripe/webhook")
 async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
@@ -1812,19 +1811,19 @@ async def handle_stripe_event(event: dict, db: AsyncSession):
     
     # Handle invoice.created event for GPU usage billing
     last_invoice_timestamp = None
-    if event_type == "invoice.created":
-        invoice = event.get("data", {}).get("object", {})
+    # if event_type == "invoice.created":
+    #     invoice = event.get("data", {}).get("object", {})
         
-        # Only process subscription cycle invoices
-        if invoice.get("billing_reason") == "subscription_cycle":
-            try:
-                last_invoice_timestamp = await charge_usage_details(
-                    invoice_id=invoice.get("id"),
-                    customer_id=customer_id
-                )
-                logfire.info(f"Successfully charged GPU usage for invoice {invoice.get('id')}")
-            except Exception as e:
-                logfire.error(f"Failed to charge GPU usage: {str(e)}")
+    #     # Only process subscription cycle invoices
+    #     if invoice.get("billing_reason") == "subscription_cycle":
+    #         try:
+    #             last_invoice_timestamp = await charge_usage_details(
+    #                 invoice_id=invoice.get("id"),
+    #                 customer_id=customer_id
+    #             )
+    #             logfire.info(f"Successfully charged GPU usage for invoice {invoice.get('id')}")
+    #         except Exception as e:
+    #             logfire.error(f"Failed to charge GPU usage: {str(e)}")
     
     try:
         await update_subscription_redis_data(
@@ -1837,3 +1836,95 @@ async def handle_stripe_event(event: dict, db: AsyncSession):
         logfire.info(f"Updated Redis data for plan:{org_id or user_id} after {event_type}")
     except Exception as e:
         logfire.error(f"Error updating Redis data: {str(e)}")
+
+async def calculate_usage_charges(
+    user_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    db: Optional[AsyncSession] = None,
+) -> Tuple[float, int]:
+    """
+    Calculate GPU compute usage charges for a given time period.
+    Returns a tuple of (final_cost, last_invoice_timestamp).
+    This function doesn't depend on Stripe and can be used for testing.
+    
+    Args:
+        user_id: Optional user ID
+        org_id: Optional organization ID
+        start_time: Start time for usage calculation
+        end_time: End time for usage calculation
+        db: Optional database session
+        
+    Returns:
+        Tuple[float, int]: (final_cost, last_invoice_timestamp)
+        final_cost is in dollars (not cents)
+        last_invoice_timestamp is Unix timestamp
+    """
+    if not user_id and not org_id:
+        raise ValueError("Either user_id or org_id must be provided")
+        
+    if not db:
+        async with AsyncSession(get_db()) as db:
+            return await calculate_usage_charges(user_id, org_id, start_time, end_time, db)
+            
+    # Get current plan to ensure Redis data exists and is up to date
+    current_plan = await get_current_plan(db, user_id, org_id)
+    if not current_plan:
+        logfire.warning(f"No plan data found for user {user_id} or org {org_id}")
+        return 0, int(datetime.now().timestamp())
+            
+    # If start_time not provided, use last_invoice_timestamp from current plan
+    if not start_time and current_plan.get("last_invoice_timestamp"):
+        start_time = datetime.fromtimestamp(current_plan["last_invoice_timestamp"])
+            
+    # If still no start_time, use subscription start or user creation date
+    if not start_time:
+        query = (
+            select(SubscriptionStatus)
+            .where(
+                and_(
+                    SubscriptionStatus.status != "deleted",
+                    or_(
+                        and_(
+                            SubscriptionStatus.org_id.is_(None),
+                            SubscriptionStatus.user_id == user_id,
+                        )
+                        if not org_id
+                        else SubscriptionStatus.org_id == org_id
+                    ),
+                )
+            )
+            .order_by(SubscriptionStatus.created_at.desc())
+            .limit(1)
+        )
+        result = await db.execute(query)
+        subscription = result.scalar_one_or_none()
+        
+        if subscription and subscription.last_invoice_timestamp:
+            start_time = subscription.last_invoice_timestamp
+        else:
+            # Try user creation date
+            query = select(User.created_at).where(User.id == user_id)
+            result = await db.execute(query)
+            user_created_at = result.scalar_one_or_none()
+            start_time = user_created_at or datetime.now()
+            
+    end_time = end_time or datetime.now()
+    
+    # Get usage details
+    usage_details = await get_usage_details(
+        db=db,
+        start_time=start_time,
+        end_time=end_time,
+        org_id=org_id,
+        user_id=user_id
+    )
+    
+    # Calculate total cost
+    total_cost = sum(get_gpu_event_cost(event) for event in usage_details)
+    
+    # Apply free tier credit ($5 = 500 cents)
+    final_cost = max(total_cost - FREE_TIER_USAGE / 100, 0)
+    
+    return final_cost, int(end_time.timestamp())
