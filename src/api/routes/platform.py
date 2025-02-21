@@ -1058,9 +1058,15 @@ async def process_all_active_subscriptions(
                     db=db
                 )
                 
+                # Extract only essential customer info
+                customer_info = {
+                    "id": subscription.customer.id,
+                    "email": subscription.customer.email
+                } if subscription.customer else {"id": None, "email": None}
+                
                 subscription_info = {
                     "subscription_id": subscription.id,
-                    "customer_id": subscription.customer,
+                    "customer": customer_info,
                     "user_id": user_id,
                     "org_id": org_id,
                     "final_cost": final_cost,
@@ -1075,7 +1081,7 @@ async def process_all_active_subscriptions(
                     if not dry_run:
                         # Create invoice item
                         stripe.InvoiceItem.create(
-                            customer=subscription.customer,
+                            customer=subscription.customer.id,
                             amount=amount,
                             currency="usd",
                             description="GPU Compute Usage",
