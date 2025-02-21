@@ -50,11 +50,6 @@ from opentelemetry.context import get_current
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.textmap import TextMapPropagator
 
-logger = logfire
-load_dotenv()
-logfire.configure(
-    service_name="comfydeploy-api",
-)
 
 class NullPropagator(TextMapPropagator):
     def extract(self, *args, **kwargs):
@@ -69,6 +64,11 @@ class NullPropagator(TextMapPropagator):
 
 
 set_global_textmap(NullPropagator())
+logger = logfire
+load_dotenv()
+logfire.configure(
+    service_name="comfydeploy-api",
+)
     
 logging.basicConfig(level=logging.INFO)
 
