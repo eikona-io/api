@@ -130,7 +130,7 @@ async def get_pricing_plan_mapping():
     The cache is used to avoid repeated Stripe API calls.
     """
     try:
-        prices = await stripe.Price.list_async(active=True, expand=['data.product'])
+        prices = await stripe.Price.list_async(active=True, expand=['data.product'], limit=20)
         mapping = {}
         reverse_mapping = {}
         
@@ -799,7 +799,7 @@ async def get_upgrade_plan(
     user_id = request.state.current_user.get("user_id")
     org_id = request.state.current_user.get("org_id")
     
-    if plan in ["creator", "business"]:
+    if plan in ["creator", "business", "deployment"]:
         plan = f"{plan}_monthly"
 
     if not user_id:
@@ -810,56 +810,10 @@ async def get_upgrade_plan(
     if not stripe_plan:
         return None
 
-    # Find workspace and API plans
-    # ws_plan = next(
-    #     (
-    #         item
-    #         for item in stripe_plan.get("items", {}).get("data", [])
-    #         if item.get("price", {}).get("id") in [
-    #             get_price_id("creator_monthly"),
-    #             get_price_id("creator_yearly"),
-    #             get_price_id("business_monthly"),
-    #             get_price_id("business_yearly"),
-    #             get_price_id("deployment_monthly"),
-    #             get_price_id("deployment_yearly"),
-    #             get_price_id("creator_legacy_monthly"),
-    #         ]
-    #     ),
-    #     None,
-    # )
-
-    api_plan = next(
-        (
-            item
-            for item in stripe_plan.get("items", {}).get("data", [])
-            if item.get("price", {}).get("id") in [
-                await get_price_id("creator_monthly"),
-                await get_price_id("creator_yearly"),
-                await get_price_id("business_monthly"),
-                await get_price_id("business_yearly"),
-                await get_price_id("deployment_monthly"),
-                await get_price_id("deployment_yearly"),
-                await get_price_id("creator_legacy_monthly"),
-            ]
-        ),
-        None,
-    )
-
-    # Determine conflicting plan
-    conflicting_plan = api_plan
-
     # Get target price ID
     target_price_id = await get_price_id(plan)
     if not target_price_id:
-        raise HTTPException(status_code=400, detail="Invalid plan type")
-
-    # Check if plan already exists
-    has_target_price = any(
-        item.get("price", {}).get("id") == target_price_id
-        for item in stripe_plan.get("items", {}).get("data", [])
-    )
-    if has_target_price:
-        return None
+        raise HTTPException(status_code=400, detail="Invalid plan type: " + plan)
 
     # Handle coupon if provided
     promotion_code_id = None
@@ -874,14 +828,41 @@ async def get_upgrade_plan(
             raise HTTPException(status_code=400, detail=str(e))
 
     try:
+        # Check if plan already exists
+        has_target_price = any(
+            item.get("price", {}).get("id") == target_price_id
+            for item in stripe_plan.get("items", {}).get("data", [])
+        )
+        if has_target_price:
+            return None
+
+        # Find conflicting plan
+        api_plan = None
+        price_ids_to_check = [
+            await get_price_id(key) for key in [
+                "creator_monthly",
+                "creator_yearly",
+                "business_monthly",
+                "business_yearly",
+                "deployment_monthly",
+                "deployment_yearly",
+                "creator_legacy_monthly",
+            ]
+        ]
+        
+        for item in stripe_plan.get("items", {}).get("data", []):
+            if item.get("price", {}).get("id") in price_ids_to_check:
+                api_plan = item
+                break
+
         # Calculate proration
-        if conflicting_plan:
+        if api_plan:
             return await stripe.Invoice.upcoming_async(
                 subscription=stripe_plan.id,
                 subscription_details={
                     "proration_behavior": "always_invoice",
                     "items": [
-                        {"id": conflicting_plan.id, "deleted": True},
+                        {"id": api_plan.id, "deleted": True},
                         {"price": target_price_id, "quantity": 1},
                     ],
                 },
@@ -1217,17 +1198,17 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         )
         
         
-@router.get("/platform/checkout/redirect")
-async def stripe_checkout_redirect(
-    request: Request,
-    plan: str,
-    redirect_url: str = None,
-    trial: Optional[bool] = False,
-    coupon: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await stripe_checkout(request, plan, redirect_url, trial, coupon, db)
-    return RedirectResponse(url=result["url"])
+# @router.get("/platform/checkout/redirect")
+# async def stripe_checkout_redirect(
+#     request: Request,
+#     plan: str,
+#     redirect_url: str = None,
+#     trial: Optional[bool] = False,
+#     coupon: Optional[str] = None,
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     result = await stripe_checkout(request, plan, redirect_url, trial, coupon, db)
+#     return RedirectResponse(url=result["url"])
 
 @router.get("/platform/checkout")
 async def stripe_checkout(
@@ -1242,7 +1223,7 @@ async def stripe_checkout(
     user_id = request.state.current_user.get("user_id")
     org_id = request.state.current_user.get("org_id")
     
-    if plan in ["creator", "business"]:
+    if plan in ["creator", "business", "deployment"]:
         plan = f"{plan}_monthly"
         
     if not user_id:
@@ -1264,7 +1245,7 @@ async def stripe_checkout(
     # Get target price ID
     target_price_id = await get_price_id(plan)
     if not target_price_id:
-        raise HTTPException(status_code=400, detail="Invalid plan type")
+        raise HTTPException(status_code=400, detail="Invalid plan type: " + plan)
 
     metadata = {
         "userId": user_id,
