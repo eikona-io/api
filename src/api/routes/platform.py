@@ -326,6 +326,9 @@ async def update_subscription_redis_data(
             if db_last_invoice:
                 redis_data["last_invoice_timestamp"] = int(db_last_invoice.timestamp())
                 logfire.info(f"Retrieved last_invoice_timestamp from subscription table: {db_last_invoice}")
+            else:
+                logfire.info("No last_invoice_timestamp found in subscription table")
+                redis_data["last_invoice_timestamp"] = subscription_items[0].get('created')
         except Exception as e:
             logfire.error(f"Error fetching last_invoice_timestamp from subscription table: {str(e)}")
         
@@ -542,17 +545,16 @@ async def get_current_plan(
                         )
                         if trial_subs.data:
                             subscription_id = trial_subs.data[0].id
-
+                
                 if subscription_id:
-                    # Update Redis with the found subscription
-                    plan_data = await update_subscription_redis_data(
+                    # Remove debug print
+                    await update_subscription_redis_data(
                         subscription_id=subscription_id,
                         user_id=user_id,
                         org_id=org_id,
                         last_invoice_timestamp=int(subscription.last_invoice_timestamp.timestamp()) if subscription and subscription.last_invoice_timestamp else None,
                         db=db
                     )
-                    logfire.info(f"Recovered subscription data for customer {customer_id}")
             except stripe.error.StripeError as e:
                 logfire.error(f"Error fetching Stripe subscriptions: {str(e)}")
                 return None
@@ -1834,7 +1836,7 @@ async def handle_stripe_event(event: dict, db: AsyncSession):
             subscription_id=subscription_id,
             user_id=user_id,
             org_id=org_id,
-            last_invoice_timestamp=int(event_object.get("current_period_end")) if event_type == "invoice.finalized" else None,
+            # last_invoice_timestamp=int(event_object.get("current_period_end")) if event_type == "invoice.finalized" else None,
             db=db
         )
         logfire.info(f"Updated Redis data for plan:{org_id or user_id} after {event_type}")
