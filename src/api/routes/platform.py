@@ -1196,7 +1196,7 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             raise HTTPException(status_code=500, detail="Webhook secret not configured")
             
         # Update webhook event construction
-        event = await stripe.Webhook.construct_event_async(
+        event = stripe.Webhook.construct_event(
             body_str,
             stripe_signature,
             webhook_secret
