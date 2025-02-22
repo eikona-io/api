@@ -585,23 +585,24 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             # Remove host header as it will be set by aiohttp
             headers.pop("host", None)
             # Send a POST request to the legacy API to update the user spent usage.
-            async with aiohttp.ClientSession() as session:
-                # Remove any existing encoding headers and set to just gzip
-                headers["Accept-Encoding"] = "gzip, deflate"
-                if "content-encoding" in headers:
-                    del headers["content-encoding"]
+            # async with aiohttp.ClientSession() as session:
+            #     # Remove any existing encoding headers and set to just gzip
+            #     headers["Accept-Encoding"] = "gzip, deflate"
+            #     if "content-encoding" in headers:
+            #         del headers["content-encoding"]
 
-                async with session.post(new_url, json=data, headers=headers) as response:
-                    content = await response.read()
-                    return Response(
-                        content=content,
-                        status_code=response.status,
-                        headers={
-                            k: v
-                            for k, v in response.headers.items()
-                            if k.lower() != "content-encoding"
-                        },
-                    )
+            #     async with session.post(new_url, json=data, headers=headers) as response:
+            #         content = await response.read()
+            #         return Response(
+            #             content=content,
+            #             status_code=response.status,
+            #             headers={
+            #                 k: v
+            #                 for k, v in response.headers.items()
+            #                 if k.lower() != "content-encoding"
+            #             },
+            #         )
+            return { "event_id": event.id }
 
             logging.info(f"end_time added to gpu_event: {event.id}")
 
