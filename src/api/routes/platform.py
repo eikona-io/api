@@ -836,24 +836,30 @@ async def get_upgrade_plan(
         if has_target_price:
             return None
 
-        # Find conflicting plan
-        api_plan = None
-        price_ids_to_check = [
-            await get_price_id(key) for key in [
-                "creator_monthly",
-                "creator_yearly",
-                "business_monthly",
-                "business_yearly",
-                "deployment_monthly",
-                "deployment_yearly",
-                "creator_legacy_monthly",
-            ]
-        ]
-        
-        for item in stripe_plan.get("items", {}).get("data", []):
-            if item.get("price", {}).get("id") in price_ids_to_check:
-                api_plan = item
-                break
+        # Get all price IDs first to avoid multiple awaits in list comprehension
+        price_ids = []
+        for plan_key in [
+            "creator_monthly",
+            "creator_yearly", 
+            "business_monthly",
+            "business_yearly",
+            "deployment_monthly",
+            "deployment_yearly",
+            "creator_legacy_monthly"
+        ]:
+            price_id = await get_price_id(plan_key)
+            if price_id:
+                price_ids.append(price_id)
+
+        # Find matching plan
+        api_plan = next(
+            (
+                item
+                for item in stripe_plan.get("items", {}).get("data", [])
+                if item.get("price", {}).get("id") in price_ids
+            ),
+            None,
+        )
 
         # Calculate proration
         if api_plan:
