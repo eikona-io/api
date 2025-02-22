@@ -1,4 +1,4 @@
-import inspect
+# import inspect
 from sqlalchemy import (
     BigInteger,
     Column,
@@ -82,6 +82,7 @@ class Workflow(SerializableMixin, Base):
         UUID(as_uuid=True), ForeignKey("machines.id", ondelete="set null")
     )
     description = Column(String)
+    cover_image = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
     pinned = Column(Boolean, nullable=False, default=False)

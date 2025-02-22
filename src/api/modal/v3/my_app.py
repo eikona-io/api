@@ -1575,7 +1575,7 @@ class ComfyDeployRunner:
     @modal.method()
     async def create_tunnel(self, q, status_endpoint):
         self.status_endpoint = status_endpoint
-        print("status_endpoint", status_endpoint)
+        # print("status_endpoint", status_endpoint)
 
         ok = await check_server(
             f"http://{COMFY_HOST}",

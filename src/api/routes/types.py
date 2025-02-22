@@ -66,6 +66,7 @@ class WorkflowModel(BaseModel):
     pinned: bool = False
     deleted: bool = False
     description: Optional[str] = None
+    cover_image: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -531,7 +532,7 @@ class Model(BaseModel):
     updated_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class DeploymentEnvironment(str, Enum):

@@ -3,17 +3,23 @@ import dub
 import logging
 from typing import Optional
 
-dub_api_key = os.getenv("DUB_API_KEY")
-d = None
-
-if not dub_api_key:
-    logging.error("DUB_API_KEY environment variable is not set")
-else:
-    d = dub.Dub(token=dub_api_key)
-
+# Replace the module-level initialization with a singleton pattern
+class DubClient:
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            dub_api_key = os.getenv("DUB_API_KEY")
+            if not dub_api_key:
+                logging.warning("DUB_API_KEY environment variable is not set")
+                return None
+            cls._instance = dub.Dub(token=dub_api_key)
+        return cls._instance
 
 def _check_dub_client() -> bool:
-    if not d:
+    client = DubClient.get_instance()
+    if not client:
         logging.error("Dub client not initialized - missing API key")
         return False
     return True
@@ -24,9 +30,10 @@ async def create_dub_link(url: str, slug: str) -> Optional[str]:
         return None
 
     res = None
+    client = DubClient.get_instance()
 
     try:
-        res = d.links.create(
+        res = await client.links.create_async(
             request={
                 "url": url,
                 "domain": "comfydeploy.link",
@@ -53,7 +60,7 @@ async def get_dub_link(slug: str) -> Optional[str]:
         return None
 
     try:
-        res = d.links.get(request={"external_id": f"ext_{slug}"})
+        res = await DubClient.get_instance().links.get_async(request={"external_id": f"ext_{slug}"})
         if res is not None:
             logging.info(f"link found: {res.short_link}")
             return res
@@ -69,9 +76,10 @@ async def update_dub_link(link_id: str, url: str, slug: str) -> Optional[str]:
         return None
 
     res = None
+    client = DubClient.get_instance()
 
     try:
-        res = d.links.update(
+        res = await client.links.update_async(
             link_id=link_id,
             request_body={
                 "url": url,

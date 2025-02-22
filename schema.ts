@@ -58,6 +58,7 @@ export const workflowTable = dbSchema.table("workflows", {
     pinned: boolean("pinned").default(false).notNull(),
     deleted: boolean("deleted").default(false).notNull(),
     description: text("description"),
+    cover_image: text("cover_image"),
 });
 
 export const workflowSchema = createSelectSchema(workflowTable);

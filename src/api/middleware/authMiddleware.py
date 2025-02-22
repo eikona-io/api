@@ -22,6 +22,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/models",
             "/api/clerk/webhook",
             "/api/share/*",
+            "/api/platform/stripe/webhook",
         ]
         # print("AuthMiddleware initialized")  # Test print
 

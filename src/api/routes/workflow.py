@@ -63,6 +63,7 @@ class WorkflowUpdateModel(BaseModel):
     pinned: Optional[bool] = None
     deleted: Optional[bool] = None
     description: Optional[str] = None
+    cover_image: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -103,6 +104,8 @@ async def update_workflow(
             workflow.deleted = body.deleted
         if body.description is not None:
             workflow.description = body.description
+        if body.cover_image is not None:
+            workflow.cover_image = body.cover_image
 
     await db.commit()
 
