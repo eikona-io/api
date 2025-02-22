@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from api.database import get_db
 from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent, UserSettings
 from api.routes.utils import (
+    async_lru_cache,
     fetch_user_icon,
     get_user_settings as get_user_settings_util,
     update_user_settings as update_user_settings_util,
@@ -122,7 +123,7 @@ PLAN_LOOKUP_KEYS = {
     "deployment_yearly": "deployment_yearly",
 }
 
-@functools.lru_cache(maxsize=1)
+@async_lru_cache(maxsize=1)
 async def get_pricing_plan_mapping():
     """
     Fetches and caches Stripe pricing IDs using lookup keys.
@@ -155,7 +156,7 @@ async def get_plan_key(price_id: str) -> str:
     return reverse_mapping.get(price_id)
 
 # Update reverse mapping to use actual Stripe price IDs
-@functools.lru_cache(maxsize=1)
+@async_lru_cache(maxsize=1)
 async def get_pricing_plan_reverse_mapping():
     """Get reverse mapping from price ID to plan key, lazily loaded and cached"""
     mapping, _ = await get_pricing_plan_mapping()
@@ -1251,7 +1252,7 @@ async def stripe_checkout(
     )
 
     # Get target price ID
-    target_price_id = get_price_id(plan)
+    target_price_id = await get_price_id(plan)
     if not target_price_id:
         raise HTTPException(status_code=400, detail="Invalid plan type")
 
