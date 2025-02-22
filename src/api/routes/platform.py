@@ -1015,157 +1015,155 @@ async def process_all_active_subscriptions(
     dry_run: bool = False,
     send_email: bool = False
 ) -> List[Dict]:
-    """
-    Process all active subscriptions and charge for GPU usage.
-    This function is meant to be called by a cron job via the admin endpoint.
-    
-    Args:
-        db: Database session
-        dry_run: If True, only simulate the process without creating invoices
-        send_email: If True, send email notifications about usage
-        
-    Returns:
-        List of processed subscription details
-    """
     processed_subscriptions = []
     try:
-        # Get all active subscriptions from Stripe
-        subscriptions = stripe.Subscription.list(
-            status="active",
-            expand=["data.customer"]
-        )
+        # Get all active subscriptions from Stripe with pagination
+        has_more = True
+        starting_after = None
         
-        logfire.info(f"Processing {len(subscriptions.data)} active subscriptions")
-        
-        for subscription in subscriptions.data:
-            try:
-                # Get metadata from subscription
-                metadata = subscription.metadata
-                user_id = metadata.get("userId")
-                org_id = metadata.get("orgId")
-                
-                if not user_id and not org_id:
-                    logfire.warning(f"Subscription {subscription.id} has no user_id or org_id in metadata")
-                    continue
-                
-                # Get current plan to ensure Redis data exists and is up to date
-                current_plan = await get_current_plan(db, user_id, org_id)
-                if not current_plan:
-                    logfire.warning(f"No plan data found for subscription {subscription.id}")
-                    continue
-                
-                # Calculate usage charges
-                final_cost, last_invoice_timestamp = await calculate_usage_charges(
-                    user_id=user_id,
-                    org_id=org_id,
-                    end_time=datetime.now(),
-                    db=db,
-                    dry_run=dry_run
-                )
-                
-                # Extract only essential customer info
-                customer_info = {
-                    "id": subscription.customer.id,
-                    "email": subscription.customer.email
-                } if subscription.customer else {"id": None, "email": None}
-                
-                subscription_info = {
-                    "subscription_id": subscription.id,
-                    "customer": customer_info,
-                    "user_id": user_id,
-                    "org_id": org_id,
-                    "final_cost": final_cost,
-                    "last_invoice_timestamp": last_invoice_timestamp
-                }
-                
-                if final_cost > 0:
-                    # Convert to cents for Stripe
-                    amount = int(final_cost * 100)
-                    subscription_info["amount_cents"] = amount
+        while has_more:
+            subscriptions = await stripe.Subscription.list_async(
+                status="active",
+                expand=["data.customer"],
+                limit=20,  # Maximum allowed by Stripe
+                starting_after=starting_after
+            )
+            
+            logfire.info(f"Processing batch of {len(subscriptions.data)} active subscriptions")
+            
+            for subscription in subscriptions.data:
+                try:
+                    # Get metadata from subscription
+                    metadata = subscription.metadata
+                    user_id = metadata.get("userId")
+                    org_id = metadata.get("orgId")
                     
-                    if not dry_run:
-                        # Create invoice immediately
-                        invoice = await stripe.Invoice.create_async(
-                            customer=subscription.customer.id,
-                            auto_advance=True,
-                            collection_method="charge_automatically",
-                            subscription=subscription.id,
-                        )
-                        invoice_item = await stripe.InvoiceItem.create_async(
-                            customer=subscription.customer.id,
-                            amount=amount,
-                            currency="usd",
-                            description="GPU Compute Usage",
-                            invoice=invoice.id,
-                            period={
-                                "start": int(last_invoice_timestamp),
-                                "end": int(datetime.now().timestamp())
-                            }
-                        )
-                        invoice = await stripe.Invoice.finalize_invoice_async(invoice.id)
-                        logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
-                    else:
-                        logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
+                    if not user_id and not org_id:
+                        logfire.warning(f"Subscription {subscription.id} has no user_id or org_id in metadata")
+                        continue
                     
-                    if send_email:
-                        try:
-                            # Get user email from Clerk
-                            user_data = None
-                            if user_id and user_id.startswith("user_"):
-                                user_data = await get_clerk_user(user_id)
-                            elif org_id and org_id.startswith("org_"):
-                                user_data = await get_clerk_org(org_id)
-                                
-                            if user_data:
-                                email = None
-                                if "email_addresses" in user_data:
-                                    email = next(
-                                        (email["email_address"] for email in user_data["email_addresses"]
-                                         if email["id"] == user_data["primary_email_address_id"]),
-                                        None
-                                    )
-                                elif "email" in user_data:
-                                    email = user_data["email"]
-                                    
-                                if email:
-                                    message = f"""
-                                    <h2>GPU Usage Invoice</h2>
-                                    <p>Here's your GPU usage summary:</p>
-                                    <ul>
-                                        <li>Total Usage Cost: ${final_cost:.2f}</li>
-                                        <li>Period End: {datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d %H:%M:%S')}</li>
-                                    </ul>
-                                    <p>{'This is a dry run notification.' if dry_run else 'An invoice will be generated for this usage.'}</p>
-                                    """
-                                    params: resend.Emails.SendParams = {
-                                        "from": "Comfy Deploy <billing@comfydeploy.com>",
-                                        "to": email,
-                                        "subject": "Comfy Deploy - GPU Usage Summary" if final_cost == 0 else "Comfy Deploy - GPU Usage Invoice",
-                                        "html": message
-                                    }
-                                    email_result = resend.Emails.send(params)
-                                    subscription_info["email_sent"] = True
-                                    subscription_info["email_id"] = email_result["id"]
-                                    logfire.info(f"Sent usage email to {email}")
-                        except Exception as e:
-                            logfire.error(f"Error sending email for subscription {subscription.id}: {str(e)}")
-                            subscription_info["email_error"] = str(e)
-                
-                if not dry_run:
-                    # Update Redis with new last invoice timestamp
-                    await update_subscription_redis_data(
-                        subscription_id=subscription.id,
+                    # Get current plan to ensure Redis data exists and is up to date
+                    current_plan = await get_current_plan(db, user_id, org_id)
+                    if not current_plan:
+                        logfire.warning(f"No plan data found for subscription {subscription.id}")
+                        continue
+                    
+                    # Calculate usage charges
+                    final_cost, last_invoice_timestamp = await calculate_usage_charges(
                         user_id=user_id,
                         org_id=org_id,
-                        last_invoice_timestamp=last_invoice_timestamp,
-                        db=db
+                        end_time=datetime.now(),
+                        db=db,
+                        dry_run=dry_run
                     )
-                
-                processed_subscriptions.append(subscription_info)
-                
-            except Exception as e:
-                logfire.error(f"Error processing subscription {subscription.id}: {str(e)}")
-                continue
+                    
+                    # Extract only essential customer info
+                    customer_info = {
+                        "id": subscription.customer.id,
+                        "email": subscription.customer.email
+                    } if subscription.customer else {"id": None, "email": None}
+                    
+                    subscription_info = {
+                        "subscription_id": subscription.id,
+                        "customer": customer_info,
+                        "user_id": user_id,
+                        "org_id": org_id,
+                        "final_cost": final_cost,
+                        "last_invoice_timestamp": last_invoice_timestamp
+                    }
+                    
+                    if final_cost > 0:
+                        # Convert to cents for Stripe
+                        amount = int(final_cost * 100)
+                        subscription_info["amount_cents"] = amount
+                        
+                        if not dry_run:
+                            # Create invoice immediately
+                            invoice = await stripe.Invoice.create_async(
+                                customer=subscription.customer.id,
+                                auto_advance=True,
+                                collection_method="charge_automatically",
+                                subscription=subscription.id,
+                            )
+                            invoice_item = await stripe.InvoiceItem.create_async(
+                                customer=subscription.customer.id,
+                                amount=amount,
+                                currency="usd",
+                                description="GPU Compute Usage",
+                                invoice=invoice.id,
+                                period={
+                                    "start": int(last_invoice_timestamp),
+                                    "end": int(datetime.now().timestamp())
+                                }
+                            )
+                            invoice = await stripe.Invoice.finalize_invoice_async(invoice.id)
+                            logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
+                        else:
+                            logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
+                        
+                        if send_email:
+                            try:
+                                # Get user email from Clerk
+                                user_data = None
+                                if user_id and user_id.startswith("user_"):
+                                    user_data = await get_clerk_user(user_id)
+                                elif org_id and org_id.startswith("org_"):
+                                    user_data = await get_clerk_org(org_id)
+                                    
+                                if user_data:
+                                    email = None
+                                    if "email_addresses" in user_data:
+                                        email = next(
+                                            (email["email_address"] for email in user_data["email_addresses"]
+                                             if email["id"] == user_data["primary_email_address_id"]),
+                                            None
+                                        )
+                                    elif "email" in user_data:
+                                        email = user_data["email"]
+                                        
+                                    if email:
+                                        message = f"""
+                                        <h2>GPU Usage Invoice</h2>
+                                        <p>Here's your GPU usage summary:</p>
+                                        <ul>
+                                            <li>Total Usage Cost: ${final_cost:.2f}</li>
+                                            <li>Period End: {datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d %H:%M:%S')}</li>
+                                        </ul>
+                                        <p>{'This is a dry run notification.' if dry_run else 'An invoice will be generated for this usage.'}</p>
+                                        """
+                                        params: resend.Emails.SendParams = {
+                                            "from": "Comfy Deploy <billing@comfydeploy.com>",
+                                            "to": email,
+                                            "subject": "Comfy Deploy - GPU Usage Summary" if final_cost == 0 else "Comfy Deploy - GPU Usage Invoice",
+                                            "html": message
+                                        }
+                                        email_result = resend.Emails.send(params)
+                                        subscription_info["email_sent"] = True
+                                        subscription_info["email_id"] = email_result["id"]
+                                        logfire.info(f"Sent usage email to {email}")
+                            except Exception as e:
+                                logfire.error(f"Error sending email for subscription {subscription.id}: {str(e)}")
+                                subscription_info["email_error"] = str(e)
+                    
+                    if not dry_run:
+                        # Update Redis with new last invoice timestamp
+                        await update_subscription_redis_data(
+                            subscription_id=subscription.id,
+                            user_id=user_id,
+                            org_id=org_id,
+                            last_invoice_timestamp=last_invoice_timestamp,
+                            db=db
+                        )
+                    
+                    processed_subscriptions.append(subscription_info)
+                    
+                except Exception as e:
+                    logfire.error(f"Error processing subscription {subscription.id}: {str(e)}")
+                    continue
+            
+            has_more = subscriptions.has_more
+            if has_more and subscriptions.data:
+                starting_after = subscriptions.data[-1].id
                 
     except stripe.error.StripeError as e:
         logfire.error(f"Error fetching subscriptions from Stripe: {str(e)}")
@@ -1934,7 +1932,7 @@ async def calculate_usage_charges(
                 if not org_id
                 else UserSettings.org_id == org_id
             )
-        )
+        ).limit(1)
         result = await db.execute(query)
         user_settings = result.scalar_one_or_none()
         
