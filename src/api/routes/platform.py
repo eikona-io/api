@@ -345,14 +345,16 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
     """
     try:
         # First try to search subscriptions by metadata with exact org context
-        query = f"metadata['userId']:'{user_id}'"
+        query = f"metadata['userId']:'{user_id}' AND status:'active'"
         if org_id:
-            query = f"metadata['orgId']:'{org_id}'"
+            query = f"metadata['orgId']:'{org_id}' AND status:'active'"
             
+        # Search for active subscriptions and sort by creation date
         subscriptions = stripe.Subscription.search(
             query=query,
             limit=1,
-            expand=["data.customer"]
+            expand=["data.customer"],
+            # Note: Stripe search API automatically sorts by most recent first
         )
         if subscriptions.data:
             sub = subscriptions.data[0]
@@ -1706,9 +1708,12 @@ async def get_monthly_invoices(
                 "id": invoice.id,
                 "period_start": datetime.fromtimestamp(invoice.period_start).strftime("%Y-%m-%d"),
                 "period_end": datetime.fromtimestamp(invoice.period_end).strftime("%Y-%m-%d"),
+                "period_start_timestamp": invoice.period_start,
+                "period_end_timestamp": invoice.period_end,
                 "amount_due": invoice.amount_due / 100,  # Convert cents to dollars
                 "status": invoice.status,
                 "invoice_pdf": invoice.invoice_pdf,
+                "hosted_invoice_url": invoice.hosted_invoice_url,
                 "line_items": [
                     {
                         "description": item.description,
@@ -1758,7 +1763,6 @@ async def get_dashboard_url(
     return JSONResponse({
         "url": session.url
     })
-
 
 async def get_subscription_items(subscription_id: str) -> List[Dict]:
     """Helper function to get subscription items from Stripe"""
