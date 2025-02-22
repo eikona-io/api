@@ -497,6 +497,12 @@ class VolFile(BaseModel):
     type: Literal["file"]
     size: Optional[float] = None
 
+class ModalVolFile(BaseModel):
+    path: str
+    type: int
+    mtime: int
+    size: int
+
 
 VolFSStructure.update_forward_refs()
 

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
-from .types import VolFolder, VolFile
+from .types import VolFolder, VolFile, ModalVolFile
 from sqlalchemy.exc import MultipleResultsFound
 from pydantic import BaseModel
 from enum import Enum
@@ -41,25 +41,30 @@ router = APIRouter(tags=["Volumes"])
 async def retrieve_model_volumes(
     request: Request, db: AsyncSession
 ) -> List[Dict[str, str]]:
-    volumes = await get_model_volumes(request, db)
+    volumes = await get_user_volumes(request, db)
     if len(volumes) == 0:
         volumes = [await add_model_volume(request, db)]
     return volumes
 
+async def get_user_volume_name(request: Request, db: AsyncSession) -> str:
+    volumes = await retrieve_model_volumes(request, db)
+    return volumes[0]["volume_name"]
 
-async def get_model_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
+async def get_user_volumes(request: Request, db: AsyncSession) -> List[Dict[str, str]]:
     user_volume_query = (
         select(UserVolume)
         .apply_org_check(request)
         .where(
             UserVolume.disabled == False,
         )
+        .order_by(UserVolume.created_at.desc())
     )
     result = await db.execute(user_volume_query)
     volumes = result.scalars().all()
     return [volume.to_dict() for volume in volumes]
 
 
+# TODO: remove
 async def get_volume_list(request: Request, volume_name: str) -> VolFSStructure:
     if not volume_name:
         raise ValueError("Volume name is not provided")
@@ -188,71 +193,72 @@ async def process_volume_contents(contents, db, user_volume_id, request):
             )
 
 
-async def refresh_db_files_from_volume(
-    request: Request, db: AsyncSession
-) -> VolFSStructure:
-    private_volumes = await get_model_volumes(request, db)
+# async def refresh_db_files_from_volume(
+#     request: Request, db: AsyncSession
+# ) -> VolFSStructure:
+#     private_volumes = await get_user_volumes(request, db)
 
-    if not private_volumes:
-        private_volumes = await add_model_volume(request, db)
+#     if not private_volumes:
+#         private_volumes = await add_model_volume(request, db)
 
-    if private_volumes and len(private_volumes) > 0:
-        volume_structure = await get_volume_list(
-            request, private_volumes[0]["volume_name"]
-        )
+#     if private_volumes and len(private_volumes) > 0:
+#         volume_structure = await get_volume_list(
+#             request, private_volumes[0]["volume_name"]
+#         )
 
-        # Check if models already exist in the database
-        existing_models = await db.execute(
-            select(ModelDB).where(ModelDB.deleted == False).apply_org_check(request)
-        )
-        existing_models = existing_models.scalars().all()
+#         # Check if models already exist in the database
+#         existing_models = await db.execute(
+#             select(ModelDB).where(ModelDB.deleted == False).apply_org_check(request)
+#         )
+#         existing_models = existing_models.scalars().all()
 
-        # Create a set of existing model names for faster lookup
-        existing_model_names = {
-            model.folder_path + "/" + model.model_name: model
-            for model in existing_models
-            if model.folder_path is not None and model.model_name is not None
-        }
+#         # Create a set of existing model names for faster lookup
+#         existing_model_names = {
+#             model.folder_path + "/" + model.model_name: model
+#             for model in existing_models
+#             if model.folder_path is not None and model.model_name is not None
+#         }
 
-        # print("existing_model_names: ", existing_model_names)
+#         # print("existing_model_names: ", existing_model_names)
 
-        # Filter out existing models from volume_structure
-        def filter_existing_models(contents):
-            filtered_contents = []
-            for item in contents:
-                if isinstance(item, VolFolder):
-                    filtered_item = item.copy()
-                    filtered_item.contents = filter_existing_models(item.contents)
-                    if filtered_item.contents:
-                        filtered_contents.append(filtered_item)
-                elif isinstance(item, VolFile):
-                    # print(item.path)
-                    # logger.info(f"existing_model_names {existing_model_names}")
-                    # logger.info(
-                    #     f"item.path, {item.path}, {item.path not in existing_model_names}"
-                    # )
-                    # If the size is None, probably is old file, we should add it to the list
-                    if item.path not in existing_model_names or (
-                        existing_model_names[item.path].size is None
-                        and item.size is not None
-                    ):
-                        if item.path in existing_model_names:
-                            item.id = existing_model_names[item.path].id
-                        filtered_contents.append(item)
-            return filtered_contents
+#         # Filter out existing models from volume_structure
+#         def filter_existing_models(contents):
+#             filtered_contents = []
+#             for item in contents:
+#                 if isinstance(item, VolFolder):
+#                     filtered_item = item.copy()
+#                     filtered_item.contents = filter_existing_models(item.contents)
+#                     if filtered_item.contents:
+#                         filtered_contents.append(filtered_item)
+#                 elif isinstance(item, VolFile):
+#                     # print(item.path)
+#                     # logger.info(f"existing_model_names {existing_model_names}")
+#                     # logger.info(
+#                     #     f"item.path, {item.path}, {item.path not in existing_model_names}"
+#                     # )
+#                     # If the size is None, probably is old file, we should add it to the list
+#                     if item.path not in existing_model_names or (
+#                         existing_model_names[item.path].size is None
+#                         and item.size is not None
+#                     ):
+#                         if item.path in existing_model_names:
+#                             item.id = existing_model_names[item.path].id
+#                         filtered_contents.append(item)
+#             return filtered_contents
 
-        filtered_contents = filter_existing_models(volume_structure.contents)
+#         filtered_contents = filter_existing_models(volume_structure.contents)
 
-        # Process and upsert models to DB
-        await process_volume_contents(
-            filtered_contents, db, private_volumes[0]["id"], request
-        )
+#         # Process and upsert models to DB
+#         await process_volume_contents(
+#             filtered_contents, db, private_volumes[0]["id"], request
+#         )
 
-        return volume_structure
+#         return volume_structure
 
-    return VolFSStructure(contents=[])
+#     return VolFSStructure(contents=[])
 
 
+# TODO: remove
 @async_lru_cache(expire_after=timedelta(hours=1))
 async def get_public_volume_list(request: Request) -> VolFSStructure:
     if not os.environ.get("SHARED_MODEL_VOLUME_NAME"):
@@ -296,7 +302,6 @@ async def get_private_models_from_db(
     models = result.scalars().all()
 
     return models
-
 
 async def get_public_models_from_db(db: AsyncSession) -> List[ModelDB]:
     query = select(ModelDB).where(
@@ -348,54 +353,48 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     return structure
 
 
-async def get_public_volume_from_db(
+async def get_public_models(
     db: AsyncSession,
 ) -> Tuple[VolFSStructure, List[ModelDB]]:
     public_volumes = await get_public_models_from_db(db)
     return convert_to_vol_fs_structure(public_volumes), public_volumes
 
 
-async def get_private_volume_from_db(
+async def get_private_models(
     request: Request, db: AsyncSession
 ) -> Tuple[VolFSStructure, List[ModelDB]]:
     private_volumes = await get_private_models_from_db(request, db)
     return convert_to_vol_fs_structure(private_volumes), private_volumes
 
 
-@router.get("/volume/private-models", response_model=Dict[str, Any])
+@router.get("/volume/private-models", response_model=List[ModalVolFile])
 async def private_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
+    volume_name = await get_user_volume_name(request, db)
     try:
-        if disable_cache:
-            await refresh_db_files_from_volume(request, db)
-            data, models = await get_private_volume_from_db(request, db)
-        else:
-            data, models = await get_private_volume_from_db(request, db)
-        if len(data.contents) <= 0:
-            return {"structure": VolFSStructure(contents=[]), "models": []}
-        return {"structure": data, "models": [model.to_dict() for model in models]}
+        volume = lookup_volume(volume_name, create_if_missing=True)
     except Exception as e:
-        logger.error(f"Error fetching private models: {str(e)}")
-        logger.exception(e)  # This will log the full stack trace
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        return volume.listdir("/", recursive=True)
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/volume/public-models", response_model=Dict[str, Any])
+@router.get("/volume/public-models", response_model=List[ModalVolFile])
 async def public_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
+    volume_name  = os.environ.get("SHARED_MODEL_VOLUME_NAME")
     try:
-        # if disable_cache:
-        #     data = await get_public_volume_list()
-        # else:
-        data, models = await get_public_volume_from_db(db)
-        if len(data.contents) <= 0:
-            return {"structure": VolFSStructure(contents=[]), "models": []}
-        return {"structure": data, "models": [model.to_dict() for model in models]}
+        volume = lookup_volume(volume_name, create_if_missing=True)
     except Exception as e:
-        logger.error(f"Error fetching public models: {str(e)}")
-        logger.exception(e)  # This will log the full stack trace
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        return volume.listdir("/", recursive=True)
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1031,79 +1030,80 @@ def lookup_volume(volume_name: str, create_if_missing: bool = False):
         raise Exception(f"Can't find Volume: {e}")
 
 
-@router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
-async def volume_full(
-    request: Request, volume_name: str, create_if_missing: bool = False
-):
-    try:
-        volume = lookup_volume(volume_name, create_if_missing=create_if_missing)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+# @router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
+# async def volume_full(
+#     request: Request, volume_name: str, create_if_missing: bool = False
+# ):
+#     try:
+#         volume = lookup_volume(volume_name, create_if_missing=create_if_missing)
+#     except Exception as e:
+#         raise HTTPException(status_code=400, detail=str(e))
 
-    contents = volume.listdir("/", recursive=True)
-    try:
-        transformed_contents = []
-        for content in contents:
-            entry_data = {
-                "path": content.path,
-                "type": "folder" if content.type == DIRECTORY_TYPE else "file",
-                # "mtime": content.mtime,
-                "size": content.size if content.type == FILE_TYPE else None,
-                "contents": [] if content.type == DIRECTORY_TYPE else None,
-            }
+#     contents = volume.listdir("/", recursive=True)
+#     # return contents
+#     try:
+#         transformed_contents = []
+#         for content in contents:
+#             entry_data = {
+#                 "path": content.path,
+#                 "type": "folder" if content.type == DIRECTORY_TYPE else "file",
+#                 # "mtime": content.mtime,
+#                 "size": content.size if content.type == FILE_TYPE else None,
+#                 "contents": [] if content.type == DIRECTORY_TYPE else None,
+#             }
 
-            # print("entry_data: ", entry_data)
+#             # print("entry_data: ", entry_data)
 
-            # Simulate the nested structure that recursive_listdir would create
-            path_parts = content.path.split("/")
-            current_level = transformed_contents
-            for part in path_parts[:-1]:
-                found = False
-                for item in current_level:
-                    if item["path"] == part and item["type"] == "folder":
-                        current_level = item["contents"]
-                        found = True
-                        break
-                if not found:
-                    new_folder = {"path": part, "type": "folder", "contents": []}
-                    current_level.append(new_folder)
-                    current_level = new_folder["contents"]
+#             # Simulate the nested structure that recursive_listdir would create
+#             path_parts = content.path.split("/")
+#             current_level = transformed_contents
+#             for part in path_parts[:-1]:
+#                 found = False
+#                 for item in current_level:
+#                     if item["path"] == part and item["type"] == "folder":
+#                         current_level = item["contents"]
+#                         found = True
+#                         break
+#                 if not found:
+#                     new_folder = {"path": part, "type": "folder", "contents": []}
+#                     current_level.append(new_folder)
+#                     current_level = new_folder["contents"]
 
-            current_level.append(entry_data)
+#             current_level.append(entry_data)
 
-        return {"contents": transformed_contents}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while listing directory contents: {str(e)}",
-        )
+#         return {"contents": transformed_contents}
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=500,
+#             detail=f"An error occurred while listing directory contents: {str(e)}",
+#         )
 
 
-@router.get("/volume/ls", include_in_schema=False)
-async def list_contents(request: Request, volume_name: str, path: str = "/"):
-    try:
-        volume = lookup_volume(volume_name)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+# @router.get("/volume/ls", include_in_schema=False)
+# async def list_contents(request: Request, volume_name: str, path: str = "/"):
+#     try:
+#         volume = lookup_volume(volume_name)
+#     except Exception as e:
+#         raise HTTPException(status_code=400, detail=str(e))
 
-    try:
-        contents = volume.listdir(path)
-        mapped_contents = [
-            {
-                "path": entry.path,
-                "type": entry.type,
-                "mtime": entry.mtime,
-                "size": entry.size,
-            }
-            for entry in contents
-        ]
-        contents = mapped_contents
-    except grpclib.exceptions.GRPCError as e:
-        if e.status == grpclib.Status.NOT_FOUND:
-            raise HTTPException(status_code=404, detail="Path not found.")
-        else:
-            raise HTTPException(status_code=500, detail="Internal server error.")
-    return {"contents": contents}
+#     try:
+#         contents = volume.listdir(path)
+#         mapped_contents = [
+#             {
+#                 "path": entry.path,
+#                 "type": entry.type,
+#                 "mtime": entry.mtime,
+#                 "size": entry.size,
+#             }
+#             for entry in contents
+#         ]
+#         contents = mapped_contents
+#     except grpclib.exceptions.GRPCError as e:
+#         if e.status == grpclib.Status.NOT_FOUND:
+#             raise HTTPException(status_code=404, detail="Path not found.")
+#         else:
+#             raise HTTPException(status_code=500, detail="Internal server error.")
+#     return {"contents": contents}
 
 
 class StatusEnum(str, Enum):
