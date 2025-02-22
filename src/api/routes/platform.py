@@ -1251,7 +1251,7 @@ async def stripe_checkout(
     )
 
     # Get target price ID
-    target_price_id = get_price_id(plan)
+    target_price_id = await get_price_id(plan)
     if not target_price_id:
         raise HTTPException(status_code=400, detail="Invalid plan type")
 
