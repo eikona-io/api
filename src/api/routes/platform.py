@@ -192,16 +192,16 @@ async def update_subscription_redis_data(
     
     # Get existing data from Redis
     redis_data = {}
+    existing_data = None
     try:
         raw_data = await redisMeta.get(redis_key)
         if raw_data:
             existing_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
             # Preserve fields we want to keep
-            if "spent" in existing_data:
-                redis_data["spent"] = existing_data["spent"]
+            # if existing_data and "spent" in existing_data:
+            #     redis_data["spent"] = existing_data["spent"]
     except Exception as e:
         logfire.error(f"Error fetching existing Redis data: {str(e)}")
-        existing_data = None
             
     # If we have a subscription ID, fetch latest data from Stripe
     stripe_sub = None
