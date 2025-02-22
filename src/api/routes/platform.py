@@ -1215,7 +1215,19 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
             status_code=500,
             detail=f"Error processing webhook: {str(e)}"
         )
-
+        
+        
+@router.get("/platform/checkout/redirect")
+async def stripe_checkout_redirect(
+    request: Request,
+    plan: str,
+    redirect_url: str = None,
+    trial: Optional[bool] = False,
+    coupon: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await stripe_checkout(request, plan, redirect_url, trial, coupon, db)
+    return RedirectResponse(url=result["url"])
 
 @router.get("/platform/checkout")
 async def stripe_checkout(
