@@ -123,13 +123,13 @@ PLAN_LOOKUP_KEYS = {
 }
 
 @functools.lru_cache(maxsize=1)
-def get_pricing_plan_mapping():
+async def get_pricing_plan_mapping():
     """
     Fetches and caches Stripe pricing IDs using lookup keys.
     The cache is used to avoid repeated Stripe API calls.
     """
     try:
-        prices = stripe.Price.list(active=True, expand=['data.product'])
+        prices = await stripe.Price.list_async(active=True, expand=['data.product'])
         mapping = {}
         reverse_mapping = {}
         
@@ -144,21 +144,21 @@ def get_pricing_plan_mapping():
         logfire.error(f"Failed to fetch Stripe prices: {str(e)}")
         return {}, {}
 
-def get_price_id(plan_key: str) -> str:
+async def get_price_id(plan_key: str) -> str:
     """Get Stripe price ID for a given plan key"""
-    mapping, _ = get_pricing_plan_mapping()
+    mapping, _ = await get_pricing_plan_mapping()
     return mapping.get(plan_key)
 
-def get_plan_key(price_id: str) -> str:
+async def get_plan_key(price_id: str) -> str:
     """Get plan key for a given Stripe price ID"""
-    _, reverse_mapping = get_pricing_plan_mapping()
+    _, reverse_mapping = await get_pricing_plan_mapping()
     return reverse_mapping.get(price_id)
 
 # Update reverse mapping to use actual Stripe price IDs
 @functools.lru_cache(maxsize=1)
-def get_pricing_plan_reverse_mapping():
+async def get_pricing_plan_reverse_mapping():
     """Get reverse mapping from price ID to plan key, lazily loaded and cached"""
-    mapping, _ = get_pricing_plan_mapping()
+    mapping, _ = await get_pricing_plan_mapping()
     return {v: k for k, v in mapping.items() if v is not None}
 
 PRICING_PLAN_NAMES = {
@@ -208,7 +208,7 @@ async def update_subscription_redis_data(
     if subscription_id:
         try:
             # Fetch the full subscription object with expanded items
-            stripe_sub = stripe.Subscription.retrieve(
+            stripe_sub = await stripe.Subscription.retrieve_async(
                 subscription_id,
                 expand=["items.data.price.product", "discounts"]
             )
@@ -226,7 +226,7 @@ async def update_subscription_redis_data(
         plan = None
         if subscription_items and len(subscription_items) > 0:
             first_item = subscription_items[0]
-            plan = get_plan_key(first_item.price.id)
+            plan = await get_plan_key(first_item.price.id)
             logfire.info(f"Got plan from subscription items: {plan}")
             
         # Fall back to existing data if no plan found
@@ -257,19 +257,19 @@ async def update_subscription_redis_data(
             {
                 "id": item.id,
                 "price_id": item.price.id,
-                "plan_key": get_plan_key(item.price.id),
+                "plan_key": await get_plan_key(item.price.id),
                 "unit_amount": item.price.unit_amount,
                 "nickname": item.price.nickname,
             }
             for item in subscription_items
-            if get_plan_key(item.price.id) is not None
+            if await get_plan_key(item.price.id) is not None
         ]
         
         # Calculate charges with discounts
         if stripe_sub.get("discounts"):
             charges = []
             for item in subscription_items:
-                if not get_plan_key(item.price.id):
+                if not await get_plan_key(item.price.id):
                     continue
                     
                 base_amount = item.price.unit_amount
@@ -353,11 +353,10 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
             query = f"metadata['orgId']:'{org_id}' AND status:'active'"
             
         # Search for active subscriptions and sort by creation date
-        subscriptions = stripe.Subscription.search(
+        subscriptions = await stripe.Subscription.search_async(
             query=query,
             limit=1,
             expand=["data.customer"],
-            # Note: Stripe search API automatically sorts by most recent first
         )
         if subscriptions.data:
             sub = subscriptions.data[0]
@@ -400,9 +399,9 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
                     )
                     if email:
                         # Search Stripe by email but verify user context
-                        customers = stripe.Customer.search(
+                        customers = await stripe.Customer.search_async(
                             query=f"email:'{email}'",
-                            limit=10,  # Increased limit to search through more customers
+                            limit=10,
                             expand=["data.subscriptions"]
                         )
                         for customer in customers.data:
@@ -419,7 +418,7 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
                         if customers.data:
                             customer = customers.data[0]
                             # Update customer metadata to prevent future mixups
-                            stripe.Customer.modify(
+                            await stripe.Customer.modify_async(
                                 customer.id,
                                 metadata={'userId': user_id}
                             )
@@ -427,7 +426,7 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
                                 for subscription in customer.subscriptions.data:
                                     if not subscription.metadata.get('orgId'):
                                         # Update subscription metadata
-                                        stripe.Subscription.modify(
+                                        await stripe.Subscription.modify_async(
                                             subscription.id,
                                             metadata={'userId': user_id}
                                         )
@@ -526,7 +525,7 @@ async def get_current_plan(
                 # If we don't have a subscription ID yet, search for active/trialing ones
                 if not subscription_id:
                     # Search for active subscriptions for this customer
-                    subscriptions = stripe.Subscription.list(
+                    subscriptions = await stripe.Subscription.list_async(
                         customer=customer_id,
                         status="active",
                         expand=["data.items.data.price.product", "data.discounts"]
@@ -538,7 +537,7 @@ async def get_current_plan(
                         subscription_id = active_sub.id
                     else:
                         # Also check for trialing subscriptions
-                        trial_subs = stripe.Subscription.list(
+                        trial_subs = await stripe.Subscription.list_async(
                             customer=customer_id,
                             status="trialing",
                             expand=["data.items.data.price.product", "data.discounts"]
@@ -595,7 +594,7 @@ async def get_stripe_plan(
         return None
 
     try:
-        stripe_plan = stripe.Subscription.retrieve(
+        stripe_plan = await stripe.Subscription.retrieve_async(
             plan["subscription_id"], expand=["discounts"]
         )
         return stripe_plan
@@ -833,13 +832,13 @@ async def get_upgrade_plan(
             item
             for item in stripe_plan.get("items", {}).get("data", [])
             if item.get("price", {}).get("id") in [
-                get_price_id("creator_monthly"),
-                get_price_id("creator_yearly"),
-                get_price_id("business_monthly"),
-                get_price_id("business_yearly"),
-                get_price_id("deployment_monthly"),
-                get_price_id("deployment_yearly"),
-                get_price_id("creator_legacy_monthly"),
+                await get_price_id("creator_monthly"),
+                await get_price_id("creator_yearly"),
+                await get_price_id("business_monthly"),
+                await get_price_id("business_yearly"),
+                await get_price_id("deployment_monthly"),
+                await get_price_id("deployment_yearly"),
+                await get_price_id("creator_legacy_monthly"),
             ]
         ),
         None,
@@ -849,7 +848,7 @@ async def get_upgrade_plan(
     conflicting_plan = api_plan
 
     # Get target price ID
-    target_price_id = get_price_id(plan)
+    target_price_id = await get_price_id(plan)
     if not target_price_id:
         raise HTTPException(status_code=400, detail="Invalid plan type")
 
@@ -865,7 +864,7 @@ async def get_upgrade_plan(
     promotion_code_id = None
     if coupon:
         try:
-            promotion_codes = stripe.PromotionCode.list(code=coupon, limit=1)
+            promotion_codes = await stripe.PromotionCode.list_async(code=coupon, limit=1)
             if promotion_codes.data:
                 promotion_code_id = promotion_codes.data[0].id
             else:
@@ -876,7 +875,7 @@ async def get_upgrade_plan(
     try:
         # Calculate proration
         if conflicting_plan:
-            return stripe.Invoice.upcoming(
+            return await stripe.Invoice.upcoming_async(
                 subscription=stripe_plan.id,
                 subscription_details={
                     "proration_behavior": "always_invoice",
@@ -890,7 +889,7 @@ async def get_upgrade_plan(
                 else [],
             )
         else:
-            return stripe.Invoice.upcoming(
+            return await stripe.Invoice.upcoming_async(
                 subscription=stripe_plan.id,
                 subscription_details={
                     "proration_behavior": "always_invoice",
@@ -1085,35 +1084,25 @@ async def process_all_active_subscriptions(
                     
                     if not dry_run:
                         # Create invoice immediately
-                        invoice = stripe.Invoice.create(
+                        invoice = await stripe.Invoice.create_async(
                             customer=subscription.customer.id,
-                            auto_advance=True,  # Auto-finalize the invoice
+                            auto_advance=True,
                             collection_method="charge_automatically",
                             subscription=subscription.id,
                         )
-
-                        # Create invoice item and associate it with the invoice
-                        current_time = datetime.now()
-                        invoice_item = stripe.InvoiceItem.create(
+                        invoice_item = await stripe.InvoiceItem.create_async(
                             customer=subscription.customer.id,
                             amount=amount,
                             currency="usd",
                             description="GPU Compute Usage",
-                            invoice=invoice.id,  # Associate with the specific invoice
+                            invoice=invoice.id,
                             period={
                                 "start": int(last_invoice_timestamp),
-                                "end": int(current_time.timestamp())
+                                "end": int(datetime.now().timestamp())
                             }
                         )
+                        invoice = await stripe.Invoice.finalize_invoice_async(invoice.id)
                         logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
-                        
-                        # Finalize the invoice - payment will be collected automatically
-                        try:
-                            invoice = stripe.Invoice.finalize_invoice(invoice.id)
-                            logfire.info(f"Created and finalized invoice {invoice.id}, payment will be collected automatically")
-                        except stripe.error.StripeError as e:
-                            logfire.error(f"Failed to finalize invoice: {str(e)}")
-                            # The invoice item will still be added to the next regular invoice
                     else:
                         logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
                     
@@ -1207,15 +1196,13 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         if not webhook_secret:
             raise HTTPException(status_code=500, detail="Webhook secret not configured")
             
-        try:
-            event = stripe.Webhook.construct_event(
-                body_str,
-                stripe_signature,
-                webhook_secret
-            )
-        except stripe.error.SignatureVerificationError:
-            raise HTTPException(status_code=400, detail="Invalid signature")
-            
+        # Update webhook event construction
+        event = await stripe.Webhook.construct_event_async(
+            body_str,
+            stripe_signature,
+            webhook_secret
+        )
+        
         print(f"Webhook event type: {event.get('type')}")
         # print(f"Webhook metadata: {event.get('data', {}).get('object', {}).get('metadata', {})}")
         
@@ -1280,7 +1267,7 @@ async def stripe_checkout(
     promotion_code_id = None
     if coupon:
         try:
-            promotion_codes = stripe.PromotionCode.list(code=coupon, limit=1)
+            promotion_codes = await stripe.PromotionCode.list_async(code=coupon, limit=1)
             if promotion_codes.data:
                 promotion_code_id = promotion_codes.data[0].id
         except stripe.error.StripeError as e:
@@ -1291,7 +1278,7 @@ async def stripe_checkout(
 
     if current_plan and current_plan.get("subscription_id"):
         try:
-            stripe_plan = stripe.Subscription.retrieve(current_plan["subscription_id"])
+            stripe_plan = await stripe.Subscription.retrieve_async(current_plan["subscription_id"])
 
             if stripe_plan and stripe_plan.status != "canceled":
                 # Check if user already has this plan
@@ -1302,7 +1289,7 @@ async def stripe_checkout(
 
                 if has_existing_plan:
                     # Return portal URL instead of redirecting
-                    portal_session = stripe.billing_portal.Session.create(
+                    portal_session = await stripe.billing_portal.Session.create_async(
                         customer=stripe_plan.customer,
                         return_url=redirect_url or "/pricing",
                     )
@@ -1332,13 +1319,13 @@ async def stripe_checkout(
                         for item in stripe_plan.get("items", {}).get("data", [])
                         if item.get("price", {}).get("id")
                         in [
-                            get_price_id("creator_monthly"),
-                            get_price_id("creator_yearly"),
-                            get_price_id("business_monthly"),
-                            get_price_id("business_yearly"),
-                            get_price_id("deployment_monthly"),
-                            get_price_id("deployment_yearly"),
-                            get_price_id("creator_legacy_monthly"),
+                            await get_price_id("creator_monthly"),
+                            await get_price_id("creator_yearly"),
+                            await get_price_id("business_monthly"),
+                            await get_price_id("business_yearly"),
+                            await get_price_id("deployment_monthly"),
+                            await get_price_id("deployment_yearly"),
+                            await get_price_id("creator_legacy_monthly"),
                         ]
                     ),
                     None,
@@ -1348,7 +1335,7 @@ async def stripe_checkout(
 
                 if conflicting_plan:
                     # Update subscription with plan replacement
-                    stripe.Subscription.modify(
+                    await stripe.Subscription.modify_async(
                         current_plan["subscription_id"],
                         proration_behavior="always_invoice",
                         metadata=metadata,
@@ -1362,7 +1349,7 @@ async def stripe_checkout(
                     )
                 else:
                     # Add new plan to subscription
-                    stripe.Subscription.modify(
+                    await stripe.Subscription.modify_async(
                         current_plan["subscription_id"],
                         proration_behavior="always_invoice",
                         metadata=metadata,
@@ -1405,7 +1392,7 @@ async def stripe_checkout(
         else:
             session_params["subscription_data"] = {"metadata": metadata}
 
-        session = stripe.checkout.Session.create(**session_params)
+        session = await stripe.checkout.Session.create_async(**session_params)
 
         if session.url:
             return {"url": session.url}
@@ -1698,7 +1685,7 @@ async def get_monthly_invoices(
 
     try:
         # Fetch invoices from Stripe
-        invoices = stripe.Invoice.list(
+        invoices = await stripe.Invoice.list_async(
             subscription=current_plan["subscription_id"],
             limit=12,
             expand=["data.lines"],
@@ -1757,7 +1744,7 @@ async def get_dashboard_url(
         raise HTTPException(status_code=404, detail="No subscription found")
 
     # Create Stripe billing portal session
-    session = stripe.billing_portal.Session.create(
+    session = await stripe.billing_portal.Session.create_async(
         customer=sub["stripe_customer_id"],
         return_url=redirect_url
     )
@@ -1769,7 +1756,7 @@ async def get_dashboard_url(
 async def get_subscription_items(subscription_id: str) -> List[Dict]:
     """Helper function to get subscription items from Stripe"""
     try:
-        items = stripe.SubscriptionItem.list(
+        items = await stripe.SubscriptionItem.list_async(
             subscription=subscription_id,
             limit=5
         )
@@ -1799,7 +1786,7 @@ async def handle_stripe_event(event: dict, db: AsyncSession):
         if subscription_id:
             try:
                 # Fetch the full subscription object
-                subscription = stripe.Subscription.retrieve(subscription_id)
+                subscription = await stripe.Subscription.retrieve_async(subscription_id)
                 event_object = subscription
             except stripe.error.StripeError as e:
                 logfire.error(f"Error fetching subscription from invoice: {str(e)}")
@@ -1813,7 +1800,7 @@ async def handle_stripe_event(event: dict, db: AsyncSession):
     if not metadata and customer_id:
         try:
             # Get customer to find associated subscription
-            customer = stripe.Customer.retrieve(customer_id, expand=['subscriptions'])
+            customer = await stripe.Customer.retrieve_async(customer_id, expand=['subscriptions'])
             if customer.get('subscriptions') and customer.subscriptions.data:
                 latest_sub = customer.subscriptions.data[0]
                 metadata = latest_sub.metadata
