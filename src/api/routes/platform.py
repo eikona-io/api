@@ -349,9 +349,10 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
     """
     try:
         # First try to search subscriptions by metadata with exact org context
-        query = f"metadata['userId']:'{user_id}' AND status:'active'"
         if org_id:
             query = f"metadata['orgId']:'{org_id}' AND status:'active'"
+        else:
+            query = f"metadata['userId']:'{user_id}' AND metadata['orgId']:null AND status:'active'"
             
         # Search for active subscriptions and sort by creation date
         subscriptions = await stripe.Subscription.search_async(
@@ -386,55 +387,55 @@ async def find_stripe_subscription(user_id: str, org_id: Optional[str] = None) -
             
         # Email search as last resort, but only if we have user_id and no org_id
         # This prevents org context mixup since org subscriptions should be found by metadata
-        if user_id and user_id.startswith("user_") and not org_id:
-            try:
-                user_data = await get_clerk_user(user_id)
-                if user_data:
-                    email = next(
-                        (
-                            email["email_address"]
-                            for email in user_data["email_addresses"]
-                            if email["id"] == user_data["primary_email_address_id"]
-                        ),
-                        None,
-                    )
-                    if email:
-                        # Search Stripe by email but verify user context
-                        customers = await stripe.Customer.search_async(
-                            query=f"email:'{email}'",
-                            limit=10,
-                            expand=["data.subscriptions"]
-                        )
-                        for customer in customers.data:
-                            # Check customer metadata first
-                            if customer.metadata.get('userId') == user_id:
-                                if customer.subscriptions and customer.subscriptions.data:
-                                    # Find subscription without org context
-                                    for subscription in customer.subscriptions.data:
-                                        if not subscription.metadata.get('orgId'):
-                                            return customer.id, subscription.id
-                                return customer.id, None
+        # if user_id and user_id.startswith("user_") and not org_id:
+        #     try:
+        #         user_data = await get_clerk_user(user_id)
+        #         if user_data:
+        #             email = next(
+        #                 (
+        #                     email["email_address"]
+        #                     for email in user_data["email_addresses"]
+        #                     if email["id"] == user_data["primary_email_address_id"]
+        #                 ),
+        #                 None,
+        #             )
+        #             if email:
+        #                 # Search Stripe by email but verify user context
+        #                 customers = await stripe.Customer.search_async(
+        #                     query=f"email:'{email}'",
+        #                     limit=10,
+        #                     expand=["data.subscriptions"]
+        #                 )
+        #                 for customer in customers.data:
+        #                     # Check customer metadata first
+        #                     if customer.metadata.get('userId') == user_id:
+        #                         if customer.subscriptions and customer.subscriptions.data:
+        #                             # Find subscription without org context
+        #                             for subscription in customer.subscriptions.data:
+        #                                 if not subscription.metadata.get('orgId'):
+        #                                     return customer.id, subscription.id
+        #                         return customer.id, None
                                 
-                        # If no exact match found, use first customer but update their metadata
-                        if customers.data:
-                            customer = customers.data[0]
-                            # Update customer metadata to prevent future mixups
-                            await stripe.Customer.modify_async(
-                                customer.id,
-                                metadata={'userId': user_id}
-                            )
-                            if customer.subscriptions and customer.subscriptions.data:
-                                for subscription in customer.subscriptions.data:
-                                    if not subscription.metadata.get('orgId'):
-                                        # Update subscription metadata
-                                        await stripe.Subscription.modify_async(
-                                            subscription.id,
-                                            metadata={'userId': user_id}
-                                        )
-                                        return customer.id, subscription.id
-                            return customer.id, None
-            except Exception as e:
-                logfire.error(f"Error fetching user data from Clerk: {str(e)}")
+        #                 # If no exact match found, use first customer but update their metadata
+        #                 if customers.data:
+        #                     customer = customers.data[0]
+        #                     # Update customer metadata to prevent future mixups
+        #                     await stripe.Customer.modify_async(
+        #                         customer.id,
+        #                         metadata={'userId': user_id}
+        #                     )
+        #                     if customer.subscriptions and customer.subscriptions.data:
+        #                         for subscription in customer.subscriptions.data:
+        #                             if not subscription.metadata.get('orgId'):
+        #                                 # Update subscription metadata
+        #                                 await stripe.Subscription.modify_async(
+        #                                     subscription.id,
+        #                                     metadata={'userId': user_id}
+        #                                 )
+        #                                 return customer.id, subscription.id
+        #                     return customer.id, None
+        #     except Exception as e:
+        #         logfire.error(f"Error fetching user data from Clerk: {str(e)}")
                 
     except stripe.error.StripeError as e:
         logfire.error(f"Error searching Stripe: {str(e)}")
