@@ -1531,6 +1531,7 @@ async def validate_civitai_url(body: CivitaiValidateRequest):
         model_data = await get_civitai_model_info(model_id)
         if not model_data:
             return CivitaiValidateResponse(exists=False)
+        
 
         # Get version info
         if version_id:
@@ -1538,10 +1539,12 @@ async def validate_civitai_url(body: CivitaiValidateRequest):
                 (v for v in model_data["modelVersions"] if str(v["id"]) == version_id),
                 model_data["modelVersions"][0]
             )
+        else:
+            version = model_data["modelVersions"][0]
 
         # Get preview image/animation
         preview_url = None
-        if version.get("images"):
+        if version and version.get("images"):
             preview = version["images"][0]
             preview_url = preview.get("url") or preview.get("nsfw") or None
 
@@ -1551,7 +1554,7 @@ async def validate_civitai_url(body: CivitaiValidateRequest):
             preview_url=preview_url,
             filename=version["files"][0]["name"],
             model_id=model_id,
-            version_id=str(version["id"])
+            version_id=version_id
         )
 
     except Exception as e:

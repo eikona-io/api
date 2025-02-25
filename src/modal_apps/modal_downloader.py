@@ -9,6 +9,7 @@ import asyncio
 import tempfile
 from huggingface_hub import snapshot_download, HfApi, hf_hub_download
 from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
+from pathlib import Path
 
 modal_downloader_app = App("volume-operations")
 
@@ -201,33 +202,43 @@ async def modal_download_repo_task(
     Yields:
         Progress updates as dictionaries
     """
+    print(f"Starting download of repo {repo_id} to {folder_path}")
     try:
         # Use user token if provided, otherwise fall back to environment variable
         if not token:
             token = os.environ.get("HUGGINGFACE_TOKEN")
+            print("Using environment HUGGINGFACE_TOKEN")
+        else:
+            print("Using provided token")
         
         # Get the Modal volume
+        print(f"Getting volume {volume_name}")
         volume = Volume.from_name(volume_name)
         
         # Create a temporary directory for downloading
         with tempfile.TemporaryDirectory() as temp_dir:
+            print(f"Created temp directory at {temp_dir}")
             # Report initial progress
             yield await report_progress(0, model_id)
             
             try:
                 # Download the repository
+                print(f"Starting repository download to {temp_dir}")
                 local_dir = snapshot_download(
                     repo_id=repo_id,
                     local_dir=temp_dir,
                     token=token,
                     local_dir_use_symlinks=False,
                 )
+                print(f"Repository downloaded to {local_dir}")
                 
-                # Get list of files
+                # Get list of files to count them for progress reporting
                 files = list(Path(local_dir).glob("**/*"))
-                total_files = len(files)
+                total_files = len([f for f in files if f.is_file()])
+                print(f"Found {total_files} files in repository")
                 
                 if total_files == 0:
+                    print("Repository is empty, aborting")
                     yield await report_progress(
                         0, 
                         model_id, 
@@ -236,43 +247,28 @@ async def modal_download_repo_task(
                     )
                     return
                 
-                # Create destination directory in volume if it doesn't exist
+                # Create destination directory in volume
                 dest_dir = os.path.join(folder_path, repo_id.split("/")[-1])
-                try:
-                    volume.mkdir(dest_dir, exist_ok=True, parents=True)
-                except Exception as e:
-                    yield await report_progress(
-                        0, 
-                        model_id, 
-                        status="failed", 
-                        error_log=f"Failed to create directory: {str(e)}"
-                    )
-                    return
+                print(f"Will upload to destination directory: {dest_dir}")
                 
-                # Copy files to volume
-                for i, file_path in enumerate(files, 1):
-                    if file_path.is_file():
-                        # Calculate relative path
-                        rel_path = file_path.relative_to(local_dir)
-                        dest_path = os.path.join(dest_dir, str(rel_path))
-                        
-                        # Create parent directories if needed
-                        parent_dir = os.path.dirname(dest_path)
-                        if parent_dir:
-                            volume.mkdir(parent_dir, exist_ok=True, parents=True)
-                        
-                        # Copy file to volume
-                        with open(file_path, "rb") as f:
-                            volume.write_bytes(dest_path, f.read())
-                        
-                        # Report progress
-                        progress = min(int((i / total_files) * 100), 99)
-                        yield await report_progress(progress, model_id)
+                # Report progress at 10%
+                yield await report_progress(10, model_id)
+                
+                # Use batch_upload to transfer the entire directory at once
+                print("Starting batch upload to volume")
+                with volume.batch_upload() as batch:
+                    batch.put_directory(local_dir, dest_dir)
+                print("Batch upload completed")
+                
+                # Report progress at 90% after batch upload starts
+                yield await report_progress(90, model_id)
                 
                 # Report success
+                print("Download and upload successful")
                 yield await report_progress(100, model_id, status="success")
                 
             except RepositoryNotFoundError:
+                print(f"Repository {repo_id} not found")
                 yield await report_progress(
                     0, 
                     model_id, 
@@ -280,6 +276,7 @@ async def modal_download_repo_task(
                     error_log=f"Repository {repo_id} not found"
                 )
             except RevisionNotFoundError:
+                print(f"Revision not found for repository {repo_id}")
                 yield await report_progress(
                     0, 
                     model_id, 
@@ -287,6 +284,7 @@ async def modal_download_repo_task(
                     error_log=f"Revision not found for repository {repo_id}"
                 )
             except Exception as e:
+                print(f"Error downloading repository: {str(e)}")
                 yield await report_progress(
                     0, 
                     model_id, 
@@ -295,6 +293,7 @@ async def modal_download_repo_task(
                 )
     
     except Exception as e:
+        print(f"Unexpected error: {str(e)}")
         yield await report_progress(
             0, 
             model_id, 
