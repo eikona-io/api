@@ -1,7 +1,7 @@
 import time
 from .types import VolFSStructure, Model
 from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
-from typing import Any, Dict, List, Tuple, Union, Optional
+from typing import Any, Dict, List, Tuple, Union, Optional, Literal
 import logging
 import os
 import httpx
@@ -22,8 +22,9 @@ import re
 import grpclib
 from modal import Volume, Secret
 import modal
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, repo_info
 import logfire
+from huggingface_hub.utils import RepositoryNotFoundError
 
 # import aiohttp
 # from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
@@ -46,7 +47,7 @@ async def retrieve_model_volumes(
         volumes = [await add_model_volume(request, db)]
     return volumes
 
-async def get_user_volume_name(request: Request, db: AsyncSession) -> str:
+async def get_volume_name(request: Request, db: AsyncSession) -> str:
     volumes = await retrieve_model_volumes(request, db)
     return volumes[0]["volume_name"]
 
@@ -285,6 +286,7 @@ async def get_downloading_models(request: Request, db: AsyncSession):
     return volumes
 
 
+# TODO: remove
 async def get_private_models_from_db(
     request: Request, db: AsyncSession
 ) -> List[ModelDB]:
@@ -353,6 +355,7 @@ def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
     return structure
 
 
+# TODO: remove
 async def get_public_models(
     db: AsyncSession,
 ) -> Tuple[VolFSStructure, List[ModelDB]]:
@@ -360,6 +363,7 @@ async def get_public_models(
     return convert_to_vol_fs_structure(public_volumes), public_volumes
 
 
+# TODO: remove
 async def get_private_models(
     request: Request, db: AsyncSession
 ) -> Tuple[VolFSStructure, List[ModelDB]]:
@@ -371,7 +375,7 @@ async def get_private_models(
 async def private_models(
     request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
 ):
-    volume_name = await get_user_volume_name(request, db)
+    volume_name = await get_volume_name(request, db)
     try:
         volume = lookup_volume(volume_name, create_if_missing=True)
     except Exception as e:
@@ -459,6 +463,22 @@ class AddFileInputNew(BaseModel):
     filename: Optional[str]
     folder_path: str
 
+
+@router.post("/volume/file")
+async def add_file_volume(
+    request: Request, 
+    body: AddFileInputNew,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Handle model file uploads from different sources (Civitai, HuggingFace, or generic URLs)"""
+    
+    if "civitai.com/models/" in body.url:
+        return await handle_civitai_model(request, body, db, background_tasks)
+    elif "huggingface.co/" in body.url:
+        return await handle_huggingface_model(request, body, db, background_tasks)
+    else:
+        return await handle_generic_model(request, body, db, background_tasks)
 
 @router.post("/file")
 async def add_file(
@@ -670,8 +690,7 @@ async def handle_file_download(
         user_id = current_user["user_id"]
         org_id = current_user["org_id"] if "org_id" in current_user else None
 
-        volumes = await retrieve_model_volumes(request, db)
-        volume_name = volumes[0]["volume_name"]
+        volume_name = await get_volume_name(request, db)
 
         user_settings = await get_user_settings(request, db)
         hugging_face_token = os.environ.get("HUGGINGFACE_TOKEN")
@@ -1030,53 +1049,54 @@ def lookup_volume(volume_name: str, create_if_missing: bool = False):
         raise Exception(f"Can't find Volume: {e}")
 
 
-# @router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
-# async def volume_full(
-#     request: Request, volume_name: str, create_if_missing: bool = False
-# ):
-#     try:
-#         volume = lookup_volume(volume_name, create_if_missing=create_if_missing)
-#     except Exception as e:
-#         raise HTTPException(status_code=400, detail=str(e))
+# TODO: remove
+@router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
+async def volume_full(
+    request: Request, volume_name: str, create_if_missing: bool = False
+):
+    try:
+        volume = lookup_volume(volume_name, create_if_missing=create_if_missing)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-#     contents = volume.listdir("/", recursive=True)
-#     # return contents
-#     try:
-#         transformed_contents = []
-#         for content in contents:
-#             entry_data = {
-#                 "path": content.path,
-#                 "type": "folder" if content.type == DIRECTORY_TYPE else "file",
-#                 # "mtime": content.mtime,
-#                 "size": content.size if content.type == FILE_TYPE else None,
-#                 "contents": [] if content.type == DIRECTORY_TYPE else None,
-#             }
+    contents = volume.listdir("/", recursive=True)
+    # return contents
+    try:
+        transformed_contents = []
+        for content in contents:
+            entry_data = {
+                "path": content.path,
+                "type": "folder" if content.type == DIRECTORY_TYPE else "file",
+                # "mtime": content.mtime,
+                "size": content.size if content.type == FILE_TYPE else None,
+                "contents": [] if content.type == DIRECTORY_TYPE else None,
+            }
 
-#             # print("entry_data: ", entry_data)
+            # print("entry_data: ", entry_data)
 
-#             # Simulate the nested structure that recursive_listdir would create
-#             path_parts = content.path.split("/")
-#             current_level = transformed_contents
-#             for part in path_parts[:-1]:
-#                 found = False
-#                 for item in current_level:
-#                     if item["path"] == part and item["type"] == "folder":
-#                         current_level = item["contents"]
-#                         found = True
-#                         break
-#                 if not found:
-#                     new_folder = {"path": part, "type": "folder", "contents": []}
-#                     current_level.append(new_folder)
-#                     current_level = new_folder["contents"]
+            # Simulate the nested structure that recursive_listdir would create
+            path_parts = content.path.split("/")
+            current_level = transformed_contents
+            for part in path_parts[:-1]:
+                found = False
+                for item in current_level:
+                    if item["path"] == part and item["type"] == "folder":
+                        current_level = item["contents"]
+                        found = True
+                        break
+                if not found:
+                    new_folder = {"path": part, "type": "folder", "contents": []}
+                    current_level.append(new_folder)
+                    current_level = new_folder["contents"]
 
-#             current_level.append(entry_data)
+            current_level.append(entry_data)
 
-#         return {"contents": transformed_contents}
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=500,
-#             detail=f"An error occurred while listing directory contents: {str(e)}",
-#         )
+        return {"contents": transformed_contents}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An error occurred while listing directory contents: {str(e)}",
+        )
 
 
 # @router.get("/volume/ls", include_in_schema=False)
@@ -1141,56 +1161,6 @@ async def update_status(
         return {"message": "Status updated successfully"}
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Error updating status: {str(e)}")
-    # try:
-    #     # Assuming you have a database connection and model table defined
-    #     # You'll need to replace these with your actual database operations
-    #     if status == StatusEnum.SUCCESS:
-    #         # Update model status to success
-    #         model_status_query = (
-    #             update(ModelDB)
-    #             .where(ModelDB.id == model_id)
-    #             .values(
-    #                 status="success",
-    #                 updated_at=datetime.now(),
-    #                 download_progress=100,
-    #                 filehash_sha256=filehash_sha256,
-    #             )
-    #         )
-    #         result = await db.execute(model_status_query)
-    #         pass
-    #     elif status == StatusEnum.PROGRESS:
-    #         # Update model download progress
-    #         model_status_query = (
-    #             update(ModelDB)
-    #             .where(ModelDB.id == model_id)
-    #             .values(
-    #                 updated_at=datetime.now(),
-    #                 download_progress=download_progress,
-    #             )
-    #         )
-    #         result = await db.execute(model_status_query)
-    #         print("download_progress: ", download_progress)
-    #         pass
-    #     elif status == StatusEnum.FAILED:
-    #         # Update model status to failed
-    #         model_status_query = (
-    #             update(ModelDB)
-    #             .where(ModelDB.id == model_id)
-    #             .values(
-    #                 status="failed",
-    #                 error_log=error_log,
-    #                 updated_at=datetime.now(),
-    #             )
-    #         )
-    #         result = await db.execute(model_status_query)
-    #         pass
-    #     else:
-    #         raise ValueError(f"Unknown status: {status}")
-
-    #     return {"message": "success"}
-    # except Exception as e:
-    #     raise HTTPException(status_code=500, detail=str(e))
-
 
 class ListModelsInput(BaseModel):
     limit: int = 10
@@ -1297,8 +1267,8 @@ async def check_file_existence(
 ) -> None:
     """Check if a file already exists in the volume"""
     try:
-        volumes = await retrieve_model_volumes(request, db)
-        volume = Volume.from_name(volumes[0]["volume_name"])
+        volume_name = await get_volume_name(request, db)
+        volume = Volume.from_name(volume_name)
         
         full_path = os.path.join(custom_path, filename)
         try:
@@ -1503,3 +1473,308 @@ def extract_huggingface_repo_id(url: str) -> Optional[str]:
     """Extract repository ID from HuggingFace URL"""
     match = re.search(r'huggingface\.co/([^/]+/[^/]+)', url)
     return match.group(1) if match else None
+
+# Add new request/response models
+class HuggingFaceValidateRequest(BaseModel):
+    repo_id: str
+
+class HuggingFaceValidateResponse(BaseModel):
+    exists: bool
+
+class CivitaiValidateRequest(BaseModel):
+    url: str
+
+class CivitaiValidateResponse(BaseModel):
+    exists: bool
+    title: Optional[str] = None
+    preview_url: Optional[str] = None
+    filename: Optional[str] = None
+    model_id: Optional[str] = None
+    version_id: Optional[str] = None
+
+# Add new validation endpoints
+@router.post("/volume/validate/huggingface", response_model=HuggingFaceValidateResponse)
+async def validate_huggingface_repo(
+    request: Request,
+    body: HuggingFaceValidateRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Validate a HuggingFace repository exists and return its metadata"""
+    try:
+        # Reuse existing user settings function
+        user_settings = await get_user_settings(request, db)
+        token = user_settings.hugging_face_token if user_settings else None
+
+        # Check if repo exists
+        repo_info(body.repo_id, token=token)
+
+        return HuggingFaceValidateResponse(
+            exists=True,
+        )
+
+    except RepositoryNotFoundError:
+        return HuggingFaceValidateResponse(exists=False)
+    except Exception as e:
+        logger.error(f"Error validating HuggingFace repo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/volume/validate/civitai", response_model=CivitaiValidateResponse)
+async def validate_civitai_url(body: CivitaiValidateRequest):
+    """Validate a Civitai URL and return model metadata"""
+    try:
+        # Reuse existing Civitai URL parsing function
+        model_id, version_id = parse_civitai_url(body.url)
+        if not model_id:
+            return CivitaiValidateResponse(exists=False)
+
+        # Reuse existing Civitai info fetching function
+        model_data = await get_civitai_model_info(model_id)
+        if not model_data:
+            return CivitaiValidateResponse(exists=False)
+
+        # Get version info
+        if version_id:
+            version = next(
+                (v for v in model_data["modelVersions"] if str(v["id"]) == version_id),
+                model_data["modelVersions"][0]
+            )
+
+        # Get preview image/animation
+        preview_url = None
+        if version.get("images"):
+            preview = version["images"][0]
+            preview_url = preview.get("url") or preview.get("nsfw") or None
+
+        return CivitaiValidateResponse(
+            exists=True,
+            title=model_data["name"],
+            preview_url=preview_url,
+            filename=version["files"][0]["name"],
+            model_id=model_id,
+            version_id=str(version["id"])
+        )
+
+    except Exception as e:
+        logger.error(f"Error validating Civitai URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class HuggingFaceRepoRequest(BaseModel):
+    repo_id: str
+    folder_path: str
+    
+@router.post("/volume/repo/huggingface")
+async def add_huggingface_repo(
+    request: Request,
+    body: HuggingFaceRepoRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Download an entire HuggingFace repository to a volume"""
+    try:
+        # Validate repo exists
+        user_settings = await get_user_settings(request, db)
+        token = user_settings.hugging_face_token if user_settings else None
+        
+        try:
+            repo_data = repo_info(body.repo_id, token=token)
+        except RepositoryNotFoundError:
+            raise HTTPException(status_code=404, detail="HuggingFace repository not found")
+        
+        # Check if folder exists
+        volume_name = await get_volume_name(request, db)
+        volume = Volume.from_name(volume_name)
+        
+        # Create model record
+        volumes = await retrieve_model_volumes(request, db)
+        model = ModelDB(
+            user_id=request.state.current_user["user_id"],
+            org_id=request.state.current_user.get("org_id"),
+            upload_type="huggingface",
+            model_name=body.repo_id.split("/")[-1],  # Use repo name as model name
+            user_url=f"https://huggingface.co/{body.repo_id}",
+            user_volume_id=volumes[0]["id"],
+            model_type="custom",
+            folder_path=body.folder_path,
+            status="started",
+            download_progress=0,
+            hf_url=f"https://huggingface.co/{body.repo_id}"
+        )
+        
+        db.add(model)
+        await db.commit()
+        await db.refresh(model)
+        
+        # Use Modal to download the entire repo
+        modal_download_repo_task = modal.Function.lookup(
+            "volume-operations", "modal_download_repo_task"
+        )
+        
+        async def download_repo_task():
+            try:
+                async for event in modal_download_repo_task.remote_gen.aio(
+                    body.repo_id,
+                    body.folder_path,
+                    str(model.id),
+                    volume_name,
+                    token
+                ):
+                    # Update database with the event status
+                    if event.get("status") == "progress":
+                        model_status_query = (
+                            update(ModelDB)
+                            .where(ModelDB.id == model.id)
+                            .values(
+                                updated_at=datetime.now(),
+                                download_progress=event.get("download_progress", 0),
+                            )
+                        )
+                    elif event.get("status") == "success":
+                        model_status_query = (
+                            update(ModelDB)
+                            .where(ModelDB.id == model.id)
+                            .values(
+                                status="success",
+                                updated_at=datetime.now(),
+                                download_progress=100,
+                            )
+                        )
+                    elif event.get("status") == "failed":
+                        model_status_query = (
+                            update(ModelDB)
+                            .where(ModelDB.id == model.id)
+                            .values(
+                                status="failed",
+                                error_log=event.get("error_log"),
+                                updated_at=datetime.now(),
+                            )
+                        )
+
+                    await db.execute(model_status_query)
+                    await db.commit()
+            except Exception as e:
+                error_event = {
+                    "status": "failed",
+                    "error_log": str(e),
+                    "model_id": str(model.id),
+                    "download_progress": 0,
+                }
+
+                model_status_query = (
+                    update(ModelDB)
+                    .where(ModelDB.id == model.id)
+                    .values(
+                        status="failed",
+                        error_log=str(e),
+                        updated_at=datetime.now(),
+                    )
+                )
+                await db.execute(model_status_query)
+                await db.commit()
+                raise e
+                
+        background_tasks.add_task(download_repo_task)
+        
+        return {"message": "HuggingFace repository download started", "model_id": str(model.id)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error handling HuggingFace repo: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class HuggingfaceModel(BaseModel):
+    repoId: str
+
+class CivitaiModel(BaseModel):
+    url: str
+
+class AddModelRequest(BaseModel):
+    source: Literal["huggingface", "civitai", "link"]
+    folderPath: str
+    filename: Optional[str] = None
+    
+    huggingface: Optional[HuggingfaceModel] = None
+    civitai: Optional[CivitaiModel] = None
+    downloadLink: Optional[str] = None
+
+@router.post("/volume/model")
+async def add_model(
+    request: Request,
+    body: AddModelRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Unified endpoint to add models from different sources"""
+    try:
+        # Validate request based on source
+        if body.source == "huggingface":
+            if not body.huggingface or not body.huggingface.repoId:
+                raise HTTPException(status_code=400, detail="HuggingFace repo ID is required")
+                
+            # Check if it's a repo download or file download
+            if "/" in body.huggingface.repoId and not body.filename:
+                # It's a repository download - use the correct upload_type
+                return await add_huggingface_repo(
+                    request=request,
+                    body=HuggingFaceRepoRequest(
+                        repo_id=body.huggingface.repoId,
+                        folder_path=body.folderPath
+                    ),
+                    background_tasks=background_tasks,
+                    db=db
+                )
+            else:
+                # It's a file download
+                url = f"https://huggingface.co/{body.huggingface.repoId}"
+                if not body.filename:
+                    raise HTTPException(status_code=400, detail="Filename is required for HuggingFace file downloads")
+                
+                return await handle_huggingface_model(
+                    request=request,
+                    data=AddFileInputNew(
+                        url=url,
+                        filename=body.filename,
+                        folder_path=body.folderPath
+                    ),
+                    db=db,
+                    background_tasks=background_tasks
+                )
+                
+        elif body.source == "civitai":
+            if not body.civitai or not body.civitai.url:
+                raise HTTPException(status_code=400, detail="Civitai URL is required")
+                
+            return await handle_civitai_model(
+                request=request,
+                data=AddFileInputNew(
+                    url=body.civitai.url,
+                    filename=body.filename,
+                    folder_path=body.folderPath
+                ),
+                db=db,
+                background_tasks=background_tasks
+            )
+            
+        elif body.source == "link":
+            if not body.downloadLink:
+                raise HTTPException(status_code=400, detail="Download link is required")
+                
+            return await handle_generic_model(
+                request=request,
+                data=AddFileInputNew(
+                    url=body.downloadLink,
+                    filename=body.filename,
+                    folder_path=body.folderPath
+                ),
+                db=db,
+                background_tasks=background_tasks
+            )
+            
+        else:
+            raise HTTPException(status_code=400, detail="Invalid source type")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding model: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
