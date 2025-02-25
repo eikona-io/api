@@ -47,6 +47,7 @@ from sqlalchemy import update, case, and_
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import (
     GPUEvent,
+    Machine,
     WorkflowRun,
     WorkflowRunOutput,
     User,
@@ -529,6 +530,15 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 await db.commit()
             else:
                 # Insert new GPU event
+                if machine_id:
+                    machine = await db.execute(
+                        select(Machine).where(Machine.id == machine_id)
+                    )
+                    machine = machine.scalar_one_or_none()
+                    if machine:
+                        final_user_id = machine.user_id
+                        final_org_id = machine.org_id
+                
                 gpu_event = GPUEvent(
                     id=uuid4(),
                     user_id=final_user_id,
