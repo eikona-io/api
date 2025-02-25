@@ -47,6 +47,7 @@ from sqlalchemy import update, case, and_
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import (
     GPUEvent,
+    Machine,
     WorkflowRun,
     WorkflowRunOutput,
     User,
@@ -57,6 +58,7 @@ from datetime import datetime, timezone
 import datetime as dt
 
 from fastapi import Depends
+from api.utils.autumn import send_autumn_usage_event
 
 router = APIRouter()
 
@@ -528,6 +530,15 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 await db.commit()
             else:
                 # Insert new GPU event
+                if machine_id:
+                    machine = await db.execute(
+                        select(Machine).where(Machine.id == machine_id)
+                    )
+                    machine = machine.scalar_one_or_none()
+                    if machine:
+                        final_user_id = machine.user_id
+                        final_org_id = machine.org_id
+                
                 gpu_event = GPUEvent(
                     id=uuid4(),
                     user_id=final_user_id,
@@ -564,6 +575,16 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             event = result.scalar_one()
             await db.commit()
 
+            # Send usage data to Autumn API
+            await send_autumn_usage_event(
+                customer_id=event.org_id or event.user_id,
+                gpu_type=event.gpu,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                environment=event.environment,
+                idempotency_key=str(event.id)
+            )
+
             # Cancel all executing runs associated with the GPU event
             if event.session_id is  not None:
                 updateExecutingRuns = (
@@ -579,6 +600,8 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
 
                 await db.execute(updateExecutingRuns)
                 await db.commit()
+            
+            
 
             # Get headers from the incoming request
             headers = dict(request.headers) 
