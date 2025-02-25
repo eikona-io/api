@@ -57,6 +57,7 @@ from datetime import datetime, timezone
 import datetime as dt
 
 from fastapi import Depends
+from api.utils.autumn import send_autumn_usage_event
 
 router = APIRouter()
 
@@ -564,6 +565,16 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             event = result.scalar_one()
             await db.commit()
 
+            # Send usage data to Autumn API
+            await send_autumn_usage_event(
+                customer_id=event.org_id or event.user_id,
+                gpu_type=event.gpu,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                environment=event.environment,
+                idempotency_key=str(event.id)
+            )
+
             # Cancel all executing runs associated with the GPU event
             if event.session_id is  not None:
                 updateExecutingRuns = (
@@ -579,6 +590,8 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
 
                 await db.execute(updateExecutingRuns)
                 await db.commit()
+            
+            
 
             # Get headers from the incoming request
             headers = dict(request.headers) 

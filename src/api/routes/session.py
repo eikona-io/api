@@ -89,6 +89,7 @@ import logging
 from typing import Optional
 from sqlalchemy import update, func
 from fastapi import BackgroundTasks
+from api.utils.autumn import send_autumn_usage_event
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -895,6 +896,17 @@ async def create_dynamic_sesssion_background_task(
                 gpu_event.end_time = datetime.now()
                 await db.commit()
                 await db.refresh(gpu_event)
+
+                # Send usage data to Autumn when session terminates
+                await send_autumn_usage_event(
+                    customer_id=gpu_event.org_id or gpu_event.user_id,
+                    gpu_type=gpu_event.gpu,
+                    start_time=gpu_event.start_time,
+                    end_time=gpu_event.end_time,
+                    environment=gpu_event.environment,
+                    idempotency_key=str(gpu_event.id)
+                )
+
     except Exception as e:
         logger.error(f"Error creating dynamic session: {str(e)}")
         async with get_db_context() as db:
@@ -909,6 +921,17 @@ async def create_dynamic_sesssion_background_task(
             gpu_event.end_time = datetime.now()
             await db.commit()
             await db.refresh(gpu_event)
+
+            # Send usage data to Autumn even if session creation failed
+            await send_autumn_usage_event(
+                customer_id=gpu_event.org_id or gpu_event.user_id,
+                gpu_type=gpu_event.gpu,
+                start_time=gpu_event.start_time,
+                end_time=gpu_event.end_time,
+                environment=gpu_event.environment,
+                idempotency_key=str(gpu_event.id)
+            )
+
         if status_queue is not None:
             status_queue.put_nowait({"error": str(e)})
         raise
@@ -1192,6 +1215,21 @@ async def delete_session(
         await modal.Sandbox.from_id(modal_function_id).terminate.aio()
     else:
         await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
+
+    # Update GPU event end time
+    gpuEvent.end_time = datetime.now()
+    await db.commit()
+    await db.refresh(gpuEvent)
+
+    # Send usage data to Autumn
+    await send_autumn_usage_event(
+        customer_id=gpuEvent.org_id or gpuEvent.user_id,
+        gpu_type=gpuEvent.gpu,
+        start_time=gpuEvent.start_time,
+        end_time=gpuEvent.end_time,
+        environment=gpuEvent.environment,
+        idempotency_key=str(gpuEvent.id)
+    )
 
     await redis.delete("session:" + session_id + ":timeout_end")
     
