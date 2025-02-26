@@ -891,7 +891,8 @@ async def get_api_plan(
     workflow_limited = workflow_count >= effective_workflow_limit
 
     # Get feature set for current plan
-    current_plan_key = plans.get("plans", [])[0] if plans else "free"
+    plan_keys = plans.get("plans", [])
+    current_plan_key = plan_keys[0] if plan_keys and len(plan_keys) > 0 else "free"
     feature_set = get_feature_set_for_plan(current_plan_key)
     target_plan = DEFAULT_FEATURE_LIMITS.get(feature_set, DEFAULT_FEATURE_LIMITS["free"])
 
