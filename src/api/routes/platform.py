@@ -1478,13 +1478,16 @@ async def get_usage_details_by_day(
     # Transform the data into the desired format
     grouped_by_date = {}
     for row in usage_details:
+        if row.date is None:
+            continue  # Skip rows with None date
+            
         date_str = row.date.strftime("%Y-%m-%d")
         if date_str not in grouped_by_date:
             grouped_by_date[date_str] = {}
 
         if row.gpu:
             unit_amount = PRICING_LOOKUP_TABLE.get(row.gpu, 0)
-            usage_seconds = float(row.usage_in_sec)  # Convert Decimal to float
+            usage_seconds = float(row.usage_in_sec) if row.usage_in_sec is not None else 0  # Also handle None usage_in_sec
             grouped_by_date[date_str][row.gpu] = unit_amount * usage_seconds
 
     # Convert to array format
