@@ -1568,12 +1568,12 @@ async def get_usage_details(
             "machine_name": row.machine_name,
             "gpu": row.gpu,
             "ws_gpu": row.ws_gpu,
-            "usage_in_sec": float(row.usage_in_sec) if row.usage_in_sec else 0,
+            "usage_in_sec": float(row.usage_in_sec) if row.usage_in_sec is not None else 0,
             "cost_item_title": row.cost_item_title,
             "cost": float(row.cost) if row.cost else (
                 # Calculate cost based on GPU type if row.cost is not available
-                (float(row.usage_in_sec) / 3600) if row.ws_gpu else  # Workspace GPU cost
-                (PRICING_LOOKUP_TABLE.get(row.gpu, 0) * float(row.usage_in_sec) if row.gpu else 0)  # Regular GPU cost
+                (float(row.usage_in_sec) / 3600) if row.ws_gpu and row.usage_in_sec is not None else  # Workspace GPU cost
+                (PRICING_LOOKUP_TABLE.get(row.gpu, 0) * float(row.usage_in_sec) if row.gpu and row.usage_in_sec is not None else 0)  # Regular GPU cost
             ),
         }
         for row in usage_details
