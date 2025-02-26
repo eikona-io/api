@@ -748,20 +748,6 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                         subscription = result.scalar_one_or_none()
                         
                         # Initialize current_plan with data from subscription
-                        current_plan = None
-                        if subscription:
-                            current_plan = {
-                                "stripe_customer_id": subscription.stripe_customer_id,
-                                "subscription_id": subscription.subscription_id,
-                                "plan": subscription.plan,
-                                "status": subscription.status,
-                                "cancel_at_period_end": subscription.cancel_at_period_end,
-                                "canceled_at": subscription.canceled_at,
-                                "last_invoice_timestamp": subscription.last_invoice_timestamp if subscription.last_invoice_timestamp else None,
-                                "payment_issue": False,
-                                "payment_issue_reason": "",
-                            }
-                        
                         return {
                             "plans": plans,
                             "names": names,
@@ -774,7 +760,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                             "payment_issue_reason": payment_issue_reason,
                             "autumn_data": autumn_data,
                             "last_invoice_timestamp": get_last_invoice_timestamp_from_autumn(autumn_data) if get_last_invoice_timestamp_from_autumn(autumn_data) else (
-                                current_plan.get("last_invoice_timestamp") if current_plan else None
+                                int(subscription.last_invoice_timestamp.timestamp()) if subscription and subscription.last_invoice_timestamp else None
                             ),
                         }
                     else:
@@ -793,44 +779,6 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
             "canceled_at": None,
         }
 
-    # Get current plan data using get_current_plan
-    plan_data = await get_current_plan(db, user_id, org_id)
-    if not plan_data:
-        return {
-            "plans": [],
-            "names": [],
-            "prices": [],
-            "amount": [],
-            "charges": [],
-            "cancel_at_period_end": False,
-            "canceled_at": None,
-            "payment_issue": False,
-            "payment_issue_reason": "",
-        }
-
-    # Get Redis data for additional fields not in plan_data
-    redis_key = f"plan:{org_id or user_id}"
-    try:
-        raw_data = await redisMeta.get(redis_key)
-        if raw_data:
-            redis_data = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-            subscription_items = redis_data.get("subscription_items", [])
-            
-            return {
-                "plans": [item["plan_key"] for item in subscription_items],
-                "names": [item["nickname"] for item in subscription_items],
-                "prices": [item["price_id"] for item in subscription_items],
-                "amount": [item["unit_amount"] for item in subscription_items],
-                "charges": redis_data.get("charges", []),
-                "cancel_at_period_end": plan_data.get("cancel_at_period_end", False),
-                "canceled_at": plan_data.get("canceled_at"),
-                "payment_issue": plan_data.get("payment_issue", False),
-                "payment_issue_reason": plan_data.get("payment_issue_reason", ""),
-            }
-    except Exception as e:
-        logfire.error(f"Error getting Redis data in get_plans: {str(e)}")
-    
-    # Fallback to empty response if Redis data is not available
     return {
         "plans": [],
         "names": [],
