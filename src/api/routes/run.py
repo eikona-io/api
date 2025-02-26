@@ -1199,7 +1199,7 @@ async def _create_run(
                         # print("shit", str(machine_id))
                         ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
                         with logfire.span("spawn-run"):
-                            result = ComfyDeployRunner.run.spawn(params)
+                            result = ComfyDeployRunner.run._experimental_spawn(params)
                             new_run.modal_function_call_id = result.object_id
                     # For runpod there will be a problem with the auth token cause v2 endpoint requires a token
                     case "runpod-serverless":
