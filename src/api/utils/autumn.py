@@ -29,7 +29,11 @@ async def send_autumn_usage_event(
     autumn_api_key = os.getenv("AUTUMN_SECRET_KEY")
     if not autumn_api_key:
         return False
-        
+    
+    if (environment == "public-share"):
+        # Ignoring public-share events
+        return True
+           
     try:
         # Calculate duration in seconds
         duration = (end_time - start_time).total_seconds()
