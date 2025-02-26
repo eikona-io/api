@@ -43,6 +43,9 @@ router = APIRouter(
     tags=["Platform"],
 )
 
+# Add Autumn API configuration
+AUTUMN_API_KEY = os.getenv("AUTUMN_SECRET_KEY")
+AUTUMN_API_URL = "https://api.useautumn.com/v1"
 
 @router.get("/platform/user-settings")
 async def get_user_settings(
@@ -446,7 +449,7 @@ async def get_current_plan(
     db: AsyncSession, user_id: str, org_id: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Get the current subscription plan for a user/org"""
-
+    
     if not user_id:
         return None
 
@@ -604,8 +607,180 @@ async def get_stripe_plan(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def get_last_invoice_timestamp_from_autumn(autumn_data: dict) -> Optional[datetime]:
+    """
+    Extract the last invoice timestamp from Autumn API data.
+    Returns None if no invoices are found or if timestamp is invalid.
+    Returns a datetime object if found.
+    """
+    if not autumn_data or "invoices" not in autumn_data:
+        return None
+        
+    invoices = autumn_data.get("invoices", [])
+    if not invoices:
+        return None
+        
+    # Sort invoices by created_at timestamp in descending order
+    sorted_invoices = sorted(
+        invoices,
+        key=lambda x: x.get("created_at", 0),
+        reverse=True
+    )
+    
+    # Get the timestamp of the most recent invoice
+    latest_timestamp = sorted_invoices[0].get("created_at") / 1000
+    if latest_timestamp is None:
+        return None
+        
+    # Convert timestamp to datetime with validation
+    return int(latest_timestamp)
+
+
 async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, Any]:
     """Get plans information including current subscription details"""
+    
+    # Get current plan data first so we can use it for fallback
+    # Fetch subscription status directly from the database
+
+    
+    # Check if Autumn is enabled
+    if AUTUMN_API_KEY:
+        try:
+            # Determine the customer ID (org_id or user_id)
+            customer_id = org_id or user_id
+            
+            # Make request to Autumn API
+            headers = {
+                "Authorization": f"Bearer {AUTUMN_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{AUTUMN_API_URL}/customers/{customer_id}",
+                    headers=headers
+                ) as response:
+                    if response.status == 200:
+                        autumn_data = await response.json()
+                        logfire.info(f"Successfully fetched data from Autumn API for customer {customer_id}")
+                        
+                        # Map Autumn data to our format
+                        plans = []
+                        names = []
+                        prices = []
+                        amounts = []
+                        charges = []
+                        cancel_at_period_end = False
+                        canceled_at = None
+                        payment_issue = False
+                        payment_issue_reason = ""
+                        
+                        # Process products and add-ons
+                        all_products = autumn_data.get("products", []) + autumn_data.get("add_ons", [])
+                        
+                        for product in all_products:
+                            # Only process active products
+                            if product.get("status") == "active":
+                                # Get the plan name directly from product id
+                                plan_key = product.get("id", "")
+                                if plan_key:  # Only add if we have a plan key
+                                    plans.append(plan_key)
+                                    names.append(product.get("name", ""))
+                                    
+                                    # Process pricing information
+                                    product_prices = product.get("prices", [])
+                                    if product_prices:
+                                        # Use the first price entry
+                                        price_info = product_prices[0]
+                                        price_amount = price_info.get("amount", 0)
+                                        price_amount = price_info.get("amount", 0)
+                                        
+                                        # Add price ID and amount
+                                        prices.append(plan_key)  # Using product ID as price ID
+                                        amounts.append(price_amount * 100)
+                                        
+                                        # Calculate charges - using price amount directly for now
+                                        # Adjust this calculation as needed for your business logic
+                                        # This will be the price adjusted with the coupon
+                                        charges.append(price_amount * 100)
+                            
+                            # Check for canceled products for cancel status
+                            product_canceled_at = product.get("canceled_at")
+                            if product.get("status") == "canceled" or product_canceled_at:
+                                cancel_at_period_end = True
+                                canceled_at = product_canceled_at
+                        
+                        # Extract payment issues
+                        if any(product.get("status") not in ["active", "canceled"] for product in all_products):
+                            payment_issue = True
+                            payment_issue_reason = "Payment issue with subscription"
+                        
+                        # Check if we have invoices data to compute charges
+                        invoices = autumn_data.get("invoices", [])
+                        if invoices and not charges:  # Use invoice data if available and charges is empty
+                            for invoice in invoices:
+                                if invoice.get("status") == "paid":
+                                    charges.append(invoice.get("total", 0))
+                        
+                        # Process entitlements for additional plan info if needed
+                        entitlements = autumn_data.get("entitlements", [])
+                        # You can use entitlements to enrich the plan information if needed
+                        
+                        subscription_query = (
+                            select(SubscriptionStatus)
+                            .where(
+                                and_(
+                                    SubscriptionStatus.status != "deleted",
+                                    or_(
+                                        and_(
+                                            SubscriptionStatus.org_id.is_(None),
+                                            SubscriptionStatus.user_id == user_id,
+                                        )
+                                        if not org_id
+                                        else SubscriptionStatus.org_id == org_id
+                                    ),
+                                )
+                            )
+                            .order_by(SubscriptionStatus.created_at.desc())
+                            .limit(1)
+                        )
+                        result = await db.execute(subscription_query)
+                        subscription = result.scalar_one_or_none()
+                        
+                        # Initialize current_plan with data from subscription
+                        current_plan = None
+                        if subscription:
+                            current_plan = {
+                                "stripe_customer_id": subscription.stripe_customer_id,
+                                "subscription_id": subscription.subscription_id,
+                                "plan": subscription.plan,
+                                "status": subscription.status,
+                                "cancel_at_period_end": subscription.cancel_at_period_end,
+                                "canceled_at": subscription.canceled_at,
+                                "last_invoice_timestamp": subscription.last_invoice_timestamp if subscription.last_invoice_timestamp else None,
+                                "payment_issue": False,
+                                "payment_issue_reason": "",
+                            }
+                        
+                        return {
+                            "plans": plans,
+                            "names": names,
+                            "prices": prices,
+                            "amount": amounts,
+                            "charges": charges,
+                            "cancel_at_period_end": cancel_at_period_end,
+                            "canceled_at": canceled_at,
+                            "payment_issue": payment_issue,
+                            "payment_issue_reason": payment_issue_reason,
+                            "autumn_data": autumn_data,
+                            "last_invoice_timestamp": get_last_invoice_timestamp_from_autumn(autumn_data) if get_last_invoice_timestamp_from_autumn(autumn_data) else (
+                                current_plan.get("last_invoice_timestamp") if current_plan else None
+                            ),
+                        }
+                    else:
+                        logfire.error(f"Failed to get data from Autumn API: {await response.text()}")
+        except Exception as e:
+            logfire.error(f"Error calling Autumn API: {str(e)}")
 
     # Check if Stripe is disabled
     if os.getenv("DISABLE_STRIPE") == "true":
@@ -740,11 +915,10 @@ async def get_api_plan(
         plans = {"plans": []}  # Provide default empty plans
 
     # Check if user has subscription by checking if any plan maps to a paid feature set
-    has_subscription = any(
-        get_feature_set_for_plan(p) in ["creator", "business"] 
-        for p in plans.get("plans", [])
-    )
-    plan = await get_current_plan(db, user_id, org_id) if has_subscription else None
+    # has_subscription = any(
+    #     get_feature_set_for_plan(p) in ["creator", "business"] 
+    #     for p in plans.get("plans", [])
+    # )
 
     # Calculate limits based on plan
     # Get the highest tier feature set from all active plans
@@ -769,12 +943,12 @@ async def get_api_plan(
     workflow_limited = workflow_count >= effective_workflow_limit
 
     # Get feature set for current plan
-    current_plan_key = plan.get("plan", "free") if plan else "free"
+    current_plan_key = plans.get("plans", [])[0] if plans else "free"
     feature_set = get_feature_set_for_plan(current_plan_key)
     target_plan = DEFAULT_FEATURE_LIMITS.get(feature_set, DEFAULT_FEATURE_LIMITS["free"])
 
     return {
-        "sub": plan,
+        # "sub": plan,
         "features": {
             "machineLimited": machine_limited,
             "machineLimit": effective_machine_limit,
@@ -1205,23 +1379,12 @@ async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         )
         
         
-# @router.get("/platform/checkout/redirect")
-# async def stripe_checkout_redirect(
-#     request: Request,
-#     plan: str,
-#     redirect_url: str = None,
-#     trial: Optional[bool] = False,
-#     coupon: Optional[str] = None,
-#     db: AsyncSession = Depends(get_db),
-# ):
-#     result = await stripe_checkout(request, plan, redirect_url, trial, coupon, db)
-#     return RedirectResponse(url=result["url"])
-
 @router.get("/platform/checkout")
 async def stripe_checkout(
     request: Request,
     plan: str,
     redirect_url: str = None,
+    upgrade: Optional[bool] = False,
     trial: Optional[bool] = False,
     coupon: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
@@ -1248,159 +1411,75 @@ async def stripe_checkout(
         ),
         None,
     )
-
-    # Get target price ID
-    target_price_id = await get_price_id(plan)
-    if not target_price_id:
-        raise HTTPException(status_code=400, detail="Invalid plan type: " + plan)
-
-    metadata = {
-        "userId": user_id,
-        "orgId": org_id,
-        "plan": plan,
-    }
-
-    line_items = [{"price": target_price_id, "quantity": 1}]
-
-    # Handle coupon if provided
-    promotion_code_id = None
-    if coupon:
+    
+    # Call Autumn API to attach customer
+    if AUTUMN_API_KEY:
         try:
-            promotion_codes = await stripe.PromotionCode.list_async(code=coupon, limit=1)
-            if promotion_codes.data:
-                promotion_code_id = promotion_codes.data[0].id
-        except stripe.error.StripeError as e:
-            print(f"Error fetching promotion code: {e}")
-
-    # Get current plan
-    current_plan = await get_current_plan(db, user_id, org_id)
-
-    if current_plan and current_plan.get("subscription_id"):
-        try:
-            stripe_plan = await stripe.Subscription.retrieve_async(current_plan["subscription_id"])
-
-            if stripe_plan and stripe_plan.status != "canceled":
-                # Check if user already has this plan
-                has_existing_plan = any(
-                    item.get("price", {}).get("id") == target_price_id
-                    for item in stripe_plan.get("items", {}).get("data", [])
-                )
-
-                if has_existing_plan:
-                    # Return portal URL instead of redirecting
-                    portal_session = await stripe.billing_portal.Session.create_async(
-                        customer=stripe_plan.customer,
-                        return_url=redirect_url or "/pricing",
-                    )
-                    return {"url": portal_session.url}
-
-                # Handle plan updates
-                # ws_plan = next(
-                #     (
-                #         item
-                #         for item in stripe_plan.get("items", {}).get("data", [])
-                #         if item.get("price", {}).get("id")
-                #         in [
-                #             get_price_id("creator_monthly"),
-                #             get_price_id("creator_yearly"),
-                #             get_price_id("business_monthly"),
-                #             get_price_id("business_yearly"),
-                #             get_price_id("deployment_monthly"),
-                #             get_price_id("deployment_yearly"),
-                #             get_price_id("creator_legacy_monthly"),
-                #         ]
-                #     ),
-                #     None,
-                # )
-                api_plan = next(
-                    (
-                        item
-                        for item in stripe_plan.get("items", {}).get("data", [])
-                        if item.get("price", {}).get("id")
-                        in [
-                            await get_price_id("creator_monthly"),
-                            await get_price_id("creator_yearly"),
-                            await get_price_id("business_monthly"),
-                            await get_price_id("business_yearly"),
-                            await get_price_id("deployment_monthly"),
-                            await get_price_id("deployment_yearly"),
-                            await get_price_id("creator_legacy_monthly"),
-                        ]
-                    ),
-                    None,
-                )
-
-                conflicting_plan = api_plan
-
-                if conflicting_plan:
-                    # Update subscription with plan replacement
-                    await stripe.Subscription.modify_async(
-                        current_plan["subscription_id"],
-                        proration_behavior="always_invoice",
-                        metadata=metadata,
-                        discounts=[{"promotion_code": promotion_code_id}]
-                        if promotion_code_id
-                        else [],
-                        items=[
-                            {"id": conflicting_plan.id, "deleted": True},
-                            {"price": target_price_id, "quantity": 1},
-                        ],
-                    )
-                else:
-                    # Add new plan to subscription
-                    await stripe.Subscription.modify_async(
-                        current_plan["subscription_id"],
-                        proration_behavior="always_invoice",
-                        metadata=metadata,
-                        discounts=[{"promotion_code": promotion_code_id}]
-                        if promotion_code_id
-                        else [],
-                        items=[{"price": target_price_id, "quantity": 1}],
-                    )
-
-                return {"url": redirect_url or "/"}
-
-        except stripe.error.StripeError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    # Create new checkout session
-    try:
-        session_params = {
-            "success_url": redirect_url or "/",
-            "line_items": line_items,
-            "metadata": metadata,
-            "allow_promotion_codes": True,
-            "client_reference_id": org_id or user_id,
-            "customer_email": user_email,
-            "mode": "subscription",
-            "discounts": [{"promotion_code": promotion_code_id}]
-            if promotion_code_id
-            else [],
-        }
-
-        print(session_params)
-
-        if trial:
-            session_params["subscription_data"] = {
-                "trial_settings": {
-                    "end_behavior": {"missing_payment_method": "cancel"}
-                },
-                "trial_period_days": 7,
-                "metadata": metadata,
-            }
-        else:
-            session_params["subscription_data"] = {"metadata": metadata}
-
-        session = await stripe.checkout.Session.create_async(**session_params)
-
-        if session.url:
-            return {"url": session.url}
-
-    except stripe.error.StripeError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    raise HTTPException(status_code=400, detail="Failed to create checkout session")
-
+            print(f"Attaching customer {user_id} to Autumn")
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    "Authorization": f"Bearer {AUTUMN_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                
+                autumn_payload = {
+                    "customer_id": org_id if org_id else user_id,
+                    "product_id": plan,  # Using the plan as product_id
+                    "force_checkout": not upgrade,
+                    "customer_data": {
+                        "name": user_data.get("first_name", "") + " " + user_data.get("last_name", ""),
+                        "email": user_email,
+                    }
+                }
+                
+                async with session.post(
+                    f"{AUTUMN_API_URL}/attach",
+                    headers=headers,
+                    json=autumn_payload
+                ) as response:
+                    response_text = await response.text()
+                    
+                    try:
+                        response_data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        response_data = {}
+                    
+                    if response.status != 200:
+                        logfire.error(f"Failed to attach customer to Autumn: {response_text}")
+                        
+                        # Check if error is because customer already has the product
+                        error_code = response_data.get("code", "")
+                        if error_code == "customer_already_has_product" or "customer_already_has_product" in response_text:
+                            # Customer already has product, get billing portal URL instead
+                            logfire.info(f"Customer already has product. Redirecting to billing portal.")
+                            
+                            customer_id = org_id if org_id else user_id
+                            async with session.get(
+                                f"{AUTUMN_API_URL}/customers/{customer_id}/billing_portal",
+                                headers=headers
+                            ) as portal_response:
+                                portal_text = await portal_response.text()
+                                try:
+                                    portal_data = json.loads(portal_text)
+                                    portal_url = portal_data.get("url")
+                                    if portal_url:
+                                        return {"url": portal_url}
+                                except json.JSONDecodeError:
+                                    logfire.error(f"Failed to parse billing portal response: {portal_text}")
+                                
+                                logfire.error(f"Failed to get billing portal URL: {portal_text}")
+                    
+                        return {"error": response_text}
+                    else:
+                        logfire.info(f"Successfully attached customer {user_id} to Autumn")
+                        print(response_data)
+                        url = response_data.get("checkout_url", None)
+                        if url:
+                            return {"url": url}
+                        return response_data
+        except Exception as e:
+            logfire.error(f"Error calling Autumn API: {str(e)}")
+            
 
 def r(price: float) -> float:
     return round(price * 1.1, 6)
@@ -1735,6 +1814,28 @@ async def get_dashboard_url(
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
+    headers = {
+        "Authorization": f"Bearer {AUTUMN_API_KEY}",
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            f"{AUTUMN_API_URL}/customers/{org_id or user_id}/billing_portal",
+            headers=headers
+        ) as portal_response:
+            portal_text = await portal_response.text()
+            try:
+                portal_data = json.loads(portal_text)
+                portal_url = portal_data.get("url")
+                if portal_url:
+                    return {"url": portal_url}
+            except json.JSONDecodeError:
+                logfire.error(f"Failed to parse billing portal response: {portal_text}")
+        
+        logfire.error(f"Failed to get billing portal URL: {portal_text}")
+        
+    return
+
     # Get user's subscription
     sub = await get_current_plan(
         db=db,
