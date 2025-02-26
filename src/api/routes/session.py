@@ -23,6 +23,7 @@ from api.utils.docker import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
+import logfire
 import modal
 from sqlalchemy.ext.asyncio import AsyncSession
 from upstash_redis.asyncio import Redis
@@ -1217,19 +1218,24 @@ async def delete_session(
         await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
 
     # Update GPU event end time
-    gpuEvent.end_time = datetime.now()
-    await db.commit()
-    await db.refresh(gpuEvent)
+    if (gpuEvent.end_time is None and gpuEvent.start_time is not None):
+        gpuEvent.end_time = datetime.now()
+        await db.commit()
+        await db.refresh(gpuEvent)
 
-    # Send usage data to Autumn
-    await send_autumn_usage_event(
-        customer_id=gpuEvent.org_id or gpuEvent.user_id,
-        gpu_type=gpuEvent.gpu,
-        start_time=gpuEvent.start_time,
-        end_time=gpuEvent.end_time,
-        environment=gpuEvent.environment,
-        idempotency_key=str(gpuEvent.id)
-    )
+    # Send usage data to A # Make sure to only send the usage of the session if it has both a start and end timeutumn
+   
+    if (gpuEvent.end_time is not None and gpuEvent.start_time is not None):
+        await send_autumn_usage_event(
+            customer_id=gpuEvent.org_id or gpuEvent.user_id,
+            gpu_type=gpuEvent.gpu,
+            start_time=gpuEvent.start_time,
+            end_time=gpuEvent.end_time,
+            environment=gpuEvent.environment,
+            idempotency_key=str(gpuEvent.id)
+        )
+    else:
+        logfire.error(f"Session {session_id} has no start or end time when closing")
 
     await redis.delete("session:" + session_id + ":timeout_end")
     
