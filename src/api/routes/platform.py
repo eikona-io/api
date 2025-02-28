@@ -1422,10 +1422,10 @@ async def stripe_checkout(
                     else:
                         logfire.info(f"Successfully attached customer {user_id} to Autumn")
                         print(response_data)
-                        url = response_data.get("checkout_url", None)
-                        if url:
-                            return {"url": url}
-                        return response_data
+                        if response_data.get("checkout_url"):
+                            return {"url": response_data.get("checkout_url")}
+                        else:
+                            return response_data
         except Exception as e:
             logfire.error(f"Error calling Autumn API: {str(e)}")
             
