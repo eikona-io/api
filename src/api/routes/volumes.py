@@ -1568,7 +1568,6 @@ class HuggingFaceRepoRequest(BaseModel):
     repo_id: str
     folder_path: str
     
-@router.post("/volume/repo/huggingface")
 async def add_huggingface_repo(
     request: Request,
     body: HuggingFaceRepoRequest,
@@ -1582,7 +1581,7 @@ async def add_huggingface_repo(
         token = user_settings.hugging_face_token if user_settings else None
         
         try:
-            repo_data = repo_info(body.repo_id, token=token)
+            repo_info(body.repo_id, token=token)
         except RepositoryNotFoundError:
             raise HTTPException(status_code=404, detail="HuggingFace repository not found")
         
@@ -1590,13 +1589,31 @@ async def add_huggingface_repo(
         volume_name = await get_volume_name(request, db)
         volume = Volume.from_name(volume_name)
         
+        # Get repo name for folder check
+        repo_name = body.repo_id.split("/")[-1]
+        target_folder = os.path.join(body.folder_path, repo_name)
+        
+        # Check if the target folder already exists
+        try:
+            contents = volume.listdir(target_folder)
+            if contents:
+                # Folder exists and has content
+                raise HTTPException(
+                    status_code=409, 
+                    detail=f"Folder '{target_folder}' already exists. Please choose a different folder path."
+                )
+        except grpclib.exceptions.GRPCError as e:
+            # NOT_FOUND is expected and means we can proceed
+            if e.status != grpclib.Status.NOT_FOUND:
+                raise HTTPException(status_code=500, detail=f"Error checking folder: {str(e)}")
+        
         # Create model record
         volumes = await retrieve_model_volumes(request, db)
         model = ModelDB(
             user_id=request.state.current_user["user_id"],
             org_id=request.state.current_user.get("org_id"),
             upload_type="huggingface",
-            model_name=body.repo_id.split("/")[-1],  # Use repo name as model name
+            model_name=repo_name,  # Use repo name as model name
             user_url=f"https://huggingface.co/{body.repo_id}",
             user_volume_id=volumes[0]["id"],
             model_type="custom",
