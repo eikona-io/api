@@ -694,12 +694,13 @@ async def create_dynamic_sesssion_background_task(
                         ]
                     ),
                 )
+                # We only install comfyui manager if this is a brand new machine
                 converted = generate_all_docker_commands(
-                    deps_body, include_comfyuimanager=True
+                    deps_body, include_comfyuimanager=body.machine_id is None
                 )
             else:
                 converted = generate_all_docker_commands(
-                    body.dependencies, include_comfyuimanager=True
+                    body.dependencies, include_comfyuimanager=body.machine_id is None
                 )
 
             # pprint(converted)

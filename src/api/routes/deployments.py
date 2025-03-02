@@ -402,6 +402,8 @@ async def update_deployment(
 async def get_deployments(
     request: Request,
     environment: Optional[DeploymentEnvironment] = None,
+    # Fluid deployment meaning they are modal app per deployment
+    is_fluid: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -415,6 +417,11 @@ async def get_deployments(
             .where(Workflow.deleted == False)
             .order_by(Deployment.updated_at.desc())
         )
+        
+        if is_fluid:
+            query = query.where(Deployment.modal_image_id.is_not(None))
+        else:
+            query = query.where(Deployment.modal_image_id.is_(None))
 
         if environment is not None:
             query = query.where(Deployment.environment == environment)
