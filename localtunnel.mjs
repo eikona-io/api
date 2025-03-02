@@ -2,10 +2,6 @@ import ngrok from "@ngrok/ngrok";
 import fs from "node:fs";
 import path from "node:path";
 
-// const port = process.env.PORT ? Number.parseInt(process.env.PORT) : 3000;
-console.log(process.env.NGROK_AUTHTOKEN);
-console.log(process.env.NGROK_DOMAIN);
-
 let listener;
 let url;
 

@@ -64,8 +64,10 @@ async def get_machines(
     limit: int = 100,
     offset: int = 0,
     is_deleted: Optional[bool] = None,
-    include_has_workflows: bool = False,  # New parameter
+    include_has_workflows: bool = False,
+    is_docker: bool = False,
     is_workspace: bool = False,
+    is_self_hosted: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     if include_has_workflows:
@@ -89,6 +91,11 @@ async def get_machines(
         .apply_org_check(request)
         .paginate(limit, offset)
     )
+    
+    if is_self_hosted:
+        query = query.where(or_(Machine.type == MachineType.CLASSIC, Machine.type == MachineType.RUNPOD_SERVERLESS))
+    elif is_docker:
+        query = query.where(Machine.type == MachineType.COMFY_DEPLOY_SERVERLESS)
 
     if search:
         query = query.where(

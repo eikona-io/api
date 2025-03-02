@@ -140,6 +140,7 @@ async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optiona
             else:
                 logfire.error(f"App not found for machine {target_app_name}, and no modal_image_id found")
         else:
+            # We are deploying the modal app as machine
             await redeploy_machine_internal(target_app_name)
         ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
             
