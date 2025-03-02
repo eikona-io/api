@@ -481,30 +481,11 @@ class WorkflowRunNativeOutputModel(BaseModel):
         from_attributes = True
 
 
-class VolFSStructure(BaseModel):
-    contents: List[Union["VolFolder", "VolFile"]]
-
-
-class VolFolder(BaseModel):
-    path: str
-    type: Literal["folder"]
-    contents: List[Union["VolFolder", "VolFile"]]
-
-
-class VolFile(BaseModel):
-    id: Optional[str] = None
-    path: str
-    type: Literal["file"]
-    size: Optional[float] = None
-
 class ModalVolFile(BaseModel):
     path: str
     type: int
     mtime: int
     size: int
-
-
-VolFSStructure.update_forward_refs()
 
 
 class Model(BaseModel):

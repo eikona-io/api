@@ -1,11 +1,10 @@
 import time
-from .types import VolFSStructure, Model
+from .types import Model
 from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
 from typing import Any, Dict, List, Tuple, Union, Optional, Literal
 import logging
 import os
-import httpx
-from .utils import async_lru_cache, get_user_settings, select
+from .utils import get_user_settings, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 from api.database import get_db
@@ -14,7 +13,7 @@ from datetime import datetime, timedelta
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
-from .types import VolFolder, VolFile, ModalVolFile
+from .types import ModalVolFile
 from sqlalchemy.exc import MultipleResultsFound
 from pydantic import BaseModel
 from enum import Enum
@@ -26,9 +25,6 @@ from huggingface_hub import HfApi, repo_info
 import logfire
 from huggingface_hub.utils import RepositoryNotFoundError
 
-# import aiohttp
-# from modal_downloader.modal_downloader import modal_download_file_task, modal_downloader_app
-import json
 import aiohttp
 from urllib.parse import urlparse
 import re
@@ -37,7 +33,6 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Volumes"])
-
 
 async def retrieve_model_volumes(
     request: Request, db: AsyncSession
@@ -63,26 +58,6 @@ async def get_user_volumes(request: Request, db: AsyncSession) -> List[Dict[str,
     result = await db.execute(user_volume_query)
     volumes = result.scalars().all()
     return [volume.to_dict() for volume in volumes]
-
-
-# TODO: remove
-async def get_volume_list(request: Request, volume_name: str) -> VolFSStructure:
-    if not volume_name:
-        raise ValueError("Volume name is not provided")
-
-    try:
-        response = await volume_full(request, volume_name, create_if_missing=True)
-        return VolFSStructure(**response)
-    except HTTPException as e:
-        logger.error(
-            f"HTTP error {e.status_code} while fetching volume list for {volume_name}"
-        )
-        raise
-    except Exception as e:
-        logger.error(
-            f"Unexpected error while fetching volume list for {volume_name}: {str(e)}"
-        )
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def add_model_volume(request: Request, db: AsyncSession) -> Dict[str, Any]:
@@ -173,102 +148,6 @@ async def upsert_model_to_db(
         await db.commit()
 
 
-async def process_volume_contents(contents, db, user_volume_id, request):
-    if contents is None or len(contents) == 0:
-        return
-    for item in contents:
-        if isinstance(item, VolFolder):
-            await process_volume_contents(item.contents, db, user_volume_id, request)
-        elif isinstance(item, VolFile):
-            await upsert_model_to_db(
-                db,
-                {
-                    "id": item.id,
-                    "name": item.path.split("/")[-1],
-                    "path": "/".join(item.path.split("/")[:-1]),
-                    "category": item.path.split("/")[0],
-                    "user_volume_id": user_volume_id,
-                    "size": item.size,
-                },
-                request,
-            )
-
-
-# async def refresh_db_files_from_volume(
-#     request: Request, db: AsyncSession
-# ) -> VolFSStructure:
-#     private_volumes = await get_user_volumes(request, db)
-
-#     if not private_volumes:
-#         private_volumes = await add_model_volume(request, db)
-
-#     if private_volumes and len(private_volumes) > 0:
-#         volume_structure = await get_volume_list(
-#             request, private_volumes[0]["volume_name"]
-#         )
-
-#         # Check if models already exist in the database
-#         existing_models = await db.execute(
-#             select(ModelDB).where(ModelDB.deleted == False).apply_org_check(request)
-#         )
-#         existing_models = existing_models.scalars().all()
-
-#         # Create a set of existing model names for faster lookup
-#         existing_model_names = {
-#             model.folder_path + "/" + model.model_name: model
-#             for model in existing_models
-#             if model.folder_path is not None and model.model_name is not None
-#         }
-
-#         # print("existing_model_names: ", existing_model_names)
-
-#         # Filter out existing models from volume_structure
-#         def filter_existing_models(contents):
-#             filtered_contents = []
-#             for item in contents:
-#                 if isinstance(item, VolFolder):
-#                     filtered_item = item.copy()
-#                     filtered_item.contents = filter_existing_models(item.contents)
-#                     if filtered_item.contents:
-#                         filtered_contents.append(filtered_item)
-#                 elif isinstance(item, VolFile):
-#                     # print(item.path)
-#                     # logger.info(f"existing_model_names {existing_model_names}")
-#                     # logger.info(
-#                     #     f"item.path, {item.path}, {item.path not in existing_model_names}"
-#                     # )
-#                     # If the size is None, probably is old file, we should add it to the list
-#                     if item.path not in existing_model_names or (
-#                         existing_model_names[item.path].size is None
-#                         and item.size is not None
-#                     ):
-#                         if item.path in existing_model_names:
-#                             item.id = existing_model_names[item.path].id
-#                         filtered_contents.append(item)
-#             return filtered_contents
-
-#         filtered_contents = filter_existing_models(volume_structure.contents)
-
-#         # Process and upsert models to DB
-#         await process_volume_contents(
-#             filtered_contents, db, private_volumes[0]["id"], request
-#         )
-
-#         return volume_structure
-
-#     return VolFSStructure(contents=[])
-
-
-# TODO: remove
-@async_lru_cache(expire_after=timedelta(hours=1))
-async def get_public_volume_list(request: Request) -> VolFSStructure:
-    if not os.environ.get("SHARED_MODEL_VOLUME_NAME"):
-        raise ValueError(
-            "public volume name env var `SHARED_MODEL_VOLUME_NAME` is not set"
-        )
-    return await get_volume_list(request, os.environ.get("SHARED_MODEL_VOLUME_NAME"))
-
-
 async def get_downloading_models(request: Request, db: AsyncSession):
     model_query = (
         select(ModelDB)
@@ -284,92 +163,6 @@ async def get_downloading_models(request: Request, db: AsyncSession):
     result = await db.execute(model_query)
     volumes = result.scalars().all()
     return volumes
-
-
-# TODO: remove
-async def get_private_models_from_db(
-    request: Request, db: AsyncSession
-) -> List[ModelDB]:
-    query = (
-        select(ModelDB)
-        .apply_org_check(request)
-        .where(
-            ModelDB.deleted == False,
-            ModelDB.model_name != None,
-            ModelDB.folder_path != None,
-        )
-    )
-
-    result = await db.execute(query)
-    models = result.scalars().all()
-
-    return models
-
-async def get_public_models_from_db(db: AsyncSession) -> List[ModelDB]:
-    query = select(ModelDB).where(
-        ModelDB.deleted == False,
-        ModelDB.org_id
-        == os.environ.get("SHARED_MODEL_VOLUME_NAME").replace("models_", ""),
-        ModelDB.download_progress == 100,
-        ModelDB.status == "success",
-    )
-
-    result = await db.execute(query)
-    models = result.scalars().all()
-
-    return models
-
-
-def convert_to_vol_fs_structure(models: List[ModelDB]) -> VolFSStructure:
-    structure = VolFSStructure(contents=[])
-
-    if not models:
-        return structure
-
-    def create_or_get_folder(
-        path: str, parent: Union[VolFSStructure, VolFolder]
-    ) -> VolFolder:
-        for item in parent.contents:
-            if isinstance(item, VolFolder) and item.path == path:
-                return item
-        new_folder = VolFolder(path=path, type="folder", contents=[])
-        parent.contents.append(new_folder)
-        return new_folder
-
-    for model in models:
-        if not model.folder_path:
-            continue
-        path_parts = [part for part in model.folder_path.split("/") if part]
-        if not path_parts:
-            continue
-
-        current_folder = structure
-        for part in path_parts:
-            current_folder = create_or_get_folder(part, current_folder)
-
-        file_path = os.path.join(model.folder_path, model.model_name)
-        current_folder.contents.append(
-            VolFile(path=file_path, type="file", size=model.size)
-        )
-
-    return structure
-
-
-# TODO: remove
-async def get_public_models(
-    db: AsyncSession,
-) -> Tuple[VolFSStructure, List[ModelDB]]:
-    public_volumes = await get_public_models_from_db(db)
-    return convert_to_vol_fs_structure(public_volumes), public_volumes
-
-
-# TODO: remove
-async def get_private_models(
-    request: Request, db: AsyncSession
-) -> Tuple[VolFSStructure, List[ModelDB]]:
-    private_volumes = await get_private_models_from_db(request, db)
-    return convert_to_vol_fs_structure(private_volumes), private_volumes
-
 
 @router.get("/volume/private-models", response_model=List[ModalVolFile])
 async def private_models(
@@ -427,9 +220,8 @@ class RenameFileBody(BaseModel):
     overwrite: Optional[bool] = False
 
 
-class RemoveFileInput(BaseModel):
+class RemovePath(BaseModel):
     path: str
-    volume_name: str
 
 
 class AddFileInput(BaseModel):
@@ -452,9 +244,6 @@ class ModelDownloadStatus(Enum):
 FILE_TYPE = 1
 DIRECTORY_TYPE = 2
 
-# New routes and helper functions
-
-
 class NewRenameFileBody(BaseModel):
     filename: str
     
@@ -464,6 +253,7 @@ class AddFileInputNew(BaseModel):
     folder_path: str
 
 
+# TODO: verify removal
 @router.post("/volume/file")
 async def add_file_volume(
     request: Request, 
@@ -480,6 +270,7 @@ async def add_file_volume(
     else:
         return await handle_generic_model(request, body, db, background_tasks)
 
+# TODO: verify removal
 @router.post("/file")
 async def add_file(
     request: Request, 
@@ -496,6 +287,7 @@ async def add_file(
     else:
         return await handle_generic_model(request, body, db, background_tasks)
 
+# TODO: verify removal
 @router.post("/file/{file_id}/rename")
 async def rename_file(
     request: Request,
@@ -565,6 +357,7 @@ async def rename_file(
     return model.to_dict()
 
 
+# TODO: verify removal
 @router.delete("/file/{file_id}")
 async def delete_file(
     request: Request, file_id: str, db: AsyncSession = Depends(get_db)
@@ -656,20 +449,28 @@ async def rename_file_old(request: Request, body: RenameFileBody):
     }
 
 
-@router.post("/volume/rm", deprecated=True, include_in_schema=False)
-async def remove_file_old(request: Request, body: RemoveFileInput):
+# TODO: currently only removes files, not folders
+@router.post("/volume/rm", include_in_schema=False)
+async def remove_file_old(request: Request, body: RemovePath):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    volume_name = f"models_{org_id}" if org_id else f"models_{user_id}"
+
     try:
-        volume = lookup_volume(body.volume_name)
+        volume = Volume.from_name(volume_name)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    is_valid, error_message = validate_file_path(body.path, volume)
+    is_valid, error_message = await validate_file_path_aio(body.path, volume)
     if not is_valid:
         if "not found" in error_message:
             raise HTTPException(status_code=404, detail=error_message)
         else:
             raise HTTPException(status_code=400, detail=error_message)
 
+    # TODO: when handling folders, can use 'recursive option'
     volume.remove_file(body.path)
     return {"deleted_path": body.path}
 
@@ -792,6 +593,7 @@ async def handle_file_download(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+# TODO: verify removal
 @router.post("/volume/add_file", deprecated=True, include_in_schema=False)
 async def add_file_old(
     request: Request,
@@ -855,8 +657,6 @@ async def handle_generic_model(
     )
 
     return {"message": "Generic model download started"}
-
-# Helper functions
 
 async def add_model_download_url(
     request: Request,
@@ -924,6 +724,7 @@ async def create_model_error_record(
     
     return new_model
 
+# TODO: verify removal
 @router.post("/volume/file/{file_id}/retry", include_in_schema=False)
 @router.post("/file/{file_id}/retry")
 async def retry_download(
@@ -980,7 +781,6 @@ async def retry_download(
     return res
 
 
-# Helper functions
 def does_file_exist(path: str, volume: Volume) -> bool:
     try:
         contents = volume.listdir(path)
@@ -1048,84 +848,6 @@ def lookup_volume(volume_name: str, create_if_missing: bool = False):
     except Exception as e:
         raise Exception(f"Can't find Volume: {e}")
 
-
-# TODO: remove
-@router.get("/volume/ls_full", deprecated=True, include_in_schema=False)
-async def volume_full(
-    request: Request, volume_name: str, create_if_missing: bool = False
-):
-    try:
-        volume = lookup_volume(volume_name, create_if_missing=create_if_missing)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    contents = volume.listdir("/", recursive=True)
-    # return contents
-    try:
-        transformed_contents = []
-        for content in contents:
-            entry_data = {
-                "path": content.path,
-                "type": "folder" if content.type == DIRECTORY_TYPE else "file",
-                # "mtime": content.mtime,
-                "size": content.size if content.type == FILE_TYPE else None,
-                "contents": [] if content.type == DIRECTORY_TYPE else None,
-            }
-
-            # print("entry_data: ", entry_data)
-
-            # Simulate the nested structure that recursive_listdir would create
-            path_parts = content.path.split("/")
-            current_level = transformed_contents
-            for part in path_parts[:-1]:
-                found = False
-                for item in current_level:
-                    if item["path"] == part and item["type"] == "folder":
-                        current_level = item["contents"]
-                        found = True
-                        break
-                if not found:
-                    new_folder = {"path": part, "type": "folder", "contents": []}
-                    current_level.append(new_folder)
-                    current_level = new_folder["contents"]
-
-            current_level.append(entry_data)
-
-        return {"contents": transformed_contents}
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while listing directory contents: {str(e)}",
-        )
-
-
-# @router.get("/volume/ls", include_in_schema=False)
-# async def list_contents(request: Request, volume_name: str, path: str = "/"):
-#     try:
-#         volume = lookup_volume(volume_name)
-#     except Exception as e:
-#         raise HTTPException(status_code=400, detail=str(e))
-
-#     try:
-#         contents = volume.listdir(path)
-#         mapped_contents = [
-#             {
-#                 "path": entry.path,
-#                 "type": entry.type,
-#                 "mtime": entry.mtime,
-#                 "size": entry.size,
-#             }
-#             for entry in contents
-#         ]
-#         contents = mapped_contents
-#     except grpclib.exceptions.GRPCError as e:
-#         if e.status == grpclib.Status.NOT_FOUND:
-#             raise HTTPException(status_code=404, detail="Path not found.")
-#         else:
-#             raise HTTPException(status_code=500, detail="Internal server error.")
-#     return {"contents": contents}
-
-
 class StatusEnum(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
@@ -1140,6 +862,7 @@ class RequestModel(BaseModel):
     download_progress: Optional[float] = None
 
 
+# TODO: needed?
 @router.post("/volume/volume-upload", include_in_schema=False)
 async def update_status(
     request: Request, body: RequestModel, db: AsyncSession = Depends(get_db)
@@ -1166,71 +889,6 @@ class ListModelsInput(BaseModel):
     limit: int = 10
     search: Optional[str] = None
 
-
-@router.get("/volume/list-models", include_in_schema=False)
-async def list_models(request: Request, limit: int = 10, search: Optional[str] = None):
-    api = HfApi()
-    models = api.list_models(limit=limit, search=search)
-
-    models_list = list(models)  # Convert generator to list
-
-    print("limit: ", limit)
-    print("search: ", search)
-
-    # Define banned keywords
-    banned_keywords = [".gitattributes", ".gitignore", "LICENSE.md", "README.md"]
-
-    # Fetch detailed model info for each model
-    detailed_models = []
-    for model in models_list:
-        try:
-            model_info = await get_model_info(request, model.id)
-            for sibling in model_info.siblings:
-                save_path, filename = (
-                    sibling.rfilename.split("/")
-                    if "/" in sibling.rfilename
-                    else ("", sibling.rfilename)
-                )
-                # Skip files with banned keywords
-                if any(keyword in filename for keyword in banned_keywords):
-                    continue
-
-                converted_model = {
-                    "type": model_info.pipeline_tag or "",
-                    "description": model_info.card_data.get("description", ""),
-                    "name": model.id,
-                    "base": "",
-                    "save_path": save_path,
-                    "filename": filename,
-                    "reference": f"https://huggingface.co/{model.id}/blob/main/{sibling.rfilename}",
-                    "url": f"https://huggingface.co/{model.id}/resolve/main/{sibling.rfilename}",
-                }
-                # Safely extract base model information
-                if model_info.tags:
-                    base_tag = next(
-                        (
-                            tag
-                            for tag in model_info.tags
-                            if tag.startswith("base_model:")
-                        ),
-                        None,
-                    )
-                    if base_tag:
-                        converted_model["base"] = base_tag.split(":")[-1]
-
-                detailed_models.append(converted_model)
-        except Exception as e:
-            print(f"Error fetching info for model {model.id}: {str(e)}")
-            continue
-
-    return {"models": detailed_models}
-
-
-@router.get("/volume/get-model-info", include_in_schema=False)
-async def get_model_info(request: Request, repo_id: str):
-    api = HfApi()
-    model_info = api.model_info(repo_id)
-    return model_info
 
 # Helper functions for file operations
 async def get_filename_from_url(url: str) -> Optional[str]:
