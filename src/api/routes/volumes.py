@@ -213,10 +213,9 @@ async def downloading_models(request: Request, db: AsyncSession = Depends(get_db
 
 
 # Type definitions
-class RenameFileBody(BaseModel):
-    volume_name: str
+class MoveFileBody(BaseModel):
     src_path: str
-    new_filename: str
+    dst_path: str
     overwrite: Optional[bool] = False
 
 
@@ -357,53 +356,13 @@ async def rename_file(
     return model.to_dict()
 
 
-# TODO: verify removal
-@router.delete("/file/{file_id}")
-async def delete_file(
-    request: Request, file_id: str, db: AsyncSession = Depends(get_db)
-):
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if "org_id" in current_user else None
-
-    volume_name = f"models_{org_id}" if org_id else f"models_{user_id}"
-
-    model = (
-        await db.execute(
-            select(ModelDB)
-            .apply_org_check(request)
-            .where(ModelDB.id == file_id, ~ModelDB.deleted)
-        )
-    ).scalar_one()
-
-    volume = Volume.from_name(volume_name)
-    src_path = os.path.join(model.folder_path, model.model_name)
-
-    is_valid, error_message = await validate_file_path_aio(src_path, volume)
-    if not is_valid:
-        if "not found" in error_message:
-            raise HTTPException(status_code=404, detail=error_message)
-        else:
-            raise HTTPException(status_code=400, detail=error_message)
-
-    await volume.remove_file.aio(src_path)
-
-    model.deleted = True
-
-    await db.commit()
-
-    return model.to_dict()
-
-
 # Used by v1 dashboard
-@router.post("/volume/rename_file", deprecated=True, include_in_schema=False)
-async def rename_file_old(request: Request, body: RenameFileBody):
+@router.post("/volume/mv", deprecated=True, include_in_schema=False)
+async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Depends(get_db)):
     src_path = body.src_path
-    new_filename = body.new_filename
+    dst_path = body.dst_path
     overwrite = body.overwrite
-    volume_name = body.volume_name
-
-    print("rename_file", body)
+    volume_name = await get_volume_name(request, db)
 
     try:
         volume = lookup_volume(volume_name)
@@ -418,15 +377,15 @@ async def rename_file_old(request: Request, body: RenameFileBody):
         else:
             raise HTTPException(status_code=400, detail=error_message)
 
-    filename_valid = is_valid_filename(new_filename)
+    filename_valid = is_valid_filename(dst_path)
     if not filename_valid:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid filename{new_filename}, only allow characters, numerics, underscores, and hyphens.",
+            detail=f"Invalid filename{dst_path}, only allow characters, numerics, underscores, and hyphens.",
         )
 
     folder_path = os.path.dirname(src_path)
-    dst_path = os.path.join(folder_path, new_filename)
+    dst_path = os.path.join(folder_path, dst_path)
 
     # Check if the destination file exists and if we can overwrite it
     try:
@@ -451,13 +410,8 @@ async def rename_file_old(request: Request, body: RenameFileBody):
 
 # TODO: currently only removes files, not folders
 @router.post("/volume/rm", include_in_schema=False)
-async def remove_file_old(request: Request, body: RemovePath):
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if "org_id" in current_user else None
-
-    volume_name = f"models_{org_id}" if org_id else f"models_{user_id}"
-
+async def remove_file_old(request: Request, body: RemovePath, db: AsyncSession = Depends(get_db)):
+    volume_name = await get_volume_name(request, db)
     try:
         volume = Volume.from_name(volume_name)
     except Exception as e:
@@ -487,10 +441,6 @@ async def handle_file_download(
 ) -> StreamingResponse:
     """Helper function to handle file downloads with progress tracking"""
     try:
-        current_user = request.state.current_user
-        user_id = current_user["user_id"]
-        org_id = current_user["org_id"] if "org_id" in current_user else None
-
         volume_name = await get_volume_name(request, db)
 
         user_settings = await get_user_settings(request, db)
@@ -724,61 +674,61 @@ async def create_model_error_record(
     
     return new_model
 
-# TODO: verify removal
-@router.post("/volume/file/{file_id}/retry", include_in_schema=False)
-@router.post("/file/{file_id}/retry")
-async def retry_download(
-    request: Request,
-    file_id: str,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-):
-    # Query to get the existing model record
-    query = (
-        select(ModelDB)
-        .where(
-            ModelDB.id == file_id,
-            ModelDB.deleted == False,
-            ModelDB.status == "failed",  # Only allow retrying failed downloads
-        )
-        .apply_org_check(request)
-    )
+# # TODO: verify removal
+# @router.post("/volume/file/{file_id}/retry", include_in_schema=False)
+# @router.post("/file/{file_id}/retry")
+# async def retry_download(
+#     request: Request,
+#     file_id: str,
+#     background_tasks: BackgroundTasks,
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     # Query to get the existing model record
+#     query = (
+#         select(ModelDB)
+#         .where(
+#             ModelDB.id == file_id,
+#             ModelDB.deleted == False,
+#             ModelDB.status == "failed",  # Only allow retrying failed downloads
+#         )
+#         .apply_org_check(request)
+#     )
 
-    result = await db.execute(query)
-    model = result.scalar_one_or_none()
+#     result = await db.execute(query)
+#     model = result.scalar_one_or_none()
 
-    if not model:
-        raise HTTPException(
-            status_code=404, detail="Model not found or not eligible for retry"
-        )
+#     if not model:
+#         raise HTTPException(
+#             status_code=404, detail="Model not found or not eligible for retry"
+#         )
 
-    # Use the helper function for the download
-    res = await handle_file_download(
-        request=request,
-        db=db,
-        download_url=model.user_url,
-        folder_path=model.folder_path,
-        filename=model.model_name,
-        upload_type=model.upload_type,
-        db_model_id=str(model.id),
-        background_tasks=background_tasks,
-    )
+#     # Use the helper function for the download
+#     res = await handle_file_download(
+#         request=request,
+#         db=db,
+#         download_url=model.user_url,
+#         folder_path=model.folder_path,
+#         filename=model.model_name,
+#         upload_type=model.upload_type,
+#         db_model_id=str(model.id),
+#         background_tasks=background_tasks,
+#     )
 
-    # Reset the model status for retry
-    model_status_query = (
-        update(ModelDB)
-        .where(ModelDB.id == file_id)
-        .values(
-            status="started",
-            error_log=None,
-            updated_at=datetime.now(),
-            download_progress=0,
-        )
-    )
-    await db.execute(model_status_query)
-    await db.commit()
+#     # Reset the model status for retry
+#     model_status_query = (
+#         update(ModelDB)
+#         .where(ModelDB.id == file_id)
+#         .values(
+#             status="started",
+#             error_log=None,
+#             updated_at=datetime.now(),
+#             download_progress=0,
+#         )
+#     )
+#     await db.execute(model_status_query)
+#     await db.commit()
 
-    return res
+#     return res
 
 
 def does_file_exist(path: str, volume: Volume) -> bool:
