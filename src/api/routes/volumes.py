@@ -1557,6 +1557,9 @@ async def validate_civitai_url(body: CivitaiValidateRequest):
             version_id=version_id
         )
 
+    except HTTPException as http_e:
+        raise http_e
+
     except Exception as e:
         logger.error(f"Error validating Civitai URL: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
