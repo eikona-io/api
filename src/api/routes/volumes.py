@@ -216,7 +216,6 @@ async def downloading_models(request: Request, db: AsyncSession = Depends(get_db
 class MoveFileBody(BaseModel):
     src_path: str
     dst_path: str
-    overwrite: Optional[bool] = False
 
 
 class RemovePath(BaseModel):
@@ -357,11 +356,10 @@ async def rename_file(
 
 
 # Used by v1 dashboard
-@router.post("/volume/mv", deprecated=True, include_in_schema=False)
+@router.post("/volume/mv", include_in_schema=False)
 async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Depends(get_db)):
     src_path = body.src_path
-    dst_path = body.dst_path
-    overwrite = body.overwrite
+    dst_path = body.dst_path 
     volume_name = await get_volume_name(request, db)
 
     try:
@@ -369,7 +367,7 @@ async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Dep
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # check src_path is a file
+    # Check src_path is a file
     is_valid, error_message = validate_file_path(src_path, volume)
     if not is_valid:
         if "not found" in error_message:
@@ -377,28 +375,20 @@ async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Dep
         else:
             raise HTTPException(status_code=400, detail=error_message)
 
-    filename_valid = is_valid_filename(dst_path)
-    if not filename_valid:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid filename{dst_path}, only allow characters, numerics, underscores, and hyphens.",
-        )
-
-    folder_path = os.path.dirname(src_path)
-    dst_path = os.path.join(folder_path, dst_path)
-
-    # Check if the destination file exists and if we can overwrite it
+    # Check if destination file exists and if we can overwrite it
     try:
-        contents = volume.listdir(dst_path)
-        if contents:
-            if not overwrite:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Destination file exists and overwrite is False.",
-                )
-    except Exception as _:
-        pass
+        dst_contents = volume.listdir(dst_path)
+        if dst_contents:
+            raise HTTPException(
+                status_code=400,
+                detail="Destination file exists.",
+            )
+    except grpclib.exceptions.GRPCError as e:
+        # NOT_FOUND is expected and means we can proceed
+        if e.status != grpclib.Status.NOT_FOUND:
+            raise HTTPException(status_code=500, detail=str(e))
 
+    # Perform the move operation (copy + delete)
     volume.copy_files([src_path], dst_path)
     volume.remove_file(src_path)
 
