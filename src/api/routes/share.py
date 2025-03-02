@@ -33,7 +33,7 @@ async def create_dub_link(url: str, slug: str) -> Optional[str]:
     client = DubClient.get_instance()
 
     try:
-        res = client.links.create(
+        res = await client.links.create_async(
             request={
                 "url": url,
                 "domain": "comfydeploy.link",
@@ -60,7 +60,7 @@ async def get_dub_link(slug: str) -> Optional[str]:
         return None
 
     try:
-        res = DubClient.get_instance().links.get(request={"external_id": f"ext_{slug}"})
+        res = await DubClient.get_instance().links.get_async(request={"external_id": f"ext_{slug}"})
         if res is not None:
             logging.info(f"link found: {res.short_link}")
             return res
@@ -79,7 +79,7 @@ async def update_dub_link(link_id: str, url: str, slug: str) -> Optional[str]:
     client = DubClient.get_instance()
 
     try:
-        res = client.links.update(
+        res = await client.links.update_async(
             link_id=link_id,
             request_body={
                 "url": url,

@@ -102,6 +102,7 @@ class AssetResponse(BaseModel):
     updated_at: datetime
     deleted: Optional[bool] = False
 
+UPLOAD_FILE_SIZE_LIMIT_MB = 250 * 1024 * 1024  # 250MB
 
 # Return the session tunnel url
 @router.post(
@@ -146,11 +147,10 @@ async def upload_file(
 
     # File size check
     file_size = file.size
-    size_limit = 100 * 1024 * 1024  # 100MB
-    if file_size > size_limit:
+    if file_size > UPLOAD_FILE_SIZE_LIMIT_MB:
         raise HTTPException(
             status_code=400,
-            detail=f"File size exceeds {size_limit // (1024 * 1024)}MB limit",
+            detail=f"File size exceeds {UPLOAD_FILE_SIZE_LIMIT_MB // (1024 * 1024)}MB limit",
         )
 
     # Generate file ID and path
@@ -416,11 +416,10 @@ async def upload_asset_file(
 
     # File size check
     file_size = file.size
-    size_limit = 100 * 1024 * 1024  # 100MB
-    if file_size > size_limit:
+    if file_size > UPLOAD_FILE_SIZE_LIMIT_MB:
         raise HTTPException(
             status_code=400,
-            detail=f"File size exceeds {size_limit // (1024 * 1024)}MB limit",
+            detail=f"File size exceeds {UPLOAD_FILE_SIZE_LIMIT_MB // (1024 * 1024)}MB limit",
         )
 
     # Generate file ID and path
@@ -529,5 +528,3 @@ async def get_asset(
         )
     
     return asset
-
-

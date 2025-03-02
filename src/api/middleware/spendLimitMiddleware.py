@@ -22,8 +22,9 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             # TODO: Enable this once we fixed the override
-            if self.should_check_spend_limit(request):
-                await self.check_spend_limit(request)
+            # Skipping the check
+            # if self.should_check_spend_limit(request):
+            #     await self.check_spend_limit(request)
             response = await call_next(request)
             return response
         except HTTPException as exc:
@@ -64,6 +65,8 @@ class SpendLimitMiddleware(BaseHTTPMiddleware):
             await self.redis.set(redis_key, raw_value)
         
         plan_data = json.loads(raw_value)
+        
+        # This is causing quite a lot of problem
         value = PlanInfo.model_validate(plan_data)
         
         if value.plan == "free":

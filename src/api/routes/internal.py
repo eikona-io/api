@@ -47,6 +47,7 @@ from sqlalchemy import update, case, and_
 from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
 from api.models import (
     GPUEvent,
+    Machine,
     WorkflowRun,
     WorkflowRunOutput,
     User,
@@ -57,6 +58,7 @@ from datetime import datetime, timezone
 import datetime as dt
 
 from fastapi import Depends
+from api.utils.autumn import send_autumn_usage_event
 
 router = APIRouter()
 
@@ -483,8 +485,8 @@ async def update_run(
 
 @router.post("/gpu_event", include_in_schema=False)
 async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSession = Depends(get_db)):
-    legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    new_url = f"{legacy_api_url}/api/end_gpu_event"
+    # legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
+    # new_url = f"{legacy_api_url}/api/end_gpu_event"
 
     # Extract data from request body
     machine_id = data.get("machine_id")
@@ -528,6 +530,15 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 await db.commit()
             else:
                 # Insert new GPU event
+                if machine_id:
+                    machine = await db.execute(
+                        select(Machine).where(Machine.id == machine_id)
+                    )
+                    machine = machine.scalar_one_or_none()
+                    if machine:
+                        final_user_id = machine.user_id
+                        final_org_id = machine.org_id
+                
                 gpu_event = GPUEvent(
                     id=uuid4(),
                     user_id=final_user_id,
@@ -564,6 +575,16 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             event = result.scalar_one()
             await db.commit()
 
+            # Send usage data to Autumn API
+            await send_autumn_usage_event(
+                customer_id=event.org_id or event.user_id,
+                gpu_type=event.gpu,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                environment=event.environment,
+                idempotency_key=str(event.id)
+            )
+
             # Cancel all executing runs associated with the GPU event
             if event.session_id is  not None:
                 updateExecutingRuns = (
@@ -579,29 +600,32 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
 
                 await db.execute(updateExecutingRuns)
                 await db.commit()
+            
+            
 
             # Get headers from the incoming request
             headers = dict(request.headers) 
             # Remove host header as it will be set by aiohttp
             headers.pop("host", None)
             # Send a POST request to the legacy API to update the user spent usage.
-            async with aiohttp.ClientSession() as session:
-                # Remove any existing encoding headers and set to just gzip
-                headers["Accept-Encoding"] = "gzip, deflate"
-                if "content-encoding" in headers:
-                    del headers["content-encoding"]
+            # async with aiohttp.ClientSession() as session:
+            #     # Remove any existing encoding headers and set to just gzip
+            #     headers["Accept-Encoding"] = "gzip, deflate"
+            #     if "content-encoding" in headers:
+            #         del headers["content-encoding"]
 
-                async with session.post(new_url, json=data, headers=headers) as response:
-                    content = await response.read()
-                    return Response(
-                        content=content,
-                        status_code=response.status,
-                        headers={
-                            k: v
-                            for k, v in response.headers.items()
-                            if k.lower() != "content-encoding"
-                        },
-                    )
+            #     async with session.post(new_url, json=data, headers=headers) as response:
+            #         content = await response.read()
+            #         return Response(
+            #             content=content,
+            #             status_code=response.status,
+            #             headers={
+            #                 k: v
+            #                 for k, v in response.headers.items()
+            #                 if k.lower() != "content-encoding"
+            #             },
+            #         )
+            return { "event_id": event.id }
 
             logging.info(f"end_time added to gpu_event: {event.id}")
 
@@ -630,33 +654,33 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
     #         )
 
 
-@router.post("/machine-built", include_in_schema=False)
-async def machine_built(request: Request, data: Any = Body(...)):
-    legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    new_url = f"{legacy_api_url}/api/machine-built"
+# @router.post("/machine-built", include_in_schema=False)
+# async def machine_built(request: Request, data: Any = Body(...)):
+#     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
+#     new_url = f"{legacy_api_url}/api/machine-built"
 
-    # Get headers from the incoming request
-    headers = dict(request.headers)
-    # Remove host header as it will be set by aiohttp
-    headers.pop("host", None)
+#     # Get headers from the incoming request
+#     headers = dict(request.headers)
+#     # Remove host header as it will be set by aiohttp
+#     headers.pop("host", None)
 
-    async with aiohttp.ClientSession() as session:
-        # Remove any existing encoding headers and set to just gzip
-        headers["Accept-Encoding"] = "gzip, deflate"
-        if "content-encoding" in headers:
-            del headers["content-encoding"]
+#     async with aiohttp.ClientSession() as session:
+#         # Remove any existing encoding headers and set to just gzip
+#         headers["Accept-Encoding"] = "gzip, deflate"
+#         if "content-encoding" in headers:
+#             del headers["content-encoding"]
 
-        async with session.post(new_url, json=data, headers=headers) as response:
-            content = await response.read()
-            return Response(
-                content=content,
-                status_code=response.status,
-                headers={
-                    k: v
-                    for k, v in response.headers.items()
-                    if k.lower() != "content-encoding"
-                },
-            )
+#         async with session.post(new_url, json=data, headers=headers) as response:
+#             content = await response.read()
+#             return Response(
+#                 content=content,
+#                 status_code=response.status,
+#                 headers={
+#                     k: v
+#                     for k, v in response.headers.items()
+#                     if k.lower() != "content-encoding"
+#                 },
+#             )
 
 
 @router.post("/fal-webhook", include_in_schema=False)

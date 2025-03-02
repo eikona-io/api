@@ -140,6 +140,7 @@ async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optiona
             else:
                 logfire.error(f"App not found for machine {target_app_name}, and no modal_image_id found")
         else:
+            # We are deploying the modal app as machine
             await redeploy_machine_internal(target_app_name)
         ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
             
@@ -1053,7 +1054,7 @@ async def _create_run(
             webhook_intermediate_status=data.webhook_intermediate_status,
             batch_id=batch_id,
             model_id=model_id,  # Use the extracted model_id
-            deployment_id=data.deployment_id,
+            deployment_id=safe_deployment_id,
         )
 
         if is_native_run:
@@ -1199,7 +1200,7 @@ async def _create_run(
                         # print("shit", str(machine_id))
                         ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
                         with logfire.span("spawn-run"):
-                            result = ComfyDeployRunner.run.spawn(params)
+                            result = ComfyDeployRunner.run._experimental_spawn(params)
                             new_run.modal_function_call_id = result.object_id
                     # For runpod there will be a problem with the auth token cause v2 endpoint requires a token
                     case "runpod-serverless":
