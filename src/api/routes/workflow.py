@@ -606,7 +606,24 @@ async def get_workflows_gallery(
         run.workflow_id = :workflow_id
         AND run.status = 'success'
         AND workflow.deleted = false
-        AND (output.data ?| ARRAY['images', 'gifs', 'mesh'])
+        AND (output.data ?| ARRAY['images', 'gifs', 'model_file'])
+        AND (
+            EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(output.data::jsonb -> 'images') as item
+                WHERE item ? 'url'
+            ) OR
+            EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(output.data::jsonb -> 'gifs') as item
+                WHERE item ? 'url'
+            ) OR
+            EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(output.data::jsonb -> 'model_file') as item
+                WHERE item ? 'url'
+            )
+        )
         AND (
             (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
             OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:user_id AS TEXT))
