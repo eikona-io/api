@@ -711,7 +711,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                                 canceled_at = product_canceled_at
                         
                         # Extract payment issues
-                        if any(product.get("status") not in ["active", "canceled"] for product in all_products):
+                        if any(product.get("status") not in ["active", "canceled", "trialing"] for product in all_products):
                             payment_issue = True
                             payment_issue_reason = "Payment issue with subscription"
                         
