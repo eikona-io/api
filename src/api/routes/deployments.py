@@ -598,3 +598,64 @@ async def _deactivate_deployment_internal(
     except Exception as e:
         logger.error(f"Error in internal deactivation for deployment {deployment.id}: {e}")
         return None
+
+
+@router.get(
+    "/deployment/{deployment_id}",
+    response_model=DeploymentModel,
+    openapi_extra={
+        "x-speakeasy-name-override": "get",
+    },
+)
+async def get_deployment(
+    request: Request,
+    deployment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        # Get the deployment with workflow and version information
+        deployment_query = (
+            select(Deployment)
+            .options(
+                joinedload(Deployment.workflow).load_only(Workflow.name),
+                joinedload(Deployment.version),
+            )
+            .join(Workflow)
+            .where(
+                Deployment.id == deployment_id,
+                Workflow.deleted == False,
+            )
+            .apply_org_check(request)
+        )
+
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+
+        # Get workflow inputs and outputs
+        workflow_api = deployment.version.workflow_api if deployment.version else None
+        inputs = get_inputs_from_workflow_api(workflow_api)
+
+        workflow = deployment.version.workflow if deployment.version else None
+        outputs = get_outputs_from_workflow(workflow)
+
+        # Convert to dict and add additional fields
+        deployment_dict = deployment.to_dict()
+        if inputs:
+            deployment_dict["input_types"] = inputs
+        if outputs:
+            deployment_dict["output_types"] = outputs
+
+        # Add dub link for public share deployments
+        if deployment.environment == "public-share" and deployment.share_slug:
+            dub_link = await get_dub_link(deployment.share_slug)
+            if dub_link:
+                deployment_dict["dub_link"] = dub_link.short_link
+
+        return deployment_dict
+
+    except Exception as e:
+        logger.error(f"Error getting deployment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
