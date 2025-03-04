@@ -6,7 +6,12 @@ from api.utils.inputs import get_inputs_from_workflow_api
 from api.utils.outputs import get_outputs_from_workflow
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
-from .types import DeploymentModel, DeploymentEnvironment, DeploymentShareModel
+from .types import (
+    DeploymentModel,
+    DeploymentEnvironment,
+    DeploymentShareModel,
+    DeploymentFeaturedModel,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
 from api.models import Deployment, Machine, MachineVersion, Workflow, WorkflowRun
@@ -18,7 +23,6 @@ from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
 from .share import create_dub_link, get_dub_link, update_dub_link
 from sqlalchemy import func
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +511,44 @@ async def get_share_deployment(
     return deployment_dict
 
 
+@router.get(
+    "/deployments/featured",
+    response_model=List[DeploymentFeaturedModel],
+)
+async def get_featured_deployments(
+    db: AsyncSession = Depends(get_db),
+) -> List[DeploymentFeaturedModel]:
+    featured_deployments_org_id = "org_2toS7J4JJDhTdlSlIy2Lb2IAmQA"
+
+    deployments_featured_query = (
+        select(Deployment)
+        .options(
+            joinedload(Deployment.workflow).load_only(
+                Workflow.name, Workflow.cover_image
+            ),
+            joinedload(Deployment.version),
+        )
+        .join(Workflow)
+        .where(
+            Deployment.environment == "public-share",
+            Workflow.deleted == False,
+            Deployment.org_id == featured_deployments_org_id,
+            Deployment.share_slug.isnot(None),  # Ensure share_slug is not None
+        )
+        .order_by(Deployment.updated_at.desc())
+    )
+
+    result = await db.execute(deployments_featured_query)
+    deployments = result.scalars().all()
+
+    deployments_data = []
+    for deployment in deployments:
+        deployment_dict = deployment.to_dict()
+        deployments_data.append(deployment_dict)
+
+    return deployments_data
+
+
 @router.post(
     "/deployment/{deployment_id}/deactivate",
     response_model=DeploymentModel,
@@ -598,3 +640,64 @@ async def _deactivate_deployment_internal(
     except Exception as e:
         logger.error(f"Error in internal deactivation for deployment {deployment.id}: {e}")
         return None
+
+
+@router.get(
+    "/deployment/{deployment_id}",
+    response_model=DeploymentModel,
+    openapi_extra={
+        "x-speakeasy-name-override": "get",
+    },
+)
+async def get_deployment(
+    request: Request,
+    deployment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        # Get the deployment with workflow and version information
+        deployment_query = (
+            select(Deployment)
+            .options(
+                joinedload(Deployment.workflow).load_only(Workflow.name),
+                joinedload(Deployment.version),
+            )
+            .join(Workflow)
+            .where(
+                Deployment.id == deployment_id,
+                Workflow.deleted == False,
+            )
+            .apply_org_check(request)
+        )
+
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+
+        # Get workflow inputs and outputs
+        workflow_api = deployment.version.workflow_api if deployment.version else None
+        inputs = get_inputs_from_workflow_api(workflow_api)
+
+        workflow = deployment.version.workflow if deployment.version else None
+        outputs = get_outputs_from_workflow(workflow)
+
+        # Convert to dict and add additional fields
+        deployment_dict = deployment.to_dict()
+        if inputs:
+            deployment_dict["input_types"] = inputs
+        if outputs:
+            deployment_dict["output_types"] = outputs
+
+        # Add dub link for public share deployments
+        if deployment.environment == "public-share" and deployment.share_slug:
+            dub_link = await get_dub_link(deployment.share_slug)
+            if dub_link:
+                deployment_dict["dub_link"] = dub_link.short_link
+
+        return deployment_dict
+
+    except Exception as e:
+        logger.error(f"Error getting deployment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
