@@ -1399,3 +1399,14 @@ async def add_model(
     except Exception as e:
         logger.error(f"Error adding model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/volume/name")
+async def get_volume_name_route(request: Request, db: AsyncSession = Depends(get_db)):
+    """Get the volume name for the current user"""
+    try:
+        volume_name = await get_volume_name(request, db)
+        return {"volume_name": volume_name}
+    except Exception as e:
+        logger.error(f"Error getting volume name: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
