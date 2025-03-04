@@ -609,6 +609,12 @@ class DeploymentShareModel(BaseModel):
     input_types: Optional[List[Dict[str, Any]]]
     output_types: Optional[List[Dict[str, Any]]]
 
+# For official featured deployments only
+class DeploymentFeaturedModel(BaseModel):
+    workflow: Dict[str, Optional[str]]
+    description: Optional[str] = None
+    share_slug: Optional[str] = None
+
 class MachineGPU(str, Enum):
     CPU = "CPU"
     T4 = "T4"

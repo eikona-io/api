@@ -6,7 +6,12 @@ from api.utils.inputs import get_inputs_from_workflow_api
 from api.utils.outputs import get_outputs_from_workflow
 from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
-from .types import DeploymentModel, DeploymentEnvironment, DeploymentShareModel
+from .types import (
+    DeploymentModel,
+    DeploymentEnvironment,
+    DeploymentShareModel,
+    DeploymentFeaturedModel,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
 from api.models import Deployment, Machine, MachineVersion, Workflow, WorkflowRun
@@ -18,7 +23,6 @@ from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
 from .share import create_dub_link, get_dub_link, update_dub_link
 from sqlalchemy import func
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +509,44 @@ async def get_share_deployment(
 
     # FastAPI will automatically filter based on DeploymentModel
     return deployment_dict
+
+
+@router.get(
+    "/deployments/featured",
+    response_model=List[DeploymentFeaturedModel],
+)
+async def get_featured_deployments(
+    db: AsyncSession = Depends(get_db),
+) -> List[DeploymentFeaturedModel]:
+    featured_deployments_org_id = "org_2toS7J4JJDhTdlSlIy2Lb2IAmQA"
+
+    deployments_featured_query = (
+        select(Deployment)
+        .options(
+            joinedload(Deployment.workflow).load_only(
+                Workflow.name, Workflow.cover_image
+            ),
+            joinedload(Deployment.version),
+        )
+        .join(Workflow)
+        .where(
+            Deployment.environment == "public-share",
+            Workflow.deleted == False,
+            Deployment.org_id == featured_deployments_org_id,
+            Deployment.share_slug.isnot(None),  # Ensure share_slug is not None
+        )
+        .order_by(Deployment.updated_at.desc())
+    )
+
+    result = await db.execute(deployments_featured_query)
+    deployments = result.scalars().all()
+
+    deployments_data = []
+    for deployment in deployments:
+        deployment_dict = deployment.to_dict()
+        deployments_data.append(deployment_dict)
+
+    return deployments_data
 
 
 @router.post(
