@@ -680,7 +680,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                         
                         for product in all_products:
                             # Only process active products
-                            if product.get("status") == "active":
+                            if product.get("status") == "active" or product.get("status") == "trialing":
                                 # Get the plan name directly from product id
                                 plan_key = product.get("id", "")
                                 if plan_key:  # Only add if we have a plan key
