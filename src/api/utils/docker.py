@@ -19,16 +19,27 @@ def extract_url(dependency_string):
         return "https://github.com/" + parts[0]
     return ""
 
+intputs_folder = "/private_models/input"
+
 def comfyui_cmd(
     cpu: bool = False,
     extra_args: Optional[str] = None,
     install_latest_comfydeploy: bool = False,
 ):
     cmd = ""
+    
+    # Ensure the input folder exists
+    cmd += f"mkdir -p {intputs_folder} &&"
+    
     if install_latest_comfydeploy:
         cmd += "cd ./custom_nodes/comfyui-deploy && git pull --ff-only && cd - && "
     
     cmd += f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
+    
+    cmd += f" --input-directory {intputs_folder}"
+    
+    cmd += " --preview-method auto"
+    
     if cpu:
         cmd += " --cpu"
     if extra_args is not None:
