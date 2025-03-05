@@ -324,11 +324,9 @@ else:
         ]
     )
 
-    current_directory = os.path.dirname(os.path.realpath(__file__))
-    dockerfile_image = dockerfile_image.add_local_file(
-        current_directory + "/extra_model_paths.yaml",
-        "/comfyui/extra_model_paths.yaml",
-    )
+dockerfile_image = dockerfile_image.add_local_file(
+    "./data/extra_model_paths.yaml", "/comfyui/extra_model_paths.yaml"
+)
 
 
 # Time to wait between API check attempts in milliseconds
