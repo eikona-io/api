@@ -607,6 +607,20 @@ def extract_url(dependency_string):
     return ""
 
 
+def send_log_entry(session_id: UUID, machine_id: str, log_message: str, log_type: str = "info"):
+    data = [(
+        uuid4(),
+        session_id,
+        None,
+        machine_id,
+        datetime.now(),
+        log_type,
+        log_message,
+    )]
+    asyncio.create_task(
+        insert_to_clickhouse("log_entries", data)
+    )
+
 async def create_dynamic_sesssion_background_task(
     request: Request,
     gpu_event_id: str,
@@ -780,10 +794,14 @@ async def create_dynamic_sesssion_background_task(
             with CustomOutputManager.enable_output_with_context(
                 str(session_id), body.machine_id
             ):
+                gpu = body.gpu.value if body.gpu is not None and body.gpu.value != "CPU" else None
+                send_log_entry(session_id, body.machine_id, f"Queuing {gpu} Container..." if gpu else "Queuing CPU Container...")
                 async with app.run.aio():
-                    print("creating sandbox")
                     print(dockerfile_image)
                     with modal.enable_output():
+                        
+                        send_log_entry(session_id, body.machine_id, "Creating Sandbox...")
+                        
                         sb = await modal.Sandbox.create.aio(
                             # "bash",
                             # "-c",
@@ -791,20 +809,22 @@ async def create_dynamic_sesssion_background_task(
                             image=dockerfile_image,
                             # timeout=(body.timeout or 15) * 60,
                             timeout=6 * 60 * 60,
-                            gpu=body.gpu.value
-                            if body.gpu is not None and body.gpu.value != "CPU"
-                            else None,
+                            gpu=gpu,
                             app=app,
                             workdir="/comfyui",
                             encrypted_ports=[8188],
                             volumes=volumes,
                         )
+                        
+                        send_log_entry(session_id, body.machine_id, "Setting up tunnels...")
 
                         # logger.info("creating gpu event")
 
                         # logger.info(sb.tunnels())
                         tunnels = await sb.tunnels.aio()
                         tunnel = tunnels[8188]  # Access the tunnel after awaiting
+                        
+                        send_log_entry(session_id, body.machine_id, "Tunnel connected")
 
                         async with get_db_context() as db:
                             await db.execute(
@@ -821,6 +841,8 @@ async def create_dynamic_sesssion_background_task(
 
                         if status_queue is not None:
                             status_queue.put_nowait(tunnel.url)
+
+                        send_log_entry(session_id, body.machine_id, "Starting ComfyUI...")
 
                         p = await sb.exec.aio(
                             "bash",
