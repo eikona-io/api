@@ -16,7 +16,7 @@ PRICING_TIERS = {
         "allowed_endpoints": [],
         "blocked_endpoints": [
             "/api/volume/add_file",
-            "/api/volume/rm",
+            # "/api/volume/rm",
             "/api/volume/rename_file",
             "/api/volume/list-models",
             "/api/volume/get-model-info",
