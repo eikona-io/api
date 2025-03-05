@@ -680,7 +680,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                         
                         for product in all_products:
                             # Only process active products
-                            if product.get("status") == "active":
+                            if product.get("status") == "active" or product.get("status") == "trialing":
                                 # Get the plan name directly from product id
                                 plan_key = product.get("id", "")
                                 if plan_key:  # Only add if we have a plan key
@@ -711,7 +711,7 @@ async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, An
                                 canceled_at = product_canceled_at
                         
                         # Extract payment issues
-                        if any(product.get("status") not in ["active", "canceled"] for product in all_products):
+                        if any(product.get("status") not in ["active", "canceled", "trialing"] for product in all_products):
                             payment_issue = True
                             payment_issue_reason = "Payment issue with subscription"
                         
@@ -1422,10 +1422,10 @@ async def stripe_checkout(
                     else:
                         logfire.info(f"Successfully attached customer {user_id} to Autumn")
                         print(response_data)
-                        url = response_data.get("checkout_url", None)
-                        if url:
-                            return {"url": url}
-                        return response_data
+                        if response_data.get("checkout_url"):
+                            return {"url": response_data.get("checkout_url")}
+                        else:
+                            return response_data
         except Exception as e:
             logfire.error(f"Error calling Autumn API: {str(e)}")
             

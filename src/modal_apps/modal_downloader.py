@@ -1,16 +1,23 @@
-from typing import Optional
-import modal
+from typing import Optional, AsyncGenerator, Dict, Optional, List
 import logging
 import time
 import os
 from enum import Enum
-from modal import Volume
+from modal import Volume, Image, App, Secret
 import aiohttp
-import re
 import asyncio
+import tempfile
+from huggingface_hub import snapshot_download, HfApi, hf_hub_download
+from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
+from pathlib import Path
 
-modal_downloader_app = modal.App("volume-operations")
+modal_downloader_app = App("volume-operations")
 
+image = Image.debian_slim().pip_install(
+    "huggingface_hub>=0.19.4",
+    "tqdm>=4.66.1",
+    "aiohttp>=3.8.6",
+)
 
 class ModelDownloadStatus(Enum):
     PROGRESS = "progress"
@@ -36,8 +43,8 @@ def create_status_payload(
 
 @modal_downloader_app.function(
     timeout=3600,
-    secrets=[modal.Secret.from_name("civitai-api-key")],
-    image=modal.Image.debian_slim().pip_install("aiohttp", "huggingface_hub"),
+    secrets=[Secret.from_name("civitai-api-key")],
+    image=image
 )
 async def modal_download_file_task(
     download_url,
@@ -159,3 +166,137 @@ async def modal_download_file_task(
         print(f"Error in download_file_task: {str(e)}")
         yield create_status_payload(db_model_id, 0, ModelDownloadStatus.FAILED, str(e))
         raise e
+
+async def report_progress(
+    progress: float, 
+    model_id: str, 
+    status: str = "progress", 
+    error_log: Optional[str] = None
+) -> Dict:
+    """Generate progress report events"""
+    return {
+        "status": status,
+        "download_progress": int(progress),
+        "model_id": model_id,
+        "error_log": error_log,
+    }
+
+@modal_downloader_app.function(timeout=3600, image=image)
+async def modal_download_repo_task(
+    repo_id: str,
+    folder_path: str,
+    model_id: str,
+    volume_name: str,
+    token: Optional[str] = None,
+) -> AsyncGenerator[Dict, None]:
+    """
+    Download an entire HuggingFace repository to a Modal volume.
+    
+    Args:
+        repo_id: HuggingFace repository ID (e.g., "Skywork/SkyReels-A1")
+        folder_path: Path within the volume to store the repository
+        model_id: Database ID of the model record
+        volume_name: Name of the Modal volume
+        token: HuggingFace API token (optional)
+    
+    Yields:
+        Progress updates as dictionaries
+    """
+    print(f"Starting download of repo {repo_id} to {folder_path}")
+    try:
+        # Use user token if provided, otherwise fall back to environment variable
+        if not token:
+            token = os.environ.get("HUGGINGFACE_TOKEN")
+            print("Using environment HUGGINGFACE_TOKEN")
+        else:
+            print("Using provided token")
+        
+        # Get the Modal volume
+        print(f"Getting volume {volume_name}")
+        volume = Volume.from_name(volume_name)
+        
+        # Create a temporary directory for downloading
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print(f"Created temp directory at {temp_dir}")
+            # Report initial progress
+            yield await report_progress(0, model_id)
+            
+            try:
+                # Download the repository
+                print(f"Starting repository download to {temp_dir}")
+                local_dir = snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=temp_dir,
+                    token=token,
+                    local_dir_use_symlinks=False,
+                )
+                print(f"Repository downloaded to {local_dir}")
+                
+                # Get list of files to count them for progress reporting
+                files = list(Path(local_dir).glob("**/*"))
+                total_files = len([f for f in files if f.is_file()])
+                print(f"Found {total_files} files in repository")
+                
+                if total_files == 0:
+                    print("Repository is empty, aborting")
+                    yield await report_progress(
+                        0, 
+                        model_id, 
+                        status="failed", 
+                        error_log="Repository is empty"
+                    )
+                    return
+                
+                # Create destination directory in volume
+                dest_dir = os.path.join(folder_path, repo_id.split("/")[-1])
+                print(f"Will upload to destination directory: {dest_dir}")
+                
+                # Report progress at 10%
+                yield await report_progress(10, model_id)
+                
+                # Use batch_upload to transfer the entire directory at once
+                print("Starting batch upload to volume")
+                with volume.batch_upload() as batch:
+                    batch.put_directory(local_dir, dest_dir)
+                print("Batch upload completed")
+                
+                # Report progress at 90% after batch upload starts
+                yield await report_progress(90, model_id)
+                
+                # Report success
+                print("Download and upload successful")
+                yield await report_progress(100, model_id, status="success")
+                
+            except RepositoryNotFoundError:
+                print(f"Repository {repo_id} not found")
+                yield await report_progress(
+                    0, 
+                    model_id, 
+                    status="failed", 
+                    error_log=f"Repository {repo_id} not found"
+                )
+            except RevisionNotFoundError:
+                print(f"Revision not found for repository {repo_id}")
+                yield await report_progress(
+                    0, 
+                    model_id, 
+                    status="failed", 
+                    error_log=f"Revision not found for repository {repo_id}"
+                )
+            except Exception as e:
+                print(f"Error downloading repository: {str(e)}")
+                yield await report_progress(
+                    0, 
+                    model_id, 
+                    status="failed", 
+                    error_log=f"Error downloading repository: {str(e)}"
+                )
+    
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        yield await report_progress(
+            0, 
+            model_id, 
+            status="failed", 
+            error_log=f"Unexpected error: {str(e)}"
+        )

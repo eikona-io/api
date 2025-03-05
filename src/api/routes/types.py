@@ -481,24 +481,11 @@ class WorkflowRunNativeOutputModel(BaseModel):
         from_attributes = True
 
 
-class VolFSStructure(BaseModel):
-    contents: List[Union["VolFolder", "VolFile"]]
-
-
-class VolFolder(BaseModel):
+class ModalVolFile(BaseModel):
     path: str
-    type: Literal["folder"]
-    contents: List[Union["VolFolder", "VolFile"]]
-
-
-class VolFile(BaseModel):
-    id: Optional[str] = None
-    path: str
-    type: Literal["file"]
-    size: Optional[float] = None
-
-
-VolFSStructure.update_forward_refs()
+    type: int
+    mtime: int
+    size: int
 
 
 class Model(BaseModel):
@@ -621,6 +608,12 @@ class DeploymentShareModel(BaseModel):
     workflow: Dict[str, Optional[str]]
     input_types: Optional[List[Dict[str, Any]]]
     output_types: Optional[List[Dict[str, Any]]]
+
+# For official featured deployments only
+class DeploymentFeaturedModel(BaseModel):
+    workflow: Dict[str, Optional[str]]
+    description: Optional[str] = None
+    share_slug: Optional[str] = None
 
 class MachineGPU(str, Enum):
     CPU = "CPU"

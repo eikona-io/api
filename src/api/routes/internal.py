@@ -485,8 +485,8 @@ async def update_run(
 
 @router.post("/gpu_event", include_in_schema=False)
 async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSession = Depends(get_db)):
-    legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    new_url = f"{legacy_api_url}/api/end_gpu_event"
+    # legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
+    # new_url = f"{legacy_api_url}/api/end_gpu_event"
 
     # Extract data from request body
     machine_id = data.get("machine_id")
@@ -654,33 +654,33 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
     #         )
 
 
-@router.post("/machine-built", include_in_schema=False)
-async def machine_built(request: Request, data: Any = Body(...)):
-    legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    new_url = f"{legacy_api_url}/api/machine-built"
+# @router.post("/machine-built", include_in_schema=False)
+# async def machine_built(request: Request, data: Any = Body(...)):
+#     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
+#     new_url = f"{legacy_api_url}/api/machine-built"
 
-    # Get headers from the incoming request
-    headers = dict(request.headers)
-    # Remove host header as it will be set by aiohttp
-    headers.pop("host", None)
+#     # Get headers from the incoming request
+#     headers = dict(request.headers)
+#     # Remove host header as it will be set by aiohttp
+#     headers.pop("host", None)
 
-    async with aiohttp.ClientSession() as session:
-        # Remove any existing encoding headers and set to just gzip
-        headers["Accept-Encoding"] = "gzip, deflate"
-        if "content-encoding" in headers:
-            del headers["content-encoding"]
+#     async with aiohttp.ClientSession() as session:
+#         # Remove any existing encoding headers and set to just gzip
+#         headers["Accept-Encoding"] = "gzip, deflate"
+#         if "content-encoding" in headers:
+#             del headers["content-encoding"]
 
-        async with session.post(new_url, json=data, headers=headers) as response:
-            content = await response.read()
-            return Response(
-                content=content,
-                status_code=response.status,
-                headers={
-                    k: v
-                    for k, v in response.headers.items()
-                    if k.lower() != "content-encoding"
-                },
-            )
+#         async with session.post(new_url, json=data, headers=headers) as response:
+#             content = await response.read()
+#             return Response(
+#                 content=content,
+#                 status_code=response.status,
+#                 headers={
+#                     k: v
+#                     for k, v in response.headers.items()
+#                     if k.lower() != "content-encoding"
+#                 },
+#             )
 
 
 @router.post("/fal-webhook", include_in_schema=False)
