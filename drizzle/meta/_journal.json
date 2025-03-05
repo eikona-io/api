@@ -1282,6 +1282,13 @@
       "when": 1740044018642,
       "tag": "0182_late_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1741158871796,
+      "tag": "0183_thankful_leper_queen",
+      "breakpoints": true
     }
   ]
 }
