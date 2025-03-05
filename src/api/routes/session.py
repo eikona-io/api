@@ -758,15 +758,16 @@ async def create_dynamic_sesssion_background_task(
                 ],
             )
 
-            current_directory = os.path.dirname(os.path.realpath(__file__))
-
-            dockerfile_image = dockerfile_image.add_local_file(
-                current_directory + "/extra_model_paths.yaml",
-                "/comfyui/extra_model_paths.yaml",
-            )
         else:
             logger.info(f"Using existing modal image {modal_image_id}")
             dockerfile_image = modal.Image.from_id(modal_image_id)
+
+        # Always add extra_model_paths.yaml regardless of which path was taken
+        current_directory = os.path.dirname(os.path.realpath(__file__))
+        dockerfile_image = dockerfile_image.add_local_file(
+            current_directory + "/extra_model_paths.yaml",
+            "/comfyui/extra_model_paths.yaml",
+        )
 
         if not dockerfile_image and body.dependencies is None:
             raise HTTPException(
