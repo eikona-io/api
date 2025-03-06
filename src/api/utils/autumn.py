@@ -2,6 +2,7 @@ import os
 import aiohttp
 from datetime import datetime
 import logfire
+from typing import Optional
 
 async def send_autumn_usage_event(
     customer_id: str,
