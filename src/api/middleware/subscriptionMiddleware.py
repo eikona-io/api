@@ -84,7 +84,8 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
             tier = "free"  # Default to free tier
         else:
             plan_info = json.loads(plan_data)
-            tier = plan_info.get("plan", "free")
+            plans = plan_info.get("plans", [])
+            tier = plans[0] if plans and len(plans) > 0 else "free"
 
         # Check if endpoint is blocked or not allowed for the tier
         if self.is_endpoint_blocked(
