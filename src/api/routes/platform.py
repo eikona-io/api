@@ -1,4 +1,5 @@
 import os
+from api.utils.autumn import get_autumn_customer
 import logfire
 from pydantic import BaseModel
 from api.database import get_db
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import BackgroundTasks
 import aiohttp
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
@@ -635,136 +637,59 @@ def get_last_invoice_timestamp_from_autumn(autumn_data: dict) -> Optional[dateti
     # Convert timestamp to datetime with validation
     return int(latest_timestamp)
 
-
-async def get_plans(db: AsyncSession, user_id: str, org_id: str) -> Dict[str, Any]:
+async def get_plans(
+    db: AsyncSession,
+    user_id: str,
+    org_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> Dict[str, Any]:
     """Get plans information including current subscription details"""
-    
+
     # Get current plan data first so we can use it for fallback
     # Fetch subscription status directly from the database
 
-    
     # Check if Autumn is enabled
     if AUTUMN_API_KEY:
         try:
-            # Determine the customer ID (org_id or user_id)
-            customer_id = org_id or user_id
-            
-            # Make request to Autumn API
-            headers = {
-                "Authorization": f"Bearer {AUTUMN_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{AUTUMN_API_URL}/customers/{customer_id}",
-                    headers=headers
-                ) as response:
-                    if response.status == 200:
-                        autumn_data = await response.json()
-                        logfire.info(f"Successfully fetched data from Autumn API for customer {customer_id}")
-                        
-                        # Map Autumn data to our format
-                        plans = []
-                        names = []
-                        prices = []
-                        amounts = []
-                        charges = []
-                        cancel_at_period_end = False
-                        canceled_at = None
-                        payment_issue = False
-                        payment_issue_reason = ""
-                        
-                        # Process products and add-ons
-                        all_products = autumn_data.get("products", []) + autumn_data.get("add_ons", [])
-                        
-                        for product in all_products:
-                            # Only process active products
-                            if product.get("status") == "active" or product.get("status") == "trialing":
-                                # Get the plan name directly from product id
-                                plan_key = product.get("id", "")
-                                if plan_key:  # Only add if we have a plan key
-                                    plans.append(plan_key)
-                                    names.append(product.get("name", ""))
-                                    
-                                    # Process pricing information
-                                    product_prices = product.get("prices", [])
-                                    if product_prices:
-                                        # Use the first price entry
-                                        price_info = product_prices[0]
-                                        price_amount = price_info.get("amount", 0)
-                                        price_amount = price_info.get("amount", 0)
-                                        
-                                        # Add price ID and amount
-                                        prices.append(plan_key)  # Using product ID as price ID
-                                        amounts.append(price_amount * 100)
-                                        
-                                        # Calculate charges - using price amount directly for now
-                                        # Adjust this calculation as needed for your business logic
-                                        # This will be the price adjusted with the coupon
-                                        charges.append(price_amount * 100)
-                            
-                            # Check for canceled products for cancel status
-                            product_canceled_at = product.get("canceled_at")
-                            if product.get("status") == "canceled" or product_canceled_at:
-                                cancel_at_period_end = True
-                                canceled_at = product_canceled_at
-                        
-                        # Extract payment issues
-                        if any(product.get("status") not in ["active", "canceled", "trialing"] for product in all_products):
-                            payment_issue = True
-                            payment_issue_reason = "Payment issue with subscription"
-                        
-                        # Check if we have invoices data to compute charges
-                        invoices = autumn_data.get("invoices", [])
-                        if invoices and not charges:  # Use invoice data if available and charges is empty
-                            for invoice in invoices:
-                                if invoice.get("status") == "paid":
-                                    charges.append(invoice.get("total", 0))
-                        
-                        # Process entitlements for additional plan info if needed
-                        entitlements = autumn_data.get("entitlements", [])
-                        # You can use entitlements to enrich the plan information if needed
-                        
-                        subscription_query = (
-                            select(SubscriptionStatus)
-                            .where(
-                                and_(
-                                    SubscriptionStatus.status != "deleted",
-                                    or_(
-                                        and_(
-                                            SubscriptionStatus.org_id.is_(None),
-                                            SubscriptionStatus.user_id == user_id,
-                                        )
-                                        if not org_id
-                                        else SubscriptionStatus.org_id == org_id
-                                    ),
-                                )
+            # Get the transformed data from cache or fetch and transform from Autumn
+            transformed_data = await get_customer_plan(request, background_tasks)
+            if transformed_data:
+                logfire.info(
+                    f"Successfully fetched transformed data for customer {org_id or user_id}"
+                )
+                
+                # If last_invoice_timestamp is None, try to get it from subscription
+                if transformed_data.get("last_invoice_timestamp") is None:
+                    subscription_query = (
+                        select(SubscriptionStatus)
+                        .where(
+                            and_(
+                                SubscriptionStatus.status != "deleted",
+                                or_(
+                                    and_(
+                                        SubscriptionStatus.org_id.is_(None),
+                                        SubscriptionStatus.user_id == user_id,
+                                    )
+                                    if not org_id
+                                    else SubscriptionStatus.org_id == org_id
+                                ),
                             )
-                            .order_by(SubscriptionStatus.created_at.desc())
-                            .limit(1)
                         )
-                        result = await db.execute(subscription_query)
-                        subscription = result.scalar_one_or_none()
-                        
-                        # Initialize current_plan with data from subscription
-                        return {
-                            "plans": plans,
-                            "names": names,
-                            "prices": prices,
-                            "amount": amounts,
-                            "charges": charges,
-                            "cancel_at_period_end": cancel_at_period_end,
-                            "canceled_at": canceled_at,
-                            "payment_issue": payment_issue,
-                            "payment_issue_reason": payment_issue_reason,
-                            "autumn_data": autumn_data,
-                            "last_invoice_timestamp": get_last_invoice_timestamp_from_autumn(autumn_data) if get_last_invoice_timestamp_from_autumn(autumn_data) else (
-                                int(subscription.last_invoice_timestamp.timestamp()) if subscription and subscription.last_invoice_timestamp else None
-                            ),
-                        }
-                    else:
-                        logfire.error(f"Failed to get data from Autumn API: {await response.text()}")
+                        .order_by(SubscriptionStatus.created_at.desc())
+                        .limit(1)
+                    )
+                    result = await db.execute(subscription_query)
+                    subscription = result.scalar_one_or_none()
+                    
+                    if subscription and subscription.last_invoice_timestamp:
+                        transformed_data["last_invoice_timestamp"] = int(
+                            subscription.last_invoice_timestamp.timestamp()
+                        )
+                
+                # Return the transformed data directly
+                return transformed_data
+                
         except Exception as e:
             logfire.error(f"Error calling Autumn API: {str(e)}")
 
@@ -843,6 +768,7 @@ async def get_workflow_count(db: AsyncSession, request: Request) -> int:
 @router.get("/platform/plan")
 async def get_api_plan(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     # Get authenticated user info
@@ -853,7 +779,7 @@ async def get_api_plan(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Get plans, machines, workflows and user settings in parallel
-    plans = await get_plans(db, user_id, org_id)
+    plans = await get_plans(db, user_id, org_id, request, background_tasks)
     machine_count = await get_machine_count(db, request)
     workflow_count = await get_workflow_count(db, request)
     user_settings = await get_user_settings_util(request, db)
@@ -2006,3 +1932,147 @@ async def calculate_usage_charges(
         logfire.warning(f"Failed to apply user settings credit: {str(e)}")
     
     return final_cost, int(end_time.timestamp())
+
+async def get_customer_plan(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    redis_key = f"plan:{org_id or user_id}"
+    cache_ttl = 60  # Cache time in seconds
+
+    async def fetch_and_transform_from_autumn():
+        logfire.info(f"Fetching fresh data from Autumn for {org_id or user_id}")
+        # Fetch raw data from Autumn
+        autumn_data = await get_autumn_customer(org_id or user_id)
+        if not autumn_data:
+            logfire.warning(f"No data returned from Autumn for {org_id or user_id}")
+            return None
+
+        # Transform Autumn data to our format
+        plans = []
+        names = []
+        prices = []
+        amounts = []
+        charges = []
+        cancel_at_period_end = False
+        canceled_at = None
+        payment_issue = False
+        payment_issue_reason = ""
+
+        # Process products and add-ons
+        all_products = autumn_data.get("products", []) + autumn_data.get("add_ons", [])
+
+        for product in all_products:
+            # Only process active products
+            if product.get("status") == "active":
+                # Get the plan name directly from product id
+                plan_key = product.get("id", "")
+                if plan_key:  # Only add if we have a plan key
+                    plans.append(plan_key)
+                    names.append(product.get("name", ""))
+
+                    # Process pricing information
+                    product_prices = product.get("prices", [])
+                    if product_prices:
+                        # Use the first price entry
+                        price_info = product_prices[0]
+                        price_amount = price_info.get("amount", 0)
+
+                        # Add price ID and amount
+                        prices.append(plan_key)  # Using product ID as price ID
+                        amounts.append(price_amount * 100)
+
+                        # Calculate charges - using price amount directly for now
+                        charges.append(price_amount * 100)
+
+            # Check for canceled products for cancel status
+            product_canceled_at = product.get("canceled_at")
+            if product.get("status") == "canceled" or product_canceled_at:
+                cancel_at_period_end = True
+                canceled_at = product_canceled_at
+
+        # Extract payment issues
+        if any(product.get("status") not in ["active", "canceled"] for product in all_products):
+            payment_issue = True
+            payment_issue_reason = "Payment issue with subscription"
+
+        # Check if we have invoices data to compute charges
+        invoices = autumn_data.get("invoices", [])
+        if invoices and not charges:  # Use invoice data if available and charges is empty
+            for invoice in invoices:
+                if invoice.get("status") == "paid":
+                    charges.append(invoice.get("total", 0))
+
+        # Create the transformed data structure
+        transformed_data = {
+            "plans": plans,
+            "names": names,
+            "prices": prices,
+            "amount": amounts,
+            "charges": charges,
+            "cancel_at_period_end": cancel_at_period_end,
+            "canceled_at": canceled_at,
+            "payment_issue": payment_issue,
+            "payment_issue_reason": payment_issue_reason,
+            "autumn_data": autumn_data,  # Keep the original data for reference
+            "last_invoice_timestamp": get_last_invoice_timestamp_from_autumn(autumn_data),
+            "source": "autumn",
+            "last_update": int(datetime.now().timestamp())
+        }
+
+        # Check if this is just a free plan - if so, don't cache it
+        is_free_plan = len(plans) == 1 and plans[0] == "free"
+
+        # Only cache paid plans
+        if not is_free_plan:
+            try:
+                await redisMeta.set(redis_key, transformed_data)
+                logfire.info(f"Cached transformed Autumn data in Redis for {org_id or user_id}")
+            except Exception as e:
+                logfire.error(f"Error updating {org_id or user_id} plan in Redis: {str(e)}")
+
+        return transformed_data
+
+    try:
+        raw_data = await redisMeta.get(redis_key)
+
+        # Parse the data if it's a string
+        if isinstance(raw_data, str):
+            try:
+                parsed_data = json.loads(raw_data)
+                raw_data = parsed_data
+                logfire.info(f"Successfully parsed Redis string data for {org_id or user_id}")
+            except json.JSONDecodeError:
+                logfire.error(f"Failed to parse Redis data as JSON: {raw_data}")
+                return await fetch_and_transform_from_autumn()
+
+        # Check if data has the required fields for our transformed format
+        if (
+            isinstance(raw_data, dict)
+            and raw_data.get("source") == "autumn"
+            and "last_update" in raw_data
+            and "plans" in raw_data  # Check for our transformed format
+        ):
+            current_time = int(datetime.now().timestamp())
+            last_update = raw_data.get("last_update", 0)
+
+            # If cache is not expired, just return it
+            if current_time - last_update < cache_ttl:
+                logfire.info(f"Using valid Redis cache for {org_id or user_id}, age: {current_time - last_update}s")
+                return raw_data
+            else:
+                # Cache is expired - return it but update in background
+                logfire.info(f"Using expired Redis cache for {org_id or user_id}, age: {current_time - last_update}s, updating in background")
+                background_tasks.add_task(fetch_and_transform_from_autumn)
+                return raw_data
+        else:
+            # Invalid or missing fields - fetch fresh data
+            logfire.info(f"Redis data for {org_id or user_id} is missing required fields, fetching fresh data")
+            return await fetch_and_transform_from_autumn()
+    except Exception as e:
+        logfire.error(f"Error getting Redis data in get_customer_plan: {str(e)}")
+        return await fetch_and_transform_from_autumn()
