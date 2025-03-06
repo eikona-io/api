@@ -81,7 +81,7 @@ async def send_autumn_usage_event(
         logfire.error(f"Error sending usage data to Autumn: {str(e)}")
         return False
 
-async def get_autumn_customer(customer_id: str) -> dict:
+async def get_autumn_customer(customer_id: str) -> Optional[dict]:
     autumn_api_key = os.getenv("AUTUMN_SECRET_KEY")
     if not autumn_api_key:
         logfire.error("AUTUMN_SECRET_KEY not found in environment variables")
