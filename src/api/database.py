@@ -28,7 +28,7 @@ engine = create_async_engine(
     pool_timeout=30,  # Shorter timeout as Neon quickly provisions connections
     pool_pre_ping=True,  # Keep enabled to verify connection health
     pool_recycle=1800,  # 30 minutes recycle to align with Neon's timeout
-    echo=False,  # Disable SQL logging in production
+    # echo=False,  # Disable SQL logging in production
     # Neon-specific optimizations
     pool_use_lifo=True,  # Last In First Out - better for serverless
 )
