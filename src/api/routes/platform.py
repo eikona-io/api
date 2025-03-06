@@ -1302,7 +1302,7 @@ async def stripe_checkout(
                     "product_id": plan,  # Using the plan as product_id
                     "force_checkout": not upgrade,
                     "customer_data": {
-                        "name": user_data.get("first_name", "") + " " + user_data.get("last_name", ""),
+                        "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
                         "email": user_email,
                     }
                 }
