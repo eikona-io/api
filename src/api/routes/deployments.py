@@ -14,7 +14,14 @@ from .types import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from .utils import select
-from api.models import Deployment, Machine, MachineVersion, Workflow, WorkflowRun
+from api.models import (
+    Deployment,
+    Machine,
+    MachineVersion,
+    Workflow,
+    WorkflowRun,
+    WorkflowVersion,
+)
 from api.database import get_db
 from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
@@ -544,6 +551,10 @@ async def get_featured_deployments(
     deployments_data = []
     for deployment in deployments:
         deployment_dict = deployment.to_dict()
+
+        if deployment.version and hasattr(deployment.version, 'workflow'):
+            deployment_dict["workflow"]["workflow"] = deployment.version.workflow
+
         deployments_data.append(deployment_dict)
 
     return deployments_data
