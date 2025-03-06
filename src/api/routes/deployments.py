@@ -554,8 +554,7 @@ async def get_featured_deployments(
 
         # Add workflow JSON as a string if available
         if deployment.version and hasattr(deployment.version, 'workflow'):
-            # Convert the workflow JSON to a string to avoid validation errors
-            deployment_dict["workflow"]["workflow"] = str(deployment.version.workflow)
+            deployment_dict["workflow"]["workflow"] = deployment.version.workflow
 
         deployments_data.append(deployment_dict)
 
