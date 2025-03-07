@@ -409,26 +409,32 @@ async def increase_timeout_2(
     # Retrieve the current timeout end time from Redis
     current_timeout_end_str = await redis.get(f"session:{session_id}:timeout_end")
     if not current_timeout_end_str:
-        # If no existing timeout, raise an error
         raise HTTPException(status_code=404, detail="Timeout end not found for session")
 
-    # Parse the current timeout end time
-    current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
-    
     if plan == "free":
         max_timeout_minutes = 30
-        # Calculate total timeout duration including the requested increase
-        current_duration = (current_timeout_end - datetime.utcnow()).total_seconds() / 60
-        total_duration = current_duration + body.minutes
+        if not gpu_event.start_time:
+            raise HTTPException(status_code=400, detail="Session has not started yet")
+            
+        # Calculate the new timeout end time
+        current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
+        new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
+        
+        # Calculate total session duration from start to new end time
+        total_duration = (new_timeout_end - gpu_event.start_time).total_seconds() / 60
+        elapsed_minutes = (datetime.utcnow() - gpu_event.start_time).total_seconds() / 60
         
         if total_duration > max_timeout_minutes:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Free plan users are limited to {max_timeout_minutes} minutes total timeout. Current duration: {int(current_duration)} minutes"
+                detail=f"Free plan users are limited to {max_timeout_minutes} minutes total session time. "
+                       f"Session has been running for {int(elapsed_minutes)} minutes. "
+                       f"Maximum remaining time: {max(0, int(max_timeout_minutes - elapsed_minutes))} minutes"
             )
-
-    # Calculate the new timeout end time
-    new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
+    else:
+        # Calculate the new timeout end time for non-free plans
+        current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
+        new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
 
     # Update the timeout end time in Redis
     await redis.set(f"session:{session_id}:timeout_end", new_timeout_end.isoformat())
@@ -631,7 +637,6 @@ async def create_dynamic_sesssion_background_task(
     app = modal.App(str(session_id))
     if status_queue is not None:
         print("status_queue is not None")
-    # app = modal.App.lookup("dynamic-comfyui", create_if_missing=True)
     
     try:
         org_id = request.state.current_user.get("org_id")
