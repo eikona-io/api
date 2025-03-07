@@ -948,7 +948,13 @@ export const gpuEvents = dbSchema.table("gpu_events", {
     machine_version_id: uuid("machine_version_id"),
 
     environment: deploymentEnvironment("environment"),
-});
+}, (table) => {
+    return {
+      session_id_idx: index("session_id_idx").on(table.session_id),
+      end_time_idx: index("end_time_idx").on(table.end_time)
+    }
+}
+);
 
 const trainingTypeEnum = ["flux-lora"] as const;
 export const trainingType = pgEnum("training_type", trainingTypeEnum);
