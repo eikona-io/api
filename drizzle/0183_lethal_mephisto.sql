@@ -1,2 +1,0 @@
-CREATE INDEX IF NOT EXISTS "session_id_idx" ON "comfyui_deploy"."gpu_events" USING btree (session_id);--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "end_time_idx" ON "comfyui_deploy"."gpu_events" USING btree (end_time);
