@@ -1325,6 +1325,10 @@ async def add_model(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
+    plan = request.state.current_user.get("plan")
+    if plan == "free":
+        raise HTTPException(status_code=403, detail="Free plan users cannot add models")
+    
     """Unified endpoint to add models from different sources"""
     try:
         # Validate request based on source

@@ -1,8 +1,8 @@
 import os
 import aiohttp
-import logging
 from datetime import datetime
 import logfire
+from typing import Optional
 
 async def send_autumn_usage_event(
     customer_id: str,
@@ -80,4 +80,46 @@ async def send_autumn_usage_event(
                     
     except Exception as e:
         logfire.error(f"Error sending usage data to Autumn: {str(e)}")
-        return False 
+        return False
+
+async def get_autumn_customer(customer_id: str) -> Optional[dict]:
+    autumn_api_key = os.getenv("AUTUMN_SECRET_KEY")
+    if not autumn_api_key:
+        logfire.error("AUTUMN_SECRET_KEY not found in environment variables")
+        return None
+
+    try:
+        # Prepare Autumn API request
+        autumn_headers = {
+            "Authorization": f"Bearer {autumn_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        url = f"https://api.useautumn.com/v1/customers/{customer_id}"
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=autumn_headers) as response:
+                if response.status == 200:
+                    customer_data = await response.json()
+                    return customer_data
+                else:
+                    error_text = await response.text()
+                    # Try to parse the error response
+                    try:
+                        import json
+
+                        error_data = json.loads(error_text)
+                        if error_data.get("code") == "customer_not_found":
+                            logfire.warning(f"Customer not found in Autumn: {customer_id}")
+                            return None
+                    except:
+                        pass
+                    # Log other errors as usual
+                    logfire.error(
+                        f"Failed to get customer data from Autumn: {error_text}"
+                    )
+                    return None
+
+    except Exception as e:
+        logfire.error(f"Error retrieving customer data from Autumn: {str(e)}")
+        return None

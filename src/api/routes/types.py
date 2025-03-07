@@ -611,7 +611,7 @@ class DeploymentShareModel(BaseModel):
 
 # For official featured deployments only
 class DeploymentFeaturedModel(BaseModel):
-    workflow: Dict[str, Optional[str]]
+    workflow: Dict[str, Optional[Any]]
     description: Optional[str] = None
     share_slug: Optional[str] = None
 

@@ -22,11 +22,15 @@ if DATABASE_URL and not DATABASE_URL.startswith("postgresql+asyncpg://"):
 engine = create_async_engine(
     DATABASE_URL,
     poolclass=AsyncAdaptedQueuePool,
-    pool_size=20,  # Increased from default 5
-    max_overflow=30,  # Increased from default 10
-    pool_timeout=60,  # Increased from default 30
-    pool_pre_ping=True,  # Enable connection health checks
-    pool_recycle=3600,  # Recycle connections after 1 hour
+    # Neon recommended settings for serverless
+    pool_size=20,  # Moderate pool size as Neon handles scaling
+    max_overflow=80,  # Larger overflow for burst handling
+    pool_timeout=30,  # Shorter timeout as Neon quickly provisions connections
+    pool_pre_ping=True,  # Keep enabled to verify connection health
+    pool_recycle=1800,  # 30 minutes recycle to align with Neon's timeout
+    # echo=False,  # Disable SQL logging in production
+    # Neon-specific optimizations
+    pool_use_lifo=True,  # Last In First Out - better for serverless
 )
 
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

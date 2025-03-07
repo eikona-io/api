@@ -59,7 +59,9 @@ export const workflowTable = dbSchema.table("workflows", {
     deleted: boolean("deleted").default(false).notNull(),
     description: text("description"),
     cover_image: text("cover_image"),
-});
+}, (table) => ({
+    idx_workflows_org_user: index("idx_workflows_org_user").on(table.org_id, table.user_id),
+  }));
 
 export const workflowSchema = createSelectSchema(workflowTable);
 
