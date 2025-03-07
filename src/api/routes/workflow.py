@@ -140,7 +140,6 @@ async def delete_workflow(
 
     return {"message": "Workflow deleted successfully"}
 
-
 @router.post("/workflow/{workflow_id}/clone")
 async def clone_workflow(
     request: Request,
@@ -589,55 +588,52 @@ async def get_workflows_gallery(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user.get("org_id")
+
     raw_query = text("""
+    WITH filtered_runs AS (
+        SELECT 
+            run.id, 
+            run.started_at, 
+            run.ended_at, 
+            run.queued_at, 
+            run.created_at,
+            run.org_id
+        FROM 
+            comfyui_deploy.workflow_runs AS run
+        JOIN 
+            comfyui_deploy.workflows AS workflow ON run.workflow_id = workflow.id
+        WHERE 
+            run.workflow_id = :workflow_id
+            AND run.status = 'success'
+            AND workflow.deleted = false
+            AND (
+                (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
+                OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:user_id AS TEXT))
+            )
+    )
     SELECT
         output.id as output_id,
-        run.id as run_id,
+        filtered_runs.id as run_id,
         output.data,
         output.node_meta,
-        (EXTRACT(EPOCH FROM run.ended_at) - EXTRACT(EPOCH FROM run.started_at)) AS run_duration,
-        (EXTRACT(EPOCH FROM run.started_at) - EXTRACT(EPOCH FROM run.queued_at)) AS cold_start,
-        (EXTRACT(EPOCH FROM run.queued_at) - EXTRACT(EPOCH FROM run.created_at)) AS queue_time
-    FROM
-        comfyui_deploy.workflow_runs AS run
-        INNER JOIN comfyui_deploy.workflow_run_outputs AS output ON run.id = output.run_id
-        INNER JOIN comfyui_deploy.workflows AS workflow ON run.workflow_id = workflow.id
+        (EXTRACT(EPOCH FROM filtered_runs.ended_at) - EXTRACT(EPOCH FROM filtered_runs.started_at)) AS run_duration,
+        (EXTRACT(EPOCH FROM filtered_runs.started_at) - EXTRACT(EPOCH FROM filtered_runs.queued_at)) AS cold_start,
+        (EXTRACT(EPOCH FROM filtered_runs.queued_at) - EXTRACT(EPOCH FROM filtered_runs.created_at)) AS queue_time
+    FROM 
+        comfyui_deploy.workflow_run_outputs AS output
+    JOIN 
+        filtered_runs ON output.run_id = filtered_runs.id
     WHERE
-        run.workflow_id = :workflow_id
-        AND run.status = 'success'
-        AND workflow.deleted = false
-        AND (output.data ?| ARRAY['images', 'gifs', 'model_file'])
-        AND (
-            EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(output.data::jsonb -> 'images') as item
-                WHERE item ? 'url'
-            ) OR
-            EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(output.data::jsonb -> 'gifs') as item
-                WHERE item ? 'url'
-            ) OR
-            EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(output.data::jsonb -> 'model_file') as item
-                WHERE item ? 'url'
-            )
-        )
-        AND (
-            (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
-            OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:user_id AS TEXT))
-        )
-    ORDER BY output.created_at desc
+        output.data ?| ARRAY['images', 'gifs', 'mesh']
+    ORDER BY 
+        output.created_at DESC
     LIMIT :limit
     OFFSET :offset
     """)
 
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if "org_id" in current_user else None
-
-    # Execute the query
     result = await db.execute(
         raw_query,
         {
@@ -656,7 +652,6 @@ async def get_workflows_gallery(
         if output["data"]:
             post_process_output_data(output["data"], user_settings)
 
-    # Use the custom encoder to serialize the data
     return JSONResponse(
         status_code=200, content=json.loads(json.dumps(outputs, cls=CustomJSONEncoder))
     )

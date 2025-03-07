@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS "idx_workflows_org_user" ON "comfyui_deploy"."workflows" USING btree (org_id,user_id);
