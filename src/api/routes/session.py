@@ -143,24 +143,30 @@ class Session(BaseModel):
 async def get_session(
     request: Request, session_id: str, db: AsyncSession = Depends(get_db)
 ) -> Session:
-    gpuEvent = cast(
-        Optional[GPUEvent],
-        (
-            await db.execute(
-                (
-                    select(GPUEvent)
-                    .where(GPUEvent.session_id == session_id)
-                    .where(GPUEvent.end_time.is_(None))
-                    .apply_org_check(request)
-                )
+    
+    result = await db.execute(
+            select(
+                GPUEvent.id,
+                GPUEvent.tunnel_url,
+                GPUEvent.gpu,
+                GPUEvent.created_at,
+                GPUEvent.session_timeout,
+                GPUEvent.machine_id,
+                GPUEvent.machine_version_id,
             )
-        ).scalar_one_or_none(),
-    )
+            .where((GPUEvent.session_id == session_id) & (GPUEvent.end_time.is_(None)))
+            .apply_org_check(request)
+            .limit(1)
+        )
+    
+    timeout_end = await redis.get(f"session:{session_id}:timeout_end")
+
+    gpuEvent = result.first()
+    
+    # print(gpuEvent)
 
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
-
-    timeout_end = await redis.get(f"session:{session_id}:timeout_end")
 
     return {
         "session_id": session_id,
@@ -1252,7 +1258,7 @@ async def delete_session(
         await db.commit()
         await db.refresh(gpuEvent)
 
-    # Send usage data to A # Make sure to only send the usage of the session if it has both a start and end timeutumn
+    # Send usage data to Autumn
    
     if (gpuEvent.end_time is not None and gpuEvent.start_time is not None):
         await send_autumn_usage_event(

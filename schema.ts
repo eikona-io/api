@@ -59,7 +59,9 @@ export const workflowTable = dbSchema.table("workflows", {
     deleted: boolean("deleted").default(false).notNull(),
     description: text("description"),
     cover_image: text("cover_image"),
-});
+}, (table) => ({
+    idx_workflows_org_user: index("idx_workflows_org_user").on(table.org_id, table.user_id),
+  }));
 
 export const workflowSchema = createSelectSchema(workflowTable);
 
@@ -946,7 +948,13 @@ export const gpuEvents = dbSchema.table("gpu_events", {
     machine_version_id: uuid("machine_version_id"),
 
     environment: deploymentEnvironment("environment"),
-});
+}, (table) => {
+    return {
+      session_id_idx: index("session_id_idx").on(table.session_id),
+      end_time_idx: index("end_time_idx").on(table.end_time)
+    }
+}
+);
 
 const trainingTypeEnum = ["flux-lora"] as const;
 export const trainingType = pgEnum("training_type", trainingTypeEnum);
