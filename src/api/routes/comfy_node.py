@@ -72,3 +72,81 @@ async def get_branch_info(request: Request, git_url: str):
     if branch_info is None:
         raise HTTPException(status_code=404, detail="Branch information not found")
     return JSONResponse(content=branch_info)
+
+@async_lru_cache(expire_after=timedelta(hours=1))
+async def _get_releases(git_url: str) -> list[Dict[str, Any]] | None:
+    try:
+        repo_name = await extract_repo_name(git_url)
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}",
+            "User-Agent": "request",
+        }
+
+        releases_url = f"https://api.github.com/repos/{repo_name}/releases"
+        releases = await fetch_github_data(releases_url, headers)
+        return releases
+    except httpx.HTTPStatusError as e:
+        logger.error(f"GitHub API error: {e.response.status_code} {e.response.text}")
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching releases: {str(e)}")
+        return None
+
+async def _get_commit_sha_for_tag_with_headers(repo_name: str, tag: str) -> str | None:
+    headers = {
+        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}",
+        "User-Agent": "request",
+    }
+    try:
+        # Get the commit SHA for a specific tag
+        tag_url = f"https://api.github.com/repos/{repo_name}/git/refs/tags/{tag}"
+        tag_data = await fetch_github_data(tag_url, headers)
+        return tag_data["object"]["sha"]
+    except Exception as e:
+        logger.error(f"Error fetching commit SHA for tag {tag}: {str(e)}")
+        return None
+
+@router.get("/comfyui-versions", response_model=Dict[str, Any])
+async def get_comfyui_versions(request: Request):
+    git_url = "https://github.com/comfyanonymous/ComfyUI"
+    repo_name = await extract_repo_name(git_url)
+    
+    # Get branch info and releases
+    branch_info, releases = await asyncio.gather(
+        _get_branch_info(git_url),
+        _get_releases(git_url)
+    )
+    
+    if branch_info is None:
+        raise HTTPException(status_code=404, detail="Branch information not found")
+    
+    # Take only the 3 most recent releases
+    recent_releases = releases[:3] if releases else []
+    
+    # Fetch commit SHAs for recent releases concurrently
+    if recent_releases:
+        sha_tasks = [
+            _get_commit_sha_for_tag_with_headers(repo_name, release["tag_name"])
+            for release in recent_releases
+        ]
+        commit_shas = await asyncio.gather(*sha_tasks)
+    else:
+        commit_shas = []
+        
+    response = {
+        "latest": {
+            "sha": branch_info["commit"]["sha"],
+            "label": "Latest"
+        },
+        "releases": [
+            {
+                "label": release["tag_name"],
+                "value": sha or release["target_commitish"],
+                "description": release["name"],
+                "date": release["published_at"]
+            }
+            for release, sha in zip(recent_releases, commit_shas) if sha
+        ]
+    }
+    
+    return JSONResponse(content=response)

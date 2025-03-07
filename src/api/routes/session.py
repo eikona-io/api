@@ -984,17 +984,18 @@ async def create_dynamic_session(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
-    plan = request.state.current_user.get("plan")
+    session_id = uuid4()
+    q = asyncio.Queue() if body.wait_for_server else None
     
+    # Validate free plan first before any other operations
+    plan = request.state.current_user.get("plan")
     if plan == "free":
         max_concurrent_sessions = 1
         max_timeout_minutes = 30
         
-        # Check timeout limit
         if body.timeout and body.timeout > max_timeout_minutes:
             raise HTTPException(status_code=400, detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout")
             
-        # find all gpu event on this account
         gpu_events = (await db.execute(
             select(GPUEvent)
             .apply_org_check(request)
@@ -1004,72 +1005,77 @@ async def create_dynamic_session(
         
         if len(gpu_events) >= max_concurrent_sessions:
             raise HTTPException(status_code=400, detail="Free plan does not support concurrent sessions")
+    
+    # Create tasks for parallel execution
+    async def create_gpu_event():
+        org_id = request.state.current_user.get("org_id")
+        user_id = request.state.current_user.get("user_id")
+        gpu_event_id = str(uuid4())
         
-    session_id = uuid4()
-    q = asyncio.Queue() if body.wait_for_server else None
-    
-    org_id = request.state.current_user.get("org_id")
-    user_id = request.state.current_user.get("user_id")
-    
-    gpu_event_id = str(uuid4())
-    async with get_db_context() as db:
-        # Insert GPU event
-        new_gpu_event = GPUEvent(
-            id=gpu_event_id,
-            user_id=user_id,
-            org_id=org_id,
-            session_id=str(session_id),
-            machine_id=body.machine_id,
-            gpu=body.gpu.value if body.gpu is not None else "CPU",
-            session_timeout=body.timeout or 15,
-            gpu_provider="modal",
-            # start_time=datetime.now(),
-            # modal_function_id=sb.object_id,
-        )
-        db.add(new_gpu_event)
-        await db.commit()
-        await db.refresh(new_gpu_event)
+        async with get_db_context() as db:
+            new_gpu_event = GPUEvent(
+                id=gpu_event_id,
+                user_id=user_id,
+                org_id=org_id,
+                session_id=str(session_id),
+                machine_id=body.machine_id,
+                gpu=body.gpu.value if body.gpu is not None else "CPU",
+                session_timeout=body.timeout or 15,
+                gpu_provider="modal",
+            )
+            db.add(new_gpu_event)
+            await db.commit()
+            await db.refresh(new_gpu_event)
+            return gpu_event_id
 
-    task = asyncio.create_task(
+    async def set_timeout_redis():
+        timeout_duration = body.timeout or 15
+        timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
+        await redis.set(
+            f"session:{session_id}:timeout_end", 
+            timeout_end_time.isoformat()
+        )
+
+    # Run remaining setup tasks in parallel
+    setup_tasks = [
+        create_gpu_event(),
+        set_timeout_redis()
+    ]
+    
+    try:
+        results = await asyncio.gather(*setup_tasks)
+        gpu_event_id = results[0]  # Get GPU event ID from create_gpu_event result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Create main session task
+    session_task = asyncio.create_task(
         create_dynamic_sesssion_background_task(request, gpu_event_id, session_id, body, q)
     )
-
-    # Calculate the timeout end time in UTC
-    timeout_duration = body.timeout or 15
-    timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
-
-    # Store the timeout end time in Redis
-    await redis.set(
-        "session:" + str(session_id) + ":timeout_end", timeout_end_time.isoformat()
-    )
-
-    background_tasks.add_task(
-        ensure_session_creation_complete,
-        task,
-    )
-
-    check_and_close_sessions_task = asyncio.create_task(check_and_close_sessions(request, str(session_id)))
     
-    background_tasks.add_task(
-        ensure_session_creation_complete,
-        check_and_close_sessions_task,
+    # Create monitoring task
+    monitoring_task = asyncio.create_task(
+        check_and_close_sessions(request, str(session_id))
     )
+
+    # Add both tasks to background tasks
+    background_tasks.add_task(ensure_session_creation_complete, session_task)
+    background_tasks.add_task(ensure_session_creation_complete, monitoring_task)
 
     if body.wait_for_server:
         try:
-            print("Waiting for tunnel_url")
             tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
             if isinstance(tunnel_url, dict) and tunnel_url.get("error") is not None:
                 raise HTTPException(status_code=400, detail=tunnel_url.get("error"))
+            return {
+                "session_id": session_id,
+                "url": tunnel_url,
+            }
         except asyncio.TimeoutError:
-            print("Timed out waiting for tunnel_url")
-            tunnel_url = None
-
-        print("Tunnel URL received")
-        return {
-            "session_id": session_id,
-            "url": tunnel_url,
-        }
+            return {
+                "session_id": session_id,
+                "url": None,
+            }
     else:
         return {
             "session_id": session_id,
