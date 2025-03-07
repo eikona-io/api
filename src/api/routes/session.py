@@ -161,7 +161,9 @@ async def get_session(
     
     timeout_end = await redis.get(f"session:{session_id}:timeout_end")
 
-    gpuEvent = cast(Optional[GPUEvent], result.scalar_one_or_none())
+    gpuEvent = result.first()
+    
+    # print(gpuEvent)
 
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
