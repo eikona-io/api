@@ -91,6 +91,7 @@ from typing import Optional
 from sqlalchemy import update, func
 from fastapi import BackgroundTasks
 from api.utils.autumn import send_autumn_usage_event
+import re
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -989,6 +990,10 @@ async def create_dynamic_session(
     session_id = uuid4()
     q = asyncio.Queue() if body.wait_for_server else None
     
+    # Validate comfyui_hash if provided
+    if body.comfyui_hash is not None and not validate_github_hash(body.comfyui_hash):
+        raise HTTPException(status_code=400, detail="Invalid comfyui_hash format. Must be a valid GitHub hash.")
+    
     # Validate free plan first before any other operations
     plan = request.state.current_user.get("plan")
     if plan == "free":
@@ -1335,3 +1340,19 @@ async def check_and_close_sessions(request: Request, session_id: str):
 
     except Exception as e:
         logger.error(f"Error checking session {session_id}: {str(e)}")
+
+def validate_github_hash(hash_str: str) -> bool:
+    """
+    Validates if a string is a valid GitHub hash.
+    GitHub hashes are hexadecimal and typically 7 or 40 characters long.
+    """
+    if hash_str is None:
+        return False
+    
+    # Check if string contains only hexadecimal characters
+    pattern = re.compile(r'^[0-9a-f]+$', re.IGNORECASE)
+    
+    # Verify length (accepting common hash lengths but being somewhat flexible)
+    valid_length = 6 <= len(hash_str) <= 40
+    
+    return bool(pattern.match(hash_str)) and valid_length
