@@ -101,6 +101,10 @@ async def create_api_key(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
+    plan = request.state.current_user.get("plan")
+    if plan == "free":
+        raise HTTPException(status_code=403, detail="Free plan users cannot create API keys")
+    
     return await create_api_key_auth(request, db)
 
 @router.delete("/platform/api-keys/{key_id}")
