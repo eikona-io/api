@@ -141,7 +141,7 @@ def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = 
     comfy_ui_override = None
     
     if steps:
-        print("steps",steps)
+        # print("steps",steps)
         steps = DockerSteps(**steps) if isinstance(steps, dict) else steps
         comfy_ui_index = next((i for i, step in enumerate(steps.steps) if step.type == "custom-node" and step.data.name == "comfyui"), -1)
         comfy_ui_override = None
@@ -153,7 +153,7 @@ def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = 
         deps = DependencyGraph(**deps) if isinstance(deps, dict) else deps
         docker_commands = generate_docker_commands(deps)
         
-    print("log_docker_commands",steps,docker_commands)
+    # print("log_docker_commands",steps,docker_commands)
         
     if not deps and hasattr(data, 'snapshot') and data.snapshot:
         snapshot = data.snapshot
@@ -259,5 +259,7 @@ def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = 
             "RUN if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi",
             "RUN if [ -f install.py ]; then python install.py || echo 'install script failed'; fi",
         ])
+    
+    print("docker_commands",docker_commands)
     
     return DockerCommandResponse(docker_commands=docker_commands)

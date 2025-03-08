@@ -1088,3 +1088,50 @@ def check_fields_for_changes(old_obj, new_data, fields_to_check):
         ):
             return True
     return False
+
+
+@router.get("/machine/{machine_id}/docker-commands")
+async def get_machine_docker_commands(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    # Get the machine
+    machine = await db.execute(
+        select(Machine)
+        .where(Machine.id == machine_id)
+        .where(~Machine.deleted)
+        .apply_org_check(request)
+    )
+    machine = machine.scalars().first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    if machine.type != MachineType.COMFY_DEPLOY_SERVERLESS:
+        raise HTTPException(
+            status_code=400,
+            detail="Machine is not a Comfy Deploy Serverless machine"
+        )
+
+    # Get machine version if it exists
+    machine_version = None
+    if machine.machine_version_id:
+        machine_version = await db.execute(
+            select(MachineVersion).where(MachineVersion.id == machine.machine_version_id)
+        )
+        machine_version = machine_version.scalars().first()
+
+    # Generate docker commands
+    docker_commands = generate_all_docker_commands(machine)
+    docker_commands_hash = hash_machine_dependencies(docker_commands)
+
+    return JSONResponse(content={
+        "docker_commands": docker_commands.model_dump()["docker_commands"],
+        "machine_hash": docker_commands_hash,
+        "python_version": machine.python_version,
+        "base_docker_image": machine.base_docker_image,
+        "machine_version": {
+            "id": str(machine.machine_version_id) if machine.machine_version_id else None,
+            "modal_image_id": machine_version.modal_image_id if machine_version else None
+        }
+    })

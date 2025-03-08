@@ -635,7 +635,9 @@ def send_log_entry(session_id: UUID, machine_id: str, log_message: str, log_type
     asyncio.create_task(
         insert_to_clickhouse("log_entries", data)
     )
-
+    
+os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
+    
 async def create_dynamic_sesssion_background_task(
     request: Request,
     gpu_event_id: str,
@@ -651,132 +653,44 @@ async def create_dynamic_sesssion_background_task(
         org_id = request.state.current_user.get("org_id")
         user_id = request.state.current_user.get("user_id")
 
-        machine_version: Optional[MachineVersion] = None
-        machine: Optional[Machine] = None
+        # Get docker configuration using the shared function
+        async with get_db_context() as db:
+            docker_config = await get_docker_commands_from_dynamic_session_body(request, body, db)
         
-        # Get machine and its version info
-        modal_image_id = None
-        if body.machine_id is not None:
-            async with get_db_context() as db:
-                machine = await db.execute(
-                    select(Machine)
-                    .where(Machine.id == body.machine_id)
-                    .apply_org_check(request)
-                )
-                machine = machine.scalars().first()
-                
-                if not machine:
-                    raise HTTPException(status_code=404, detail="Machine not found")
-                
-                target_machine_version_id = body.machine_version_id or machine.machine_version_id
-
-                # Get machine version if it exists
-                if target_machine_version_id:
-                    machine_version = await db.execute(
-                        select(MachineVersion).where(
-                            MachineVersion.id == target_machine_version_id,
-                            MachineVersion.machine_id == body.machine_id
-                        )
-                    )
-                    machine_version = machine_version.scalars().first()
-
-                    if machine_version and machine_version.modal_image_id:
-                        # Use existing modal image ID from version
-                        modal_image_id = machine_version.modal_image_id
-
-                if not modal_image_id:
-                    logger.info("No dependencies, using machine current settings")
-                    body.dependencies = DepsBody(
-                        comfyui_version=machine.comfyui_version or comfyui_hash,
-                        docker_command_steps=machine.docker_command_steps,
-                    )
-
-        logger.info("Dependencies configuration " + str(body.dependencies))
-
-        logger.info("creating dynamic session")
-
-        if (
-            not modal_image_id and body.dependencies is not None
-        ) or body.machine_id is None:
-            print(body.machine_id)
-
-            if body.dependencies is None:
-                body.dependencies = []
-
-            if isinstance(body.dependencies, list):
-                # Handle shorthand dependencies
-                deps_body = DepsBody(
-                    comfyui_version=body.comfyui_hash or comfyui_hash,
-                    docker_command_steps=DockerSteps(
-                        steps=[
-                            DockerStep(
-                                type="custom-node",
-                                data=CustomNode(
-                                    install_type="git-clone",
-                                    url=extract_url(dep),
-                                    hash=extract_hash(dep),
-                                    name=dep.split("/")[-1],
-                                ),
-                            )
-                            for dep in body.dependencies
-                        ]
-                    ),
-                )
-                # We only install comfyui manager if this is a brand new machine
-                converted = generate_all_docker_commands(
-                    deps_body, include_comfyuimanager=body.machine_id is None
-                )
-            else:
-                converted = generate_all_docker_commands(
-                    body.dependencies, include_comfyuimanager=body.machine_id is None
-                )
-
-            # pprint(converted)
-
-            dockerfile_image: modal.Image = None
-
-            python_version = "3.11"
-
-            # Python version to override - first check body, then machine_version
-            if body.python_version is not None:
-                python_version = body.python_version
-            elif machine_version is not None:
-                python_version = machine_version.python_version
-
-            # Base docker image to use - first check body, then machine_version, then fallback to debian slim
-            if body.base_docker_image is not None:
+        dockerfile_image: modal.Image = None
+        
+        if "modal_image_id" in docker_config and docker_config["modal_image_id"]:
+            logger.info(f"Using existing modal image {docker_config['modal_image_id']}")
+            dockerfile_image = modal.Image.from_id(docker_config["modal_image_id"])
+        else:
+            # Python version and base docker image setup
+            python_version = docker_config.get("python_version", "3.11")
+            base_docker_image = docker_config.get("base_docker_image")
+            
+            if base_docker_image:
                 dockerfile_image = modal.Image.from_registry(
-                    body.base_docker_image, add_python=python_version
-                )
-            elif (
-                machine_version is not None
-                and machine_version.base_docker_image is not None
-            ):
-                dockerfile_image = modal.Image.from_registry(
-                    machine_version.base_docker_image, add_python=python_version
+                    base_docker_image, add_python=python_version
                 )
             else:
                 dockerfile_image = modal.Image.debian_slim(python_version=python_version)
 
-            docker_commands = converted.docker_commands
-            if docker_commands is not None:
+            # Apply docker commands if available
+            docker_commands = docker_config.get("docker_commands")
+            if docker_commands:
                 for commands in docker_commands:
                     dockerfile_image = dockerfile_image.dockerfile_commands(
                         commands,
                     )
 
-            dockerfile_image = dockerfile_image.run_commands(
-                [
-                    "rm -rf /private_models /comfyui/models /public_models",
-                    "ln -s /private_models /comfyui/models",
-                ],
-            )
+        # Always add these commands regardless of the path taken
+        dockerfile_image = dockerfile_image.run_commands(
+            [
+                "rm -rf /private_models /comfyui/models /public_models",
+                "ln -s /private_models /comfyui/models",
+            ],
+        )
 
-        else:
-            logger.info(f"Using existing modal image {modal_image_id}")
-            dockerfile_image = modal.Image.from_id(modal_image_id)
-
-        # Always add extra_model_paths.yaml regardless of which path was taken
+        # Always add extra_model_paths.yaml
         current_directory = os.path.dirname(os.path.realpath(__file__))
         dockerfile_image = dockerfile_image.add_local_file(
             current_directory + "/extra_model_paths.yaml",
@@ -818,11 +732,7 @@ async def create_dynamic_sesssion_background_task(
                         send_log_entry(session_id, body.machine_id, "Creating Sandbox...")
                         
                         sb = await modal.Sandbox.create.aio(
-                            # "bash",
-                            # "-c",
-                            # comfyui_cmd(cpu=True if body.gpu == "CPU" else False),
                             image=dockerfile_image,
-                            # timeout=(body.timeout or 15) * 60,
                             timeout=6 * 60 * 60,
                             gpu=gpu,
                             app=app,
@@ -840,6 +750,8 @@ async def create_dynamic_sesssion_background_task(
                         tunnel = tunnels[8188]  # Access the tunnel after awaiting
                         
                         send_log_entry(session_id, body.machine_id, "Tunnel connected")
+                        
+                        machine_version = docker_config.get("machine_version")
 
                         async with get_db_context() as db:
                             await db.execute(
@@ -849,7 +761,7 @@ async def create_dynamic_sesssion_background_task(
                                     tunnel_url=tunnel.url,
                                     modal_function_id=sb.object_id,
                                     start_time=datetime.now(),
-                                    machine_version_id=machine_version.id if machine_version else None,
+                                    machine_version_id=machine_version.get("id") if machine_version else None,
                                 )
                             )
                             await db.commit()
@@ -921,7 +833,7 @@ async def create_dynamic_sesssion_background_task(
                         
                     await sb.wait.aio()
         except Exception as e:
-            pass
+            send_log_entry(session_id, body.machine_id, str(e))
         finally:
             async with get_db_context() as db:
                 gpu_event = await db.execute(
@@ -974,6 +886,148 @@ async def create_dynamic_sesssion_background_task(
         if status_queue is not None:
             status_queue.put_nowait({"error": str(e)})
         raise
+    
+@beta_router.get(
+    "/session/dynamic/docker-commands",
+)
+async def get_docker_commands_from_dynamic_session_body(
+    request: Request,
+    body: CreateDynamicSessionBody,
+    # background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    try:
+        machine_version: Optional[MachineVersion] = None
+        machine: Optional[Machine] = None
+        
+        # Get machine and its version info
+        modal_image_id = None
+        if body.machine_id is not None:
+            machine = await db.execute(
+                select(Machine)
+                .where(Machine.id == body.machine_id)
+                .apply_org_check(request)
+            )
+            machine = machine.scalars().first()
+            
+            if not machine:
+                raise HTTPException(status_code=404, detail="Machine not found")
+            
+            target_machine_version_id = body.machine_version_id or machine.machine_version_id
+
+            # Get machine version if it exists
+            if target_machine_version_id:
+                machine_version = await db.execute(
+                    select(MachineVersion).where(
+                        MachineVersion.id == target_machine_version_id,
+                        MachineVersion.machine_id == body.machine_id
+                    )
+                )
+                machine_version = machine_version.scalars().first()
+
+                if machine_version and machine_version.modal_image_id:
+                    # Use existing modal image ID from version
+                    modal_image_id = machine_version.modal_image_id
+
+            if not modal_image_id:
+                logger.info("No dependencies, using machine current settings")
+                body.dependencies = DepsBody(
+                    comfyui_version=machine.comfyui_version or comfyui_hash,
+                    docker_command_steps=machine.docker_command_steps,
+                )
+
+        logger.info("Dependencies configuration " + str(body.dependencies))
+
+        if (
+            not modal_image_id and body.dependencies is not None
+        ) or body.machine_id is None:
+            if body.dependencies is None:
+                body.dependencies = []
+
+            if isinstance(body.dependencies, list):
+                # Handle shorthand dependencies
+                deps_body = DepsBody(
+                    comfyui_version=body.comfyui_hash or comfyui_hash,
+                    docker_command_steps=DockerSteps(
+                        steps=[
+                            DockerStep(
+                                type="custom-node",
+                                data=CustomNode(
+                                    install_type="git-clone",
+                                    url=extract_url(dep),
+                                    hash=extract_hash(dep),
+                                    name=dep.split("/")[-1],
+                                ),
+                            )
+                            for dep in body.dependencies
+                        ]
+                    ),
+                )
+                # We only install comfyui manager if this is a brand new machine
+                converted = generate_all_docker_commands(
+                    deps_body, include_comfyuimanager=body.machine_id is None
+                )
+            else:
+                converted = generate_all_docker_commands(
+                    body.dependencies, include_comfyuimanager=body.machine_id is None
+                )
+
+            python_version = "3.11"
+
+            # Python version to override - first check body, then machine_version
+            if body.python_version is not None:
+                python_version = body.python_version
+            elif machine_version is not None:
+                python_version = machine_version.python_version
+
+            # Base docker image to use - first check body, then machine_version, then fallback to debian slim
+            base_docker_image = None
+            if body.base_docker_image is not None:
+                base_docker_image = body.base_docker_image
+            elif (
+                machine_version is not None
+                and machine_version.base_docker_image is not None
+            ):
+                base_docker_image = machine_version.base_docker_image
+
+            # Convert SQLAlchemy models to dictionaries
+            machine_version_dict = None
+            machine_dict = None
+            
+            if machine_version:
+                machine_version_dict = {
+                    "id": str(machine_version.id),
+                    "version": machine_version.version,
+                    "python_version": machine_version.python_version,
+                    "base_docker_image": machine_version.base_docker_image,
+                    "modal_image_id": machine_version.modal_image_id,
+                }
+                
+            if machine:
+                machine_dict = {
+                    "id": str(machine.id),
+                    "name": machine.name,
+                    "type": machine.type,
+                    "status": machine.status,
+                }
+
+            return {
+                "docker_commands": converted.docker_commands,
+                "python_version": python_version,
+                "base_docker_image": base_docker_image,
+                "modal_image_id": modal_image_id,
+                "machine_version": machine_version_dict,
+                "machine": machine_dict
+            }
+        else:
+            return {
+                "modal_image_id": modal_image_id,
+                "message": "Using existing modal image"
+            }
+
+    except Exception as e:
+        logger.error(f"Error generating docker commands: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @beta_router.post(
     "/session/dynamic",
@@ -1257,15 +1311,27 @@ async def delete_session(
 
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
-
+    
     modal_function_id = gpuEvent.modal_function_id
+    
+    # Checking for a stuck case and modal_function_id is not set
+    if gpuEvent.start_time is None and gpuEvent.end_time is None and not modal_function_id:
+        gpuEvent.start_time = datetime.now()
+        gpuEvent.end_time = datetime.now()
+        await db.commit()
+        await db.refresh(gpuEvent)
+        return {"success": True}
+
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
-
-    if modal_function_id.startswith("sb-"):
-        await modal.Sandbox.from_id(modal_function_id).terminate.aio()
-    else:
-        await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
+    
+    try:
+        if modal_function_id.startswith("sb-"):
+            await modal.Sandbox.from_id(modal_function_id).terminate.aio()
+        else:
+            await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
+    except Exception as e:
+        logger.error(f"Error cancelling modal function {modal_function_id}: {str(e)}")
 
     # Update GPU event end time
     if (gpuEvent.end_time is None and gpuEvent.start_time is not None):
