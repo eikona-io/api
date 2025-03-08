@@ -798,7 +798,7 @@ async def create_dynamic_sesssion_background_task(
             )
 
         volumes["/private_models"] = modal.Volume.from_name(
-            "models_" + org_id if org_id is not None else user_id,
+            "models_" + (org_id if org_id is not None else user_id),
             create_if_missing=True,
         )
 
