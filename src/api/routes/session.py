@@ -659,6 +659,8 @@ async def create_dynamic_sesssion_background_task(
         
         dockerfile_image: modal.Image = None
         
+        gpu = body.gpu.value if body.gpu is not None and body.gpu.value != "CPU" else None
+        
         if "modal_image_id" in docker_config and docker_config["modal_image_id"]:
             logger.info(f"Using existing modal image {docker_config['modal_image_id']}")
             dockerfile_image = modal.Image.from_id(docker_config["modal_image_id"])
@@ -673,6 +675,8 @@ async def create_dynamic_sesssion_background_task(
                 )
             else:
                 dockerfile_image = modal.Image.debian_slim(python_version=python_version)
+                
+            install_custom_node_with_gpu = docker_config.get("install_custom_node_with_gpu", False)
 
             # Apply docker commands if available
             docker_commands = docker_config.get("docker_commands")
@@ -680,6 +684,7 @@ async def create_dynamic_sesssion_background_task(
                 for commands in docker_commands:
                     dockerfile_image = dockerfile_image.dockerfile_commands(
                         commands,
+                        gpu=gpu if install_custom_node_with_gpu else None,
                     )
 
         # Always add these commands regardless of the path taken
@@ -723,7 +728,6 @@ async def create_dynamic_sesssion_background_task(
             with CustomOutputManager.enable_output_with_context(
                 str(session_id), body.machine_id
             ):
-                gpu = body.gpu.value if body.gpu is not None and body.gpu.value != "CPU" else None
                 send_log_entry(session_id, body.machine_id, f"Queuing {gpu} Container..." if gpu else "Queuing CPU Container...")
                 async with app.run.aio():
                     print(dockerfile_image)
@@ -1017,7 +1021,8 @@ async def get_docker_commands_from_dynamic_session_body(
                 "base_docker_image": base_docker_image,
                 "modal_image_id": modal_image_id,
                 "machine_version": machine_version_dict,
-                "machine": machine_dict
+                "machine": machine_dict,
+                "install_custom_node_with_gpu": machine_version.install_custom_node_with_gpu if machine_version else False,
             }
         else:
             return {
