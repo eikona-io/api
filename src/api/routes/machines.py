@@ -307,6 +307,8 @@ async def validate_free_plan_restrictions(
     plan = request.state.current_user.get("plan")
     if plan != "free":
         return
+    
+    raise HTTPException(status_code=403, detail="Free plan users cannot create machines, we are mitigating abuse, please wait")
 
     # Check machine count limit (only for creation)
     if not is_update:
