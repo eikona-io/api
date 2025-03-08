@@ -1316,11 +1316,14 @@ async def delete_session(
     
     # Checking for a stuck case and modal_function_id is not set
     if gpuEvent.start_time is None and gpuEvent.end_time is None and not modal_function_id:
-        gpuEvent.start_time = datetime.now()
-        gpuEvent.end_time = datetime.now()
-        await db.commit()
-        await db.refresh(gpuEvent)
-        return {"success": True}
+        # Check if the session has been stuck for over an hour
+        time_difference = datetime.now() - gpuEvent.created_at
+        if time_difference.total_seconds() > 3600:  # 3600 seconds = 1 hour
+            gpuEvent.start_time = gpuEvent.created_at
+            gpuEvent.end_time = datetime.now()
+            await db.commit()
+            await db.refresh(gpuEvent)
+            return {"success": True}
 
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
