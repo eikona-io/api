@@ -427,7 +427,7 @@ async def get_user_settings(request: Request, db: AsyncSession):
     user_settings = cast(Optional[UserSettings], user_settings)
 
     if user_settings is None:
-        print("Creating user settings")
+        # print("Creating user settings")
         org_id = (
             request.state.current_user["org_id"]
             if "org_id" in request.state.current_user

@@ -42,6 +42,7 @@ dependencies = [
     "resend>=2.5.1",
     "discord-py>=2.4.0",
     "dub==0.18.2",
+    "logtail-python>=0.3.3",
 ]
 
 [build-system]

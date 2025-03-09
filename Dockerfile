@@ -28,4 +28,4 @@ ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Presuming there is a `my_app` command provided by the project
-CMD ["uv", "run", "src/api/__init__.py"]
+CMD ["uv", "run", "src/api/server.py"]

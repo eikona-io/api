@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from typing import Optional
 from api.middleware.subscriptionMiddleware import SubscriptionMiddleware
 from sqlalchemy import select
@@ -33,7 +36,8 @@ from api.routes import (
 )
 from api.modal import builder
 from api.models import APIKey
-from dotenv import load_dotenv
+
+
 import logfire
 import logging
 from scalar_fastapi import get_scalar_api_reference
@@ -50,6 +54,22 @@ from opentelemetry.context import get_current
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.textmap import TextMapPropagator
 
+from logtail import LogtailHandler
+import logging
+
+logtail_host = os.getenv("LOGTAIL_INGESTING_HOST")
+logtail_source_token = os.getenv("LOGTAIL_SOURCE_TOKEN")
+
+if logtail_host and logtail_source_token:
+    handler = LogtailHandler(
+        source_token=logtail_source_token, 
+        host=logtail_host,
+    )
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    logger.handlers = []
+    logger.addHandler(handler)
+
 
 class NullPropagator(TextMapPropagator):
     def extract(self, *args, **kwargs):
@@ -65,9 +85,9 @@ class NullPropagator(TextMapPropagator):
 
 set_global_textmap(NullPropagator())
 logger = logfire
-load_dotenv()
 logfire.configure(
     service_name="comfydeploy-api",
+    # additional_span_processors=[span_processor]
 )
     
 logging.basicConfig(level=logging.INFO)
@@ -304,20 +324,5 @@ logfire.instrument_sqlalchemy(
     engine=engine.sync_engine,
 )
 
-if __name__ == "__main__":
-    import uvicorn
-    
-    reload = os.getenv("ENV", "production").lower() == "development"
-    port = int(os.getenv("PORT", 8000))
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
-    # print("hiii",project_root)
-    uvicorn.run(
-        "api:app",
-        host="0.0.0.0",
-        port=port,
-        # workers=4 if not reload else 1,
-        workers=1,
-        reload=reload,
-        reload_dirs=[project_root + "/api/src"],
-    )
+
+

@@ -8,6 +8,7 @@ from .auth import get_current_user
 from cachetools import TTLCache
 from typing import Dict
 from fnmatch import fnmatch
+import logfire
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         # print(f"Middleware called for: {request.method} {request.url.path}")  # Test print
-        logger.info(f"Received request: {request.method} {request.url.path}")
+        # logger.info(f"Received request: {request.method} {request.url.path}")
 
         if self.should_authenticate(request):
             # print("Authentication required")  # Test print
@@ -65,7 +66,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             except HTTPException as e:
                 # print(f"Authentication failed: {e.detail}")  # Test print
-                logger.error(f"Authentication error: {e.detail}")
+                logger.error(f"Authentication error: {e.detail}", extra={
+                    "path": request.url.path,
+                    "method": request.method,
+                    "user_id": getattr(request.state, 'current_user', {}).get('user_id', 'unknown'),
+                    "org_id": getattr(request.state, 'current_user', {}).get('org_id', 'unknown')
+                })
                 return JSONResponse(
                     status_code=e.status_code, content={"detail": e.detail}
                 )
@@ -73,10 +79,35 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # print("Skipping authentication")  # Test print
             logger.info("Skipping auth check for non-API route or ignored route")
 
-        response = await call_next(request)
-        # print(f"Request completed: {response.status_code}")  # Test print
-        logger.info(f"Request completed: {response.status_code}")
-        return response
+        user_id = getattr(request.state, 'current_user', {}).get('user_id', 'unknown')
+        org_id = getattr(request.state, 'current_user', {}).get('org_id', 'unknown')
+        
+        try:
+            if org_id != "unknown":
+                logfire.info("Organization", user_id=user_id, org_id=org_id)
+            elif user_id != "unknown":
+                logfire.info("User", user_id=user_id)
+                
+            response = await call_next(request)
+            
+            logger.info(f"{request.method} {request.url.path} {response.status_code}", extra={
+                "status_code": response.status_code,
+                "path": request.url.path,
+                "method": request.method,
+                "user_id": user_id,
+                "org_id": org_id
+            })
+            return response
+        except Exception as e:
+            logger.error(f"Request failed: {e}", exc_info=True, extra={
+                "path": request.url.path,
+                "method": request.method,
+                "status_code": 500,
+                "user_id": user_id,
+                "org_id": org_id
+            })
+            raise e
+
 
     def should_authenticate(self, request: Request) -> bool:
         path = request.url.path
