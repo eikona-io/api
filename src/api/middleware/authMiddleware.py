@@ -64,39 +64,41 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.error(f"Error matching route: {e}")
 
-        if self.should_authenticate(request):
-            # print("Authentication required")  # Test print
-            try:
-                await self.authenticate(request)
 
-                plan = request.state.current_user.get("plan")
-                if plan == "free":
-                    user_id = request.state.current_user.get("user_id")
-                    banned = await self.get_banned_status(user_id)
-                    if banned:
-                        return JSONResponse(
-                            status_code=403,
-                            content={
-                                "detail": "Your account has been suspended. Please contact support at founders@comfydeploy.com for assistance."
-                            },
-                        )
+        with logfire.span("Authenticate"):
+            if self.should_authenticate(request):
+                # print("Authentication required")  # Test print
+                try:
+                    await self.authenticate(request)
 
-            except HTTPException as e:
-                # print(f"Authentication failed: {e.detail}")  # Test print
-                logger.warning(f"Authentication error: {e.detail}", extra={
-                    "route": route_path,
-                    "full_route": full_path,
-                    "function_name": function_name,
-                    "method": request.method,
-                    "user_id": getattr(request.state, 'current_user', {}).get('user_id', 'unknown'),
-                    "org_id": getattr(request.state, 'current_user', {}).get('org_id', 'unknown')
-                })
-                return JSONResponse(
-                    status_code=e.status_code, content={"detail": e.detail}
-                )
-        else:
-            # print("Skipping authentication")  # Test print
-            logger.info("Skipping auth check for non-API route or ignored route")
+                    plan = request.state.current_user.get("plan")
+                    if plan == "free":
+                        user_id = request.state.current_user.get("user_id")
+                        banned = await self.get_banned_status(user_id)
+                        if banned:
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "detail": "Your account has been suspended. Please contact support at founders@comfydeploy.com for assistance."
+                                },
+                            )
+
+                except HTTPException as e:
+                    # print(f"Authentication failed: {e.detail}")  # Test print
+                    logger.warning(f"Authentication error: {e.detail}", extra={
+                        "route": route_path,
+                        "full_route": full_path,
+                        "function_name": function_name,
+                        "method": request.method,
+                        "user_id": getattr(request.state, 'current_user', {}).get('user_id', 'unknown'),
+                        "org_id": getattr(request.state, 'current_user', {}).get('org_id', 'unknown')
+                    })
+                    return JSONResponse(
+                        status_code=e.status_code, content={"detail": e.detail}
+                    )
+            else:
+                # print("Skipping authentication")  # Test print
+                logger.info("Skipping auth check for non-API route or ignored route")
 
         user_id = getattr(request.state, 'current_user', {}).get('user_id', 'unknown')
         org_id = getattr(request.state, 'current_user', {}).get('org_id', 'unknown')

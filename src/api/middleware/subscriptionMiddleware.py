@@ -7,6 +7,7 @@ from upstash_redis.asyncio import Redis
 import os
 from api.database import AsyncSessionLocal
 from .auth import get_current_user
+import logfire
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,8 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         try:
             if request.url.path.startswith("/api"):
                 if not self.disable_stripe:
-                    await self.check_subscription_access(request)
+                    with logfire.span("Check subscription access"):
+                        await self.check_subscription_access(request)
             response = await call_next(request)
             return response
         except HTTPException as exc:
@@ -86,6 +88,8 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
             plan_info = json.loads(plan_data)
             plans = plan_info.get("plans", [])
             tier = plans[0] if plans and len(plans) > 0 else "free"
+            
+        logfire.info("Plan", tier=tier)
 
         # Check if endpoint is blocked or not allowed for the tier
         if self.is_endpoint_blocked(

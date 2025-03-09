@@ -184,7 +184,7 @@ async def scalar_html_internal():
 # logging.getLogger('sqlalchemy').setLevel(logging.ERROR)
 
 # Add CORS middleware
-app.add_middleware(SpendLimitMiddleware)
+# app.add_middleware(SpendLimitMiddleware)
 app.add_middleware(SubscriptionMiddleware)
 app.add_middleware(AuthMiddleware)
 
