@@ -83,8 +83,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             except HTTPException as e:
                 # print(f"Authentication failed: {e.detail}")  # Test print
                 logger.warning(f"Authentication error: {e.detail}", extra={
-                    "path": route_path,
-                    "full_path": full_path,
+                    "route": route_path,
+                    "full_route": full_path,
                     "function_name": function_name,
                     "method": request.method,
                     "user_id": getattr(request.state, 'current_user', {}).get('user_id', 'unknown'),
@@ -112,8 +112,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             logger.info(f"{request.method} {route_path} {response.status_code}", extra={
                 "status_code": response.status_code,
-                "path": route_path,  # Use low-cardinality route path
-                "full_path": full_path,
+                "route": route_path,  # Use low-cardinality route path
+                "full_route": full_path,
                 "function_name": function_name,
                 "method": request.method,
                 "user_id": user_id,
@@ -127,8 +127,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # Get the route path with low cardinality
 
             logger.error(f"Request failed: {e}", exc_info=True, extra={
-                "path": route_path,  # Use low-cardinality route path
-                "full_path": full_path,
+                "route": route_path,  # Use low-cardinality route path
+                "full_route": full_path,
                 "function_name": function_name,
                 "method": request.method,   
                 "status_code": 500,
