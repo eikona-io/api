@@ -9,6 +9,7 @@ from cachetools import TTLCache
 from typing import Dict
 from fnmatch import fnmatch
 import logfire
+import time  # Ensure this import is present at the top
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return False
 
     async def dispatch(self, request: Request, call_next):
+        start_time = time.time()  # Start timing here
+
         # print(f"Middleware called for: {request.method} {request.url.path}")  # Test print
         # logger.info(f"Received request: {request.method} {request.url.path}")
 
@@ -90,21 +93,25 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 
             response = await call_next(request)
             
+            latency_ms = (time.time() - start_time) * 1000  # Convert latency to milliseconds
             logger.info(f"{request.method} {request.url.path} {response.status_code}", extra={
                 "status_code": response.status_code,
                 "path": request.url.path,
                 "method": request.method,
                 "user_id": user_id,
-                "org_id": org_id
+                "org_id": org_id,
+                "latency_ms": latency_ms  # Explicitly log latency in milliseconds
             })
             return response
         except Exception as e:
+            latency_ms = (time.time() - start_time) * 1000  # Convert latency to milliseconds even on error
             logger.error(f"Request failed: {e}", exc_info=True, extra={
                 "path": request.url.path,
                 "method": request.method,
                 "status_code": 500,
                 "user_id": user_id,
-                "org_id": org_id
+                "org_id": org_id,
+                "latency_ms": latency_ms  # Explicitly log latency in milliseconds
             })
             raise e
 
