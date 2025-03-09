@@ -12,6 +12,7 @@ from fnmatch import fnmatch
 import logfire
 import time  # Ensure this import is present at the top
 from api.router import app
+import traceback  # Ensure this import is present at the top
 
 logger = logging.getLogger(__name__)
 
@@ -124,17 +125,18 @@ class AuthMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000  # Convert latency to milliseconds even on error
 
-            # Get the route path with low cardinality
+            error_trace = traceback.format_exc()  # Capture traceback explicitly
 
-            logger.error(f"Request failed: {e}", exc_info=True, extra={
+            logger.error(str(e), extra={
                 "route": route_path,  # Use low-cardinality route path
                 "full_route": full_path,
                 "function_name": function_name,
-                "method": request.method,   
+                "method": request.method,
                 "status_code": 500,
                 "user_id": user_id,
                 "org_id": org_id,
-                "latency_ms": latency_ms
+                "latency_ms": latency_ms,
+                "traceback": error_trace  # Include traceback explicitly in extra
             })
             raise e
 
