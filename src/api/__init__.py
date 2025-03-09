@@ -56,6 +56,7 @@ from opentelemetry.propagators.textmap import TextMapPropagator
 
 from logtail import LogtailHandler
 import logging
+from api.router import app, public_api_router, api_router
 
 logtail_host = os.getenv("LOGTAIL_INGESTING_HOST")
 logtail_source_token = os.getenv("LOGTAIL_SOURCE_TOKEN")
@@ -69,7 +70,6 @@ if logtail_host and logtail_source_token:
     logger.setLevel(logging.INFO)
     logger.handlers = []
     logger.addHandler(handler)
-
 
 class NullPropagator(TextMapPropagator):
     def extract(self, *args, **kwargs):
@@ -94,8 +94,6 @@ logging.basicConfig(level=logging.INFO)
 
 # logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file
-
 # Replace the existing oauth2_scheme declaration with this:
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="token",
@@ -105,127 +103,6 @@ oauth2_scheme = OAuth2PasswordBearer(
         # Add more scopes as needed
     },
 )
-
-
-app = FastAPI(
-    servers=[
-        {"url": "https://api.comfydeploy.com/api", "description": "Production server"},
-        {
-            "url": "https://staging.api.comfydeploy.com/api",
-            "description": "Staging server",
-        },
-        {"url": "http://localhost:3011/api", "description": "Local development server"},
-    ]
-)
-
-# add_pagination(app)
-
-app.openapi_schema = None  # Clear any existing schema
-
-docs = """
-### Overview
-
-Welcome to the ComfyDeploy API!
-
-To create a run thru the API, use the [queue run endpoint](#tag/run/POST/run/deployment/queue).
-
-Check out the [get run endpoint](#tag/run/GET/run/{run_id}), for getting the status and output of a run.
-
-### Authentication
-
-To authenticate your requests, include your API key in the `Authorization` header as a bearer token. Make sure to generate an API key in the [API Keys section of your ComfyDeploy account](https://www.comfydeploy.com/api-keys).
-
-###
-
-"""
-
-
-def custom_openapi(with_code_samples: bool = True):
-    # if app.openapi_schema and with_code_samples:
-    #     return app.openapi_schema
-    
-    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
-    
-    if (fetch_from_speakeasy):
-        # In development mode, fetch from Speakeasy
-        import requests
-        try:
-            response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
-            openapi_schema = response.json()
-        except Exception as e:
-            # logger.error(f"Failed to fetch Speakeasy schema: {e}")
-            # Fallback to default schema generation
-            openapi_schema = get_openapi(
-                title="ComfyDeploy API",
-                version="V2",
-                description=docs,
-                routes=public_api_router.routes,
-                servers=app.servers,
-                webhooks=app.webhooks.routes,
-            )
-    else:
-        openapi_schema = get_openapi(
-            title="ComfyDeploy API",
-            version="V2",
-            description=docs,
-            routes=public_api_router.routes,
-            servers=app.servers,
-            webhooks=app.webhooks.routes,
-        )
-
-        openapi_schema["components"]["securitySchemes"] = {
-            "Bearer": {
-                "type": "http",
-                "scheme": "bearer",
-            }
-        }
-         
-        # openapi_schema["x-speakeasy-webhooks"] = {
-        #     "security": {
-        #         "type": "signature",
-        #         "name": "x-signature",
-        #         "encoding": "base64",
-        #         "algorithm": "hmac-sha256",
-        #     }
-        # }
-
-    # Apply Bearer Auth security globally
-    openapi_schema["security"] = [{"Bearer": []}]
-
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
-
-
-def custom_openapi_internal():
-    openapi_schema = get_openapi(
-        title="ComfyDeploy API (Internal)",
-        version="V2",
-        description=docs,
-        routes=api_router.routes,
-        webhooks=app.webhooks.routes,
-        servers=app.servers,
-    )
-
-    openapi_schema["components"]["securitySchemes"] = {
-        "Bearer": {
-            "type": "http",
-            "scheme": "bearer",
-        }
-    }
-
-    # Apply Bearer Auth security globally
-    openapi_schema["security"] = [{"Bearer": []}]
-
-    return openapi_schema
-
-
-app.openapi = custom_openapi
-
-# logfire.install_auto_tracing()
-
-
-api_router = APIRouter()  # Remove the prefix here
-public_api_router = APIRouter()  # Remove the prefix here
 
 app.webhooks.include_router(run.webhook_router)
 

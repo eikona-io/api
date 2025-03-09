@@ -1,4 +1,5 @@
 import logging
+from starlette.routing import Match  
 from api.routes.platform import get_clerk_user
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -10,6 +11,7 @@ from typing import Dict
 from fnmatch import fnmatch
 import logfire
 import time  # Ensure this import is present at the top
+from api.router import app
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +48,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         start_time = time.time()  # Start timing here
+        
+        route_path = None
+        full_path = request.url.path
+        function_name = None
 
-        # print(f"Middleware called for: {request.method} {request.url.path}")  # Test print
-        # logger.info(f"Received request: {request.method} {request.url.path}")
+        try:
+            for route in app.routes:
+                match, _ = route.matches(request.scope)
+                if match == Match.FULL:
+                    route_path = route.path
+                    function_name = route.endpoint.__name__
+                    break
+        except Exception as e:
+            logger.error(f"Error matching route: {e}")
 
         if self.should_authenticate(request):
             # print("Authentication required")  # Test print
@@ -69,8 +82,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             except HTTPException as e:
                 # print(f"Authentication failed: {e.detail}")  # Test print
-                logger.error(f"Authentication error: {e.detail}", extra={
-                    "path": request.url.path,
+                logger.warning(f"Authentication error: {e.detail}", extra={
+                    "path": route_path,
+                    "full_path": full_path,
+                    "function_name": function_name,
                     "method": request.method,
                     "user_id": getattr(request.state, 'current_user', {}).get('user_id', 'unknown'),
                     "org_id": getattr(request.state, 'current_user', {}).get('org_id', 'unknown')
@@ -94,24 +109,32 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             
             latency_ms = (time.time() - start_time) * 1000  # Convert latency to milliseconds
-            logger.info(f"{request.method} {request.url.path} {response.status_code}", extra={
+
+            logger.info(f"{request.method} {route_path} {response.status_code}", extra={
                 "status_code": response.status_code,
-                "path": request.url.path,
+                "path": route_path,  # Use low-cardinality route path
+                "full_path": full_path,
+                "function_name": function_name,
                 "method": request.method,
                 "user_id": user_id,
                 "org_id": org_id,
-                "latency_ms": latency_ms  # Explicitly log latency in milliseconds
+                "latency_ms": latency_ms
             })
             return response
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000  # Convert latency to milliseconds even on error
+
+            # Get the route path with low cardinality
+
             logger.error(f"Request failed: {e}", exc_info=True, extra={
-                "path": request.url.path,
-                "method": request.method,
+                "path": route_path,  # Use low-cardinality route path
+                "full_path": full_path,
+                "function_name": function_name,
+                "method": request.method,   
                 "status_code": 500,
                 "user_id": user_id,
                 "org_id": org_id,
-                "latency_ms": latency_ms  # Explicitly log latency in milliseconds
+                "latency_ms": latency_ms
             })
             raise e
 
