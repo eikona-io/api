@@ -15,8 +15,8 @@ if __name__ == "__main__":
         "api:app",
         host="0.0.0.0",
         port=port,
-        # workers=4 if not reload else 1,
-        workers=1,
+        workers=2 if not reload else 1,
+        # workers=1,
         reload=reload,
         reload_dirs=[project_root + "/api/src"],
     )
