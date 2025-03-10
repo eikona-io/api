@@ -55,8 +55,9 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         else:
             self.redis = Redis(url=redis_url, token=redis_token)
         self.disable_stripe = os.getenv("DISABLE_STRIPE", "false").lower() == "true"
-        self.local_cache = {}  # Local cache dictionary for stale-while-revalidate
-        self.cache_ttl = 5  # Cache TTL in seconds
+        self.local_cache = {}
+        self.cache_ttl = 5
+        self.cache_lock = asyncio.Lock()
 
     async def dispatch(self, request: Request, call_next):
         try:
@@ -84,21 +85,22 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         entity_id = org_id if org_id else user_id
         redis_key = f"plan:{entity_id}"
 
-        if redis_key in self.local_cache:
-            cached_data, timestamp = self.local_cache[redis_key]
-            if current_time - timestamp < self.cache_ttl:
-                # print(f"[Local Cache] Using fresh cached plan_data for key: {redis_key}")
-                plan_data = cached_data
+        async with self.cache_lock:
+            if redis_key in self.local_cache:
+                cached_data, timestamp = self.local_cache[redis_key]
+                if current_time - timestamp < self.cache_ttl:
+                    # print(f"[Local Cache] Using fresh cached plan_data for key: {redis_key}")
+                    plan_data = cached_data
+                else:
+                    # print(f"[Local Cache] Using stale cached plan_data for key: {redis_key} and refreshing in background")
+                    plan_data = cached_data
+                    asyncio.create_task(self.refresh_cache(redis_key))
             else:
-                # print(f"[Local Cache] Using stale cached plan_data for key: {redis_key} and refreshing in background")
-                plan_data = cached_data
-                asyncio.create_task(self.refresh_cache(redis_key))
-        else:
-            # print(f"[Redis Fetch] Fetching plan_data from Redis for key: {redis_key}")
-            plan_data = await self.redis.get(redis_key)
-            if plan_data:
-                self.local_cache[redis_key] = (plan_data, current_time)
-                # print(f"[Local Cache] Caching plan_data for key: {redis_key}")
+                # print(f"[Redis Fetch] Fetching plan_data from Redis for key: {redis_key}")
+                plan_data = await self.redis.get(redis_key)
+                if plan_data:
+                    self.local_cache[redis_key] = (plan_data, current_time)
+                    # print(f"[Local Cache] Caching plan_data for key: {redis_key}")
 
         if plan_data is None:
             tier = "free"
@@ -169,12 +171,11 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         return False
 
     async def refresh_cache(self, redis_key: str):
-        import time
         # print(f"[Background Refresh] Refreshing plan_data for key: {redis_key}")
         try:
             new_data = await self.redis.get(redis_key)
             if new_data:
-                self.local_cache[redis_key] = (new_data, time.time())
-                # print(f"[Background Refresh] Updated local cache for key: {redis_key}")
+                async with self.cache_lock:
+                    self.local_cache[redis_key] = (new_data, time.time())
         except Exception as e:
             logger.error(f"Failed to refresh cache for {redis_key}: {str(e)}")
