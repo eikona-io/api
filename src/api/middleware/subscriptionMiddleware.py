@@ -5,9 +5,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from upstash_redis.asyncio import Redis
 import os
-from api.database import AsyncSessionLocal
-from .auth import get_current_user
 import logfire
+import asyncio
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,8 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         else:
             self.redis = Redis(url=redis_url, token=redis_token)
         self.disable_stripe = os.getenv("DISABLE_STRIPE", "false").lower() == "true"
+        self.local_cache = {}  # Local cache dictionary for stale-while-revalidate
+        self.cache_ttl = 5  # Cache TTL in seconds
 
     async def dispatch(self, request: Request, call_next):
         try:
@@ -77,18 +79,34 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         org_id = request.state.current_user.get("org_id")
         user_id = request.state.current_user.get("user_id")
 
-        # Get subscription tier from Redis
+        current_time = time.time()
+        # Get subscription tier from Redis with stale-while-revalidate caching
         entity_id = org_id if org_id else user_id
         redis_key = f"plan:{entity_id}"
-        plan_data = await self.redis.get(redis_key)
 
-        if not plan_data:
-            tier = "free"  # Default to free tier
+        if redis_key in self.local_cache:
+            cached_data, timestamp = self.local_cache[redis_key]
+            if current_time - timestamp < self.cache_ttl:
+                # print(f"[Local Cache] Using fresh cached plan_data for key: {redis_key}")
+                plan_data = cached_data
+            else:
+                # print(f"[Local Cache] Using stale cached plan_data for key: {redis_key} and refreshing in background")
+                plan_data = cached_data
+                asyncio.create_task(self.refresh_cache(redis_key))
+        else:
+            # print(f"[Redis Fetch] Fetching plan_data from Redis for key: {redis_key}")
+            plan_data = await self.redis.get(redis_key)
+            if plan_data:
+                self.local_cache[redis_key] = (plan_data, current_time)
+                # print(f"[Local Cache] Caching plan_data for key: {redis_key}")
+
+        if plan_data is None:
+            tier = "free"
         else:
             plan_info = json.loads(plan_data)
             plans = plan_info.get("plans", [])
             tier = plans[0] if plans and len(plans) > 0 else "free"
-            
+
         logfire.info("Plan", tier=tier)
 
         # Check if endpoint is blocked or not allowed for the tier
@@ -100,7 +118,7 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 status_code=403,
                 detail=f"This endpoint is not available in your current {tier} tier. Please upgrade your subscription.",
             )
-            
+
         if request.state is not None and request.state.current_user is not None:
             request.state.current_user["plan"] = tier
 
@@ -149,3 +167,14 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 return True
 
         return False
+
+    async def refresh_cache(self, redis_key: str):
+        import time
+        # print(f"[Background Refresh] Refreshing plan_data for key: {redis_key}")
+        try:
+            new_data = await self.redis.get(redis_key)
+            if new_data:
+                self.local_cache[redis_key] = (new_data, time.time())
+                # print(f"[Background Refresh] Updated local cache for key: {redis_key}")
+        except Exception as e:
+            logger.error(f"Failed to refresh cache for {redis_key}: {str(e)}")
