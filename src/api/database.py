@@ -23,7 +23,7 @@ engine = create_async_engine(
     DATABASE_URL,
     poolclass=AsyncAdaptedQueuePool,
     # Neon recommended settings for serverless
-    pool_size=40,  # Moderate pool size as Neon handles scaling
+    pool_size=100,  # Moderate pool size as Neon handles scaling
     max_overflow=200,  # Larger overflow for burst handling
     pool_timeout=30,  # Shorter timeout as Neon quickly provisions connections
     pool_pre_ping=True,  # Keep enabled to verify connection health
