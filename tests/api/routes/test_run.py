@@ -2,6 +2,11 @@ import json
 import requests
 import os
 
+"""
+**************PLEASE UPDATE THE DOCS**************
+https://linear.app/comfy-deploy/project/test-case-81d2e9daade5/overview
+**************************************************
+"""
 
 def get_ngrok_url_with_retry(max_retries=5, delay=1):
     """Get ngrok URL with retries"""
