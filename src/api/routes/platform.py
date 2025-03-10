@@ -2028,16 +2028,11 @@ async def get_customer_plan(
             "last_update": int(datetime.now().timestamp())
         }
 
-        # Check if this is just a free plan - if so, don't cache it
-        is_free_plan = len(plans) == 0
-
-        # Only cache paid plans
-        if not is_free_plan:
-            try:
-                await redisMeta.set(redis_key, transformed_data)
-                logfire.info(f"Cached transformed Autumn data in Redis for {org_id or user_id}")
-            except Exception as e:
-                logfire.error(f"Error updating {org_id or user_id} plan in Redis: {str(e)}")
+        try:
+            await redisMeta.set(redis_key, transformed_data)
+            logfire.info(f"Cached transformed Autumn data in Redis for {org_id or user_id}")
+        except Exception as e:
+            logfire.error(f"Error updating {org_id or user_id} plan in Redis: {str(e)}")
 
         return transformed_data
 
