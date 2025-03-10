@@ -18,13 +18,15 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and not DATABASE_URL.startswith("postgresql+asyncpg://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
 
+MAX_EXPECTED_CONCURRENCY = 200  # Document your design target
+
 # Configure engine with larger pool size and longer timeout
 engine = create_async_engine(
     DATABASE_URL,
     poolclass=AsyncAdaptedQueuePool,
     # Neon recommended settings for serverless
-    pool_size=50,  # Reduced from 100 - better for 2 workers on 4 CPUs
-    max_overflow=100,  # Reduced from 200 - still allows for bursts
+    pool_size=25,  # Reduced from 100 - better for 2 workers on 4 CPUs
+    max_overflow=25,  # Reduced from 200 - still allows for bursts
     pool_timeout=30,  # Shorter timeout as Neon quickly provisions connections
     pool_pre_ping=True,  # Keep enabled to verify connection health
     pool_recycle=1800,  # 30 minutes recycle to align with Neon's timeout
