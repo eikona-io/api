@@ -143,41 +143,6 @@ public_api_router.include_router(search.router)
 app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 
 
-@app.get("/", include_in_schema=False)
-async def scalar_html():
-    return get_scalar_api_reference(
-        openapi_url=app.openapi_url,
-        title=app.title,
-        scalar_proxy_url="https://proxy.scalar.com",
-        hide_models=True,
-        servers=[
-            {"url": server["url"]} for server in app.servers
-        ],  # Remove "/api" here
-    )
-    
-    
-@app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
-async def openapi_json():
-    return JSONResponse(status_code=200, content=custom_openapi(with_code_samples=False))
-
-
-@app.get("/internal/openapi.json", include_in_schema=False)
-async def openapi_json_internal():
-    return JSONResponse(status_code=200, content=custom_openapi_internal())
-
-
-@app.get("/internal", include_in_schema=False)
-async def scalar_html_internal():
-    return get_scalar_api_reference(
-        openapi_url="/internal/openapi.json",
-        title=app.title,
-        scalar_proxy_url="https://proxy.scalar.com",
-        servers=[
-            {"url": server["url"]} for server in app.servers
-        ],  # Remove "/api" here
-    )
-
-
 # Set up logging
 
 # # Hide sqlalchemy logs
