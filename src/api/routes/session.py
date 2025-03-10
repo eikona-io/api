@@ -1325,9 +1325,11 @@ async def delete_session(
         time_difference = datetime.now() - gpuEvent.created_at
         if time_difference.total_seconds() > 3600:  # 3600 seconds = 1 hour
             gpuEvent.start_time = gpuEvent.created_at
-            gpuEvent.end_time = datetime.now()
+            gpuEvent.end_time = gpuEvent.created_at
             await db.commit()
             await db.refresh(gpuEvent)
+            # We will eat this usage
+            logfire.info("Session stuck for over an hour, eating usage", session_id=session_id, possible_duration=time_difference.total_seconds(), gpu_type=gpuEvent.gpu)
             return {"success": True}
 
     if modal_function_id is None:
