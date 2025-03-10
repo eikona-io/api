@@ -2029,7 +2029,7 @@ async def get_customer_plan(
         }
 
         # Check if this is just a free plan - if so, don't cache it
-        is_free_plan = len(plans) == 1 and plans[0] == "free"
+        is_free_plan = len(plans) == 0
 
         # Only cache paid plans
         if not is_free_plan:
