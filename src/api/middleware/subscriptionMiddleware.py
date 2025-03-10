@@ -58,6 +58,7 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         self.local_cache = {}
         self.cache_ttl = 5
         self.cache_lock = asyncio.Lock()
+        self.max_cache_size = 10000  # Adjust based on your expected user count
 
     async def dispatch(self, request: Request, call_next):
         try:
@@ -99,6 +100,19 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 # print(f"[Redis Fetch] Fetching plan_data from Redis for key: {redis_key}")
                 plan_data = await self.redis.get(redis_key)
                 if plan_data:
+                    # When adding new entries, check cache size
+                    if len(self.local_cache) >= self.max_cache_size:
+                        # Find oldest entries (by timestamp)
+                        oldest_keys = sorted(
+                            self.local_cache.items(), key=lambda x: x[1][1]
+                        )[
+                            : max(1, self.max_cache_size // 10)
+                        ]  # Remove ~10% oldest entries
+
+                        for old_key, _ in oldest_keys:
+                            del self.local_cache[old_key]
+
+                    # Now add the new entry
                     self.local_cache[redis_key] = (plan_data, current_time)
                     # print(f"[Local Cache] Caching plan_data for key: {redis_key}")
 
