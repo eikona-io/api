@@ -863,9 +863,18 @@ async def get_docker_commands_from_dynamic_session_body(
                 else False,
             }
         else:
+            if machine_version:
+                machine_version_dict = {
+                    "id": str(machine_version.id),
+                    "version": machine_version.version,
+                    "python_version": machine_version.python_version,
+                    "base_docker_image": machine_version.base_docker_image,
+                    "modal_image_id": machine_version.modal_image_id,
+                }
             return {
                 "modal_image_id": modal_image_id,
                 "message": "Using existing modal image",
+                "machine_version": machine_version_dict,
             }
 
     except Exception as e:
