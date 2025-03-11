@@ -887,6 +887,7 @@ async def update_session_callback(
     request: Request,
     body: UpdateSessionCallbackBody,
 ) -> Dict[str, Any]:
+    # We should do an auth check here
     async with get_db_context() as db:
         await db.execute(
             update(GPUEvent)

@@ -24,7 +24,6 @@ image = (
 )
 
 
-JWT_SECRET = os.getenv("JWT_SECRET")
 
 ALGORITHM = "HS256"
 
@@ -75,7 +74,7 @@ logger = logging.getLogger(__name__)
 @app.function(
     timeout=3600,
     secrets=[
-        Secret.from_name("api_auth_prod"),
+        Secret.from_name("api_auth"),
         # Secret.from_name("clickhouse_prod"),
         # Secret.from_name("upstash_redis_prod"),
     ],
@@ -397,6 +396,7 @@ def generate_temporary_token(
     user_id: str, org_id: Optional[str] = None, expires_in: str = "1h"
 ) -> str:
     from jose import jwt
+    JWT_SECRET = os.getenv("JWT_SECRET")
 
     """
     Generate a temporary JWT token for the given user_id and org_id.
