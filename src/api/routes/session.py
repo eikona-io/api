@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 
 
 from modal._output import OutputManager
+
+
 class CustomOutputManager(OutputManager):
     _context_id = None
     _machine_id = None
@@ -74,6 +76,7 @@ class CustomOutputManager(OutputManager):
 
         super()._print_log(fd, data)
 
+
 modal._output.OutputManager = CustomOutputManager
 
 # from sqlalchemy import select
@@ -103,7 +106,10 @@ router = APIRouter(tags=["Session"])
 beta_router = APIRouter(tags=["Beta"])
 
 status_endpoint = os.environ.get("CURRENT_API_URL") + "/api/update-run"
+# session_callback_endpoint = os.environ.get("CURRENT_API_URL") + "/api/session-callback"
+session_callback_endpoint = os.environ.get("CURRENT_API_URL")
 # print("status_endpoint", status_endpoint)
+
 
 async def get_comfy_runner(
     machine_id: str, session_id: str | UUID, timeout: int, gpu: str
@@ -144,26 +150,25 @@ class Session(BaseModel):
 async def get_session(
     request: Request, session_id: str, db: AsyncSession = Depends(get_db)
 ) -> Session:
-    
     result = await db.execute(
-            select(
-                GPUEvent.id,
-                GPUEvent.tunnel_url,
-                GPUEvent.gpu,
-                GPUEvent.created_at,
-                GPUEvent.session_timeout,
-                GPUEvent.machine_id,
-                GPUEvent.machine_version_id,
-            )
-            .where((GPUEvent.session_id == session_id) & (GPUEvent.end_time.is_(None)))
-            .apply_org_check(request)
-            .limit(1)
+        select(
+            GPUEvent.id,
+            GPUEvent.tunnel_url,
+            GPUEvent.gpu,
+            GPUEvent.created_at,
+            GPUEvent.session_timeout,
+            GPUEvent.machine_id,
+            GPUEvent.machine_version_id,
         )
-    
+        .where((GPUEvent.session_id == session_id) & (GPUEvent.end_time.is_(None)))
+        .apply_org_check(request)
+        .limit(1)
+    )
+
     timeout_end = await redis.get(f"session:{session_id}:timeout_end")
 
     gpuEvent = result.first()
-    
+
     # print(gpuEvent)
 
     if gpuEvent is None:
@@ -177,7 +182,9 @@ async def get_session(
         "created_at": gpuEvent.created_at,
         "timeout": gpuEvent.session_timeout,
         "machine_id": str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
-        "machine_version_id": str(gpuEvent.machine_version_id) if gpuEvent.machine_version_id else None,
+        "machine_version_id": str(gpuEvent.machine_version_id)
+        if gpuEvent.machine_version_id
+        else None,
         "timeout_end": timeout_end,
     }
 
@@ -319,7 +326,9 @@ class CreateSessionBody(BaseModel):
 class CreateDynamicSessionBody(BaseModel):
     gpu: MachineGPU = Field("A10G", description="The GPU to use")
     machine_id: Optional[str] = Field(None, description="The machine id to use")
-    machine_version_id: Optional[str] = Field(None, description="The machine version id to use")
+    machine_version_id: Optional[str] = Field(
+        None, description="The machine version id to use"
+    )
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
     comfyui_hash: Optional[str] = Field(None, description="The comfyui hash to use")
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
@@ -338,9 +347,7 @@ class CreateDynamicSessionBody(BaseModel):
     base_docker_image: Optional[str] = Field(
         None, description="The base docker image to use"
     )
-    python_version: Optional[str] = Field(
-        None, description="The python version to use"
-    )
+    python_version: Optional[str] = Field(None, description="The python version to use")
 
 
 async def ensure_session_creation_complete(task: asyncio.Task):
@@ -400,7 +407,7 @@ async def increase_timeout_2(
     db: AsyncSession = Depends(get_db),
 ):
     plan = request.state.current_user.get("plan")
-    
+
     gpu_event = (
         await db.execute(
             select(GPUEvent)
@@ -422,21 +429,23 @@ async def increase_timeout_2(
         max_timeout_minutes = 30
         if not gpu_event.start_time:
             raise HTTPException(status_code=400, detail="Session has not started yet")
-            
+
         # Calculate the new timeout end time
         current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
         new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
-        
+
         # Calculate total session duration from start to new end time
         total_duration = (new_timeout_end - gpu_event.start_time).total_seconds() / 60
-        elapsed_minutes = (datetime.utcnow() - gpu_event.start_time).total_seconds() / 60
-        
+        elapsed_minutes = (
+            datetime.utcnow() - gpu_event.start_time
+        ).total_seconds() / 60
+
         if total_duration > max_timeout_minutes:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail=f"Free plan users are limited to {max_timeout_minutes} minutes total session time. "
-                       f"Session has been running for {int(elapsed_minutes)} minutes. "
-                       f"Maximum remaining time: {max(0, int(max_timeout_minutes - elapsed_minutes))} minutes"
+                f"Session has been running for {int(elapsed_minutes)} minutes. "
+                f"Maximum remaining time: {max(0, int(max_timeout_minutes - elapsed_minutes))} minutes",
             )
     else:
         # Calculate the new timeout end time for non-free plans
@@ -472,28 +481,42 @@ async def create_session(
     org_id = request.state.current_user.get("org_id")
     user_id = request.state.current_user.get("user_id")
     plan = request.state.current_user.get("plan")
-    
+
     if plan == "free":
-        raise HTTPException(status_code=403, detail="Free plan users cannot create sessions, we are mitigating abuse, please wait")
-    
+        raise HTTPException(
+            status_code=403,
+            detail="Free plan users cannot create sessions, we are mitigating abuse, please wait",
+        )
+
         max_concurrent_sessions = 1
         max_timeout_minutes = 30
-        
+
         # Check timeout limit
         if body.timeout and body.timeout > max_timeout_minutes:
-            raise HTTPException(status_code=400, detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout")
-        
+            raise HTTPException(
+                status_code=400,
+                detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout",
+            )
+
         # find all gpu event on this account
-        gpu_events = (await db.execute(
-            select(GPUEvent)
-            .apply_org_check(request)
-            .where(GPUEvent.session_id.isnot(None))
-            .where(GPUEvent.end_time.is_(None))
-        )).scalars().all()
-        
+        gpu_events = (
+            (
+                await db.execute(
+                    select(GPUEvent)
+                    .apply_org_check(request)
+                    .where(GPUEvent.session_id.isnot(None))
+                    .where(GPUEvent.end_time.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
         if len(gpu_events) >= max_concurrent_sessions:
-            raise HTTPException(status_code=400, detail="Free plan does not support concurrent sessions")
-    
+            raise HTTPException(
+                status_code=400, detail="Free plan does not support concurrent sessions"
+            )
+
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
     # if exceed_spend_limit:
@@ -622,275 +645,86 @@ def extract_url(dependency_string):
     return ""
 
 
-def send_log_entry(session_id: UUID, machine_id: str, log_message: str, log_type: str = "info"):
-    data = [(
-        uuid4(),
-        session_id,
-        None,
-        machine_id,
-        datetime.now(),
-        log_type,
-        log_message,
-    )]
-    asyncio.create_task(
-        insert_to_clickhouse("log_entries", data)
-    )
-    
+def send_log_entry(
+    session_id: UUID,
+    machine_id: Optional[str],
+    log_message: str,
+    log_type: str = "info",
+):
+    data = [
+        (
+            uuid4(),
+            session_id,
+            None,
+            machine_id,
+            datetime.now(),
+            log_type,
+            log_message,
+        )
+    ]
+    asyncio.create_task(insert_to_clickhouse("log_entries", data))
+
+
 os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
-    
+
+
 async def create_dynamic_sesssion_background_task(
     request: Request,
     gpu_event_id: str,
     session_id: UUID,
     body: CreateDynamicSessionBody,
-    status_queue: Optional[asyncio.Queue] = None,
+    status_queue: Optional[any] = None,
 ):
-    app = modal.App(str(session_id))
-    if status_queue is not None:
-        print("status_queue is not None")
-    
+    # app = modal.App(str(session_id))
+    # if status_queue is not None:
+    #     print("status_queue is not None")
+
     try:
         org_id = request.state.current_user.get("org_id")
         user_id = request.state.current_user.get("user_id")
 
         # Get docker configuration using the shared function
         async with get_db_context() as db:
-            docker_config = await get_docker_commands_from_dynamic_session_body(request, body, db)
-        
-        dockerfile_image: modal.Image = None
-        
-        gpu = body.gpu.value if body.gpu is not None and body.gpu.value != "CPU" else None
-        
-        if "modal_image_id" in docker_config and docker_config["modal_image_id"]:
-            logger.info(f"Using existing modal image {docker_config['modal_image_id']}")
-            dockerfile_image = modal.Image.from_id(docker_config["modal_image_id"])
-        else:
-            # Python version and base docker image setup
-            python_version = docker_config.get("python_version", "3.11")
-            base_docker_image = docker_config.get("base_docker_image")
-            
-            if base_docker_image:
-                dockerfile_image = modal.Image.from_registry(
-                    base_docker_image, add_python=python_version
-                )
-            else:
-                dockerfile_image = modal.Image.debian_slim(python_version=python_version)
-                
-            install_custom_node_with_gpu = docker_config.get("install_custom_node_with_gpu", False)
-
-            # Apply docker commands if available
-            docker_commands = docker_config.get("docker_commands")
-            if docker_commands:
-                for commands in docker_commands:
-                    dockerfile_image = dockerfile_image.dockerfile_commands(
-                        commands,
-                        gpu=gpu if install_custom_node_with_gpu else None,
-                    )
-
-        # Always add these commands regardless of the path taken
-        dockerfile_image = dockerfile_image.run_commands(
-            [
-                "rm -rf /private_models /comfyui/models /public_models",
-                "ln -s /private_models /comfyui/models",
-            ],
-        )
-
-        # Always add extra_model_paths.yaml
-        current_directory = os.path.dirname(os.path.realpath(__file__))
-        dockerfile_image = dockerfile_image.add_local_file(
-            current_directory + "/extra_model_paths.yaml",
-            "/comfyui/extra_model_paths.yaml",
-        )
-
-        if not dockerfile_image and body.dependencies is None:
-            raise HTTPException(
-                status_code=400, detail="No dependencies or modal image id provided"
+            docker_config = await get_docker_commands_from_dynamic_session_body(
+                request, body, db
             )
 
-        logger.info("creating dynamic session")
-        
+        gpu = (
+            body.gpu.value if body.gpu is not None and body.gpu.value != "CPU" else None
+        )
+
         shared_model_volume_name = os.environ.get("SHARED_MODEL_VOLUME_NAME")
 
-        volumes = {}
-        # Mount shared models only if shared_model_volume_name is present
-        if shared_model_volume_name:
-            volumes["/public_models"] = modal.Volume.from_name(
-                shared_model_volume_name,
-                create_if_missing=True,
-            )
-
-        volumes["/private_models"] = modal.Volume.from_name(
-            "models_" + (org_id if org_id is not None else user_id),
-            create_if_missing=True,
+        # session_manager = await modal.App.lookup.aio("session_manager")
+        run_session = await modal.Function.lookup.aio("session_manager", "run_session")
+        machine_version = docker_config.get("machine_version")
+        send_log_entry(session_id, body.machine_id, "Starting session")
+        await run_session.spawn.aio(
+            user_id=user_id,
+            org_id=org_id,
+            session_id=session_id,
+            machine_id=body.machine_id,
+            machine_version_id=machine_version.get("id") if machine_version else None,
+            docker_config=docker_config,
+            gpu=gpu,
+            timeout=6 * 60 * 60,  # 6 hours
+            workdir="/comfyui",
+            encrypted_ports=[8188],
+            update_endpoint=session_callback_endpoint,
+            comfyui_cmd=comfyui_cmd(
+                cpu=True if body.gpu == "CPU" else False,
+                install_latest_comfydeploy=True,
+            ),
+            shared_model_volume_name=shared_model_volume_name,
+            tunnel_url_queue=status_queue,
         )
-
-        try:
-            with CustomOutputManager.enable_output_with_context(
-                str(session_id), body.machine_id
-            ):
-                send_log_entry(session_id, body.machine_id, f"Queuing {gpu} Container..." if gpu else "Queuing CPU Container...")
-                async with app.run.aio():
-                    print(dockerfile_image)
-                    with modal.enable_output():
-                        
-                        send_log_entry(session_id, body.machine_id, "Creating Sandbox...")
-                        
-                        sb = await modal.Sandbox.create.aio(
-                            image=dockerfile_image,
-                            timeout=6 * 60 * 60,
-                            gpu=gpu,
-                            app=app,
-                            workdir="/comfyui",
-                            encrypted_ports=[8188],
-                            volumes=volumes,
-                        )
-                        
-                        send_log_entry(session_id, body.machine_id, "Setting up tunnels...")
-
-                        # logger.info("creating gpu event")
-
-                        # logger.info(sb.tunnels())
-                        tunnels = await sb.tunnels.aio()
-                        tunnel = tunnels[8188]  # Access the tunnel after awaiting
-                        
-                        send_log_entry(session_id, body.machine_id, "Tunnel connected")
-                        
-                        machine_version = docker_config.get("machine_version")
-
-                        async with get_db_context() as db:
-                            await db.execute(
-                                update(GPUEvent)
-                                .where(GPUEvent.id == gpu_event_id)
-                                .values(
-                                    tunnel_url=tunnel.url,
-                                    modal_function_id=sb.object_id,
-                                    start_time=datetime.now(),
-                                    machine_version_id=machine_version.get("id") if machine_version else None,
-                                )
-                            )
-                            await db.commit()
-
-                        if status_queue is not None:
-                            status_queue.put_nowait(tunnel.url)
-
-                        send_log_entry(session_id, body.machine_id, "Starting ComfyUI...")
-
-                        p = await sb.exec.aio(
-                            "bash",
-                            "-c",
-                            comfyui_cmd(
-                                cpu=True if body.gpu == "CPU" else False,
-                                install_latest_comfydeploy=True,
-                            ),
-                        )
-                        logger.info(tunnel.url)
-
-                        # async with await get_clickhouse_client() as client:
-                        async def log_stream(stream, stream_type: str):
-                            try:
-                                async for line in stream:
-                                    try:
-                                        # Add debug logging to see what we're receiving
-                                        if isinstance(line, bytes):
-                                            logger.debug(f"Received bytes: {repr(line)}")
-                                            
-                                            # Handle decoding in a separate try block
-                                            try:
-                                                line = line.decode("utf-8", errors="replace")
-                                            except UnicodeDecodeError as decode_err:
-                                                logger.error(f"Decode error: {decode_err}")
-                                                continue  # Skip this line and continue with the next one
-
-                                            # Skip progress bar lines
-                                            if any(char in line for char in [
-                                                "█", "▮", "▯", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "\r"
-                                            ]):
-                                                continue
-
-                                        print(line, end="")
-                                        data = [(
-                                            uuid4(),
-                                            session_id,
-                                            None,
-                                            body.machine_id,
-                                            datetime.now(),
-                                            stream_type,
-                                            line,
-                                        )]
-                                        asyncio.create_task(
-                                            insert_to_clickhouse("log_entries", data)
-                                        )
-                                    except Exception as e:
-                                        logger.error(f"Inner error processing log line: {str(e)}")
-                                        continue  # Ensure we continue processing next lines
-                            except Exception as e:
-                                logger.error(f"Outer error in log stream: {str(e)}")
-                                # Re-raise if this is a critical error that should stop the stream
-                                # raise
-
-                        # Create tasks for both stdout and stderr
-                        stdout_task = asyncio.create_task(log_stream(p.stdout, "info"))
-                        stderr_task = asyncio.create_task(log_stream(p.stderr, "info"))
-                        
-                        # Wait for both streams to complete
-                        await asyncio.gather(stdout_task, stderr_task)
-                        
-                    await sb.wait.aio()
-        except Exception as e:
-            send_log_entry(session_id, body.machine_id, str(e))
-        finally:
-            async with get_db_context() as db:
-                gpu_event = await db.execute(
-                    select(GPUEvent).where(GPUEvent.id == gpu_event_id)
-                )
-                gpu_event = gpu_event.scalar_one_or_none()
-                
-                if (gpu_event.start_time is None):
-                    gpu_event.start_time = datetime.now()
-                
-                gpu_event.end_time = datetime.now()
-                await db.commit()
-                await db.refresh(gpu_event)
-
-                # Send usage data to Autumn when session terminates
-                await send_autumn_usage_event(
-                    customer_id=gpu_event.org_id or gpu_event.user_id,
-                    gpu_type=gpu_event.gpu,
-                    start_time=gpu_event.start_time,
-                    end_time=gpu_event.end_time,
-                    environment=gpu_event.environment,
-                    idempotency_key=str(gpu_event.id)
-                )
 
     except Exception as e:
         logger.error(f"Error creating dynamic session: {str(e)}")
         async with get_db_context() as db:
-            gpu_event = await db.execute(
-                select(GPUEvent).where(GPUEvent.id == gpu_event_id)
-            )
-            gpu_event = gpu_event.scalar_one_or_none()
-            
-            if (gpu_event.start_time is None):
-                gpu_event.start_time = datetime.now()
-            
-            gpu_event.end_time = datetime.now()
-            await db.commit()
-            await db.refresh(gpu_event)
+            await delete_session(request, str(session_id), db=db)
 
-            # Send usage data to Autumn even if session creation failed
-            await send_autumn_usage_event(
-                customer_id=gpu_event.org_id or gpu_event.user_id,
-                gpu_type=gpu_event.gpu,
-                start_time=gpu_event.start_time,
-                end_time=gpu_event.end_time,
-                environment=gpu_event.environment,
-                idempotency_key=str(gpu_event.id)
-            )
 
-        if status_queue is not None:
-            status_queue.put_nowait({"error": str(e)})
-        raise
-    
 @beta_router.get(
     "/session/dynamic/docker-commands",
 )
@@ -903,7 +737,7 @@ async def get_docker_commands_from_dynamic_session_body(
     try:
         machine_version: Optional[MachineVersion] = None
         machine: Optional[Machine] = None
-        
+
         # Get machine and its version info
         modal_image_id = None
         if body.machine_id is not None:
@@ -913,18 +747,20 @@ async def get_docker_commands_from_dynamic_session_body(
                 .apply_org_check(request)
             )
             machine = machine.scalars().first()
-            
+
             if not machine:
                 raise HTTPException(status_code=404, detail="Machine not found")
-            
-            target_machine_version_id = body.machine_version_id or machine.machine_version_id
+
+            target_machine_version_id = (
+                body.machine_version_id or machine.machine_version_id
+            )
 
             # Get machine version if it exists
             if target_machine_version_id:
                 machine_version = await db.execute(
                     select(MachineVersion).where(
                         MachineVersion.id == target_machine_version_id,
-                        MachineVersion.machine_id == body.machine_id
+                        MachineVersion.machine_id == body.machine_id,
                     )
                 )
                 machine_version = machine_version.scalars().first()
@@ -997,7 +833,7 @@ async def get_docker_commands_from_dynamic_session_body(
             # Convert SQLAlchemy models to dictionaries
             machine_version_dict = None
             machine_dict = None
-            
+
             if machine_version:
                 machine_version_dict = {
                     "id": str(machine_version.id),
@@ -1006,7 +842,7 @@ async def get_docker_commands_from_dynamic_session_body(
                     "base_docker_image": machine_version.base_docker_image,
                     "modal_image_id": machine_version.modal_image_id,
                 }
-                
+
             if machine:
                 machine_dict = {
                     "id": str(machine.id),
@@ -1022,17 +858,81 @@ async def get_docker_commands_from_dynamic_session_body(
                 "modal_image_id": modal_image_id,
                 "machine_version": machine_version_dict,
                 "machine": machine_dict,
-                "install_custom_node_with_gpu": machine_version.install_custom_node_with_gpu if machine_version else False,
+                "install_custom_node_with_gpu": machine_version.install_custom_node_with_gpu
+                if machine_version
+                else False,
             }
         else:
             return {
                 "modal_image_id": modal_image_id,
-                "message": "Using existing modal image"
+                "message": "Using existing modal image",
             }
 
     except Exception as e:
         logger.error(f"Error generating docker commands: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateSessionCallbackBody(BaseModel):
+    session_id: str
+    sandbox_id: str
+    tunnel_url: str
+    machine_version_id: Optional[str] = None
+
+
+@beta_router.post(
+    "/session/callback",
+)
+async def update_session_callback(
+    request: Request,
+    body: UpdateSessionCallbackBody,
+) -> Dict[str, Any]:
+    async with get_db_context() as db:
+        await db.execute(
+            update(GPUEvent)
+            .where(GPUEvent.session_id == body.session_id)
+            .values(
+                tunnel_url=body.tunnel_url,
+                modal_function_id=body.sandbox_id,
+                start_time=datetime.now(),
+                machine_version_id=body.machine_version_id,
+            )
+        )
+
+    return {"success": True}
+
+
+class UpdateSessionLogBody(BaseModel):
+    session_id: str
+    machine_id: Optional[str]
+    log: str
+
+
+@beta_router.post(
+    "/session/callback/log",
+)
+async def update_session_log(
+    request: Request,
+    body: UpdateSessionLogBody,
+) -> Dict[str, Any]:
+    send_log_entry(body.session_id, body.machine_id, body.log)
+    return {"success": True}
+
+
+class SessionCheckTimeoutBody(BaseModel):
+    session_id: str
+
+
+@beta_router.post(
+    "/session/callback/check-timeout",
+)
+async def session_check_timeout(
+    request: Request,
+    body: SessionCheckTimeoutBody,
+) -> Dict[str, Any]:
+    await check_and_close_sessions(request, body.session_id)
+    return {"success": True}
+
 
 @beta_router.post(
     "/session/dynamic",
@@ -1047,39 +947,55 @@ async def create_dynamic_session(
     db: AsyncSession = Depends(get_db),
 ) -> CreateSessionResponse:
     session_id = uuid4()
-    q = asyncio.Queue() if body.wait_for_server else None
-    
+
     # Validate comfyui_hash if provided
     if body.comfyui_hash is not None and not validate_github_hash(body.comfyui_hash):
-        raise HTTPException(status_code=400, detail="Invalid comfyui_hash format. Must be a valid GitHub hash.")
-    
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid comfyui_hash format. Must be a valid GitHub hash.",
+        )
+
     # Validate free plan first before any other operations
     plan = request.state.current_user.get("plan")
     if plan == "free":
-        raise HTTPException(status_code=403, detail="Free plan users cannot create sessions, we are mitigating abuse, please wait")
-        
+        raise HTTPException(
+            status_code=403,
+            detail="Free plan users cannot create sessions, we are mitigating abuse, please wait",
+        )
+
         max_concurrent_sessions = 1
         max_timeout_minutes = 30
-        
+
         if body.timeout and body.timeout > max_timeout_minutes:
-            raise HTTPException(status_code=400, detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout")
-            
-        gpu_events = (await db.execute(
-            select(GPUEvent)
-            .apply_org_check(request)
-            .where(GPUEvent.session_id.isnot(None))
-            .where(GPUEvent.end_time.is_(None))
-        )).scalars().all()
-        
+            raise HTTPException(
+                status_code=400,
+                detail=f"Free plan users are limited to {max_timeout_minutes} minutes timeout",
+            )
+
+        gpu_events = (
+            (
+                await db.execute(
+                    select(GPUEvent)
+                    .apply_org_check(request)
+                    .where(GPUEvent.session_id.isnot(None))
+                    .where(GPUEvent.end_time.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
         if len(gpu_events) >= max_concurrent_sessions:
-            raise HTTPException(status_code=400, detail="Free plan does not support concurrent sessions")
-    
+            raise HTTPException(
+                status_code=400, detail="Free plan does not support concurrent sessions"
+            )
+
     # Create tasks for parallel execution
     async def create_gpu_event():
         org_id = request.state.current_user.get("org_id")
         user_id = request.state.current_user.get("user_id")
         gpu_event_id = str(uuid4())
-        
+
         async with get_db_context() as db:
             new_gpu_event = GPUEvent(
                 id=gpu_event_id,
@@ -1100,51 +1016,45 @@ async def create_dynamic_session(
         timeout_duration = body.timeout or 15
         timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
         await redis.set(
-            f"session:{session_id}:timeout_end", 
-            timeout_end_time.isoformat()
+            f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
         )
 
     # Run remaining setup tasks in parallel
-    setup_tasks = [
-        create_gpu_event(),
-        set_timeout_redis()
-    ]
-    
+    setup_tasks = [create_gpu_event(), set_timeout_redis()]
+
     try:
         results = await asyncio.gather(*setup_tasks)
         gpu_event_id = results[0]  # Get GPU event ID from create_gpu_event result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Create main session task
-    session_task = asyncio.create_task(
-        create_dynamic_sesssion_background_task(request, gpu_event_id, session_id, body, q)
-    )
-    
-    # Create monitoring task
-    monitoring_task = asyncio.create_task(
-        check_and_close_sessions(request, str(session_id))
-    )
-
-    # Add both tasks to background tasks
-    background_tasks.add_task(ensure_session_creation_complete, session_task)
-    background_tasks.add_task(ensure_session_creation_complete, monitoring_task)
-
     if body.wait_for_server:
-        try:
-            tunnel_url = await asyncio.wait_for(q.get(), timeout=300.0)
-            if isinstance(tunnel_url, dict) and tunnel_url.get("error") is not None:
-                raise HTTPException(status_code=400, detail=tunnel_url.get("error"))
-            return {
-                "session_id": session_id,
-                "url": tunnel_url,
-            }
-        except asyncio.TimeoutError:
-            return {
-                "session_id": session_id,
-                "url": None,
-            }
+        async with modal.Queue.ephemeral() as q:
+            await create_dynamic_sesssion_background_task(
+                request,
+                gpu_event_id,
+                session_id,
+                body,
+                q,
+            )
+
+            try:
+                tunnel_url = await q.get.aio(timeout=300.0)
+                if isinstance(tunnel_url, dict) and tunnel_url.get("error") is not None:
+                    raise HTTPException(status_code=400, detail=tunnel_url.get("error"))
+                return {
+                    "session_id": session_id,
+                    "url": tunnel_url,
+                }
+            except Exception as e:
+                return {
+                    "session_id": session_id,
+                    "url": None,
+                }
     else:
+        await create_dynamic_sesssion_background_task(
+            request, gpu_event_id, session_id, body
+        )
         return {
             "session_id": session_id,
         }
@@ -1182,7 +1092,9 @@ async def snapshot_session(
     )
 
     if gpuEvent is None:
-        raise HTTPException(status_code=404, detail="GPUEvent not found")
+        raise HTTPException(
+            status_code=404, detail="GPUEvent not found session_id: " + session_id
+        )
 
     modal_function_id = gpuEvent.modal_function_id
 
@@ -1266,7 +1178,7 @@ async def snapshot_session(
     # Update machine with new version id
     machine.machine_version_id = machine_version.id
     machine.updated_at = func.now()
-    
+
     gpuEvent.machine_version_id = machine_version.id
 
     await db.commit()
@@ -1298,7 +1210,10 @@ class DeleteSessionResponse(BaseModel):
     },
 )
 async def delete_session(
-    request: Request, session_id: str, wait_for_shutdown: bool = False, db: AsyncSession = Depends(get_db)
+    request: Request,
+    session_id: str,
+    wait_for_shutdown: bool = False,
+    db: AsyncSession = Depends(get_db),
 ) -> DeleteSessionResponse:
     gpuEvent = cast(
         Optional[GPUEvent],
@@ -1315,26 +1230,41 @@ async def delete_session(
     )
 
     if gpuEvent is None:
-        raise HTTPException(status_code=404, detail="GPUEvent not found")
-    
+        raise HTTPException(
+            status_code=404,
+            detail="GPUEvent not found session_id: "
+            + session_id
+            + ", the event might be already closed",
+        )
+
     modal_function_id = gpuEvent.modal_function_id
-    
+
     # Checking for a stuck case and modal_function_id is not set
-    if gpuEvent.start_time is None and gpuEvent.end_time is None and not modal_function_id:
+    if (
+        gpuEvent.start_time is None
+        and gpuEvent.end_time is None
+        and not modal_function_id
+    ):
         # Check if the session has been stuck for over an hour
         time_difference = datetime.now() - gpuEvent.created_at
+        print("time_difference", time_difference.total_seconds())
         if time_difference.total_seconds() > 3600:  # 3600 seconds = 1 hour
             gpuEvent.start_time = gpuEvent.created_at
             gpuEvent.end_time = gpuEvent.created_at
             await db.commit()
             await db.refresh(gpuEvent)
             # We will eat this usage
-            logfire.info("Session stuck for over an hour, eating usage", session_id=session_id, possible_duration=time_difference.total_seconds(), gpu_type=gpuEvent.gpu)
+            logfire.info(
+                "Session stuck for over an hour, eating usage",
+                session_id=session_id,
+                possible_duration=time_difference.total_seconds(),
+                gpu_type=gpuEvent.gpu,
+            )
             return {"success": True}
 
     if modal_function_id is None:
         raise HTTPException(status_code=400, detail="Modal function id not found")
-    
+
     try:
         if modal_function_id.startswith("sb-"):
             await modal.Sandbox.from_id(modal_function_id).terminate.aio()
@@ -1344,42 +1274,42 @@ async def delete_session(
         logger.error(f"Error cancelling modal function {modal_function_id}: {str(e)}")
 
     # Update GPU event end time
-    if (gpuEvent.end_time is None and gpuEvent.start_time is not None):
+    if gpuEvent.end_time is None and gpuEvent.start_time is not None:
         gpuEvent.end_time = datetime.now()
         await db.commit()
         await db.refresh(gpuEvent)
 
     # Send usage data to Autumn
-   
-    if (gpuEvent.end_time is not None and gpuEvent.start_time is not None):
+
+    if gpuEvent.end_time is not None and gpuEvent.start_time is not None:
         await send_autumn_usage_event(
             customer_id=gpuEvent.org_id or gpuEvent.user_id,
             gpu_type=gpuEvent.gpu,
             start_time=gpuEvent.start_time,
             end_time=gpuEvent.end_time,
             environment=gpuEvent.environment,
-            idempotency_key=str(gpuEvent.id)
+            idempotency_key=str(gpuEvent.id),
         )
     else:
         logfire.error(f"Session {session_id} has no start or end time when closing")
 
     await redis.delete("session:" + session_id + ":timeout_end")
-    
+
     if wait_for_shutdown:
         max_wait_time = 30  # Maximum wait time in seconds
         start_time = datetime.now()
-        
+
         while True:
             # Check if we've exceeded max wait time
             if (datetime.now() - start_time).total_seconds() > max_wait_time:
                 break
-                
+
             # Refresh GPU event to get latest status
             await db.refresh(gpuEvent)
-            
+
             if gpuEvent.end_time is not None:
                 break
-                
+
             await asyncio.sleep(1)
 
     return {"success": True}
@@ -1387,35 +1317,39 @@ async def delete_session(
 
 async def check_and_close_sessions(request: Request, session_id: str):
     try:
-        while True:
-            # Construct the specific Redis key for the session
-            key = f"session:{session_id}:timeout_end"
-            logger.info(f"Checking session {session_id}")
+        # while True:
+        # Construct the specific Redis key for the session
+        key = f"session:{session_id}:timeout_end"
+        logger.info(f"Checking session {session_id}")
 
-            # Retrieve the timeout end time from Redis
-            timeout_end_str = await redis.get(key)
-            if timeout_end_str is None:
-                logger.info(f"No timeout end found for session {session_id}")
-                break
+        # Retrieve the timeout end time from Redis
+        timeout_end_str = await redis.get(key)
+        if timeout_end_str is None:
+            logger.info(f"No timeout end found for session {session_id}")
+            return
+            # break
 
-            try:
-                timeout_end = datetime.fromisoformat(timeout_end_str)
-            except ValueError:
-                logger.error(f"Invalid date format for session {session_id}")
-                break
+        try:
+            timeout_end = datetime.fromisoformat(timeout_end_str)
+        except ValueError:
+            logger.error(f"Invalid date format for session {session_id}")
+            return
+            # break
 
-            if datetime.utcnow() > timeout_end:
-                # Close the session
-                async with get_db_context() as db:
-                    await delete_session(request, session_id, db=db)
-                # Optionally, delete the key from Redis
-                logger.info(f"Session {session_id} closed due to timeout")
-                break
-            else:
-                await asyncio.sleep(1)
+        if datetime.utcnow() > timeout_end:
+            # Close the session
+            async with get_db_context() as db:
+                await delete_session(request, session_id, db=db)
+            # Optionally, delete the key from Redis
+            logger.info(f"Session {session_id} closed due to timeout")
+            return {"message": "Session closed due to timeout", "continue": False}
+            # break
+        # else:
+        #     await asyncio.sleep(1)
 
     except Exception as e:
         logger.error(f"Error checking session {session_id}: {str(e)}")
+
 
 def validate_github_hash(hash_str: str) -> bool:
     """
@@ -1424,11 +1358,11 @@ def validate_github_hash(hash_str: str) -> bool:
     """
     if hash_str is None:
         return False
-    
+
     # Check if string contains only hexadecimal characters
-    pattern = re.compile(r'^[0-9a-f]+$', re.IGNORECASE)
-    
+    pattern = re.compile(r"^[0-9a-f]+$", re.IGNORECASE)
+
     # Verify length (accepting common hash lengths but being somewhat flexible)
     valid_length = 6 <= len(hash_str) <= 40
-    
+
     return bool(pattern.match(hash_str)) and valid_length
