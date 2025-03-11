@@ -376,7 +376,33 @@ async def run_session(
                 await asyncio.gather(stdout_task, stderr_task)
 
             await sb.wait.aio()
+    except asyncio.CancelledError:
+        print("Input cancellation")
+        # try:
+        #     if sb is not None:
+        #         await sb.terminate.aio()
+        # except Exception as e:
+        #     logger.error(f"Unable to force close sandbox: {str(e)}")
+        send_log_entry(update_endpoint, session_id, machine_id, "Input cancellation")
+        async with aiohttp.ClientSession() as client:
+            token = generate_temporary_token(user_id, org_id)
+            async with client.delete(
+                update_endpoint + "/api/session/" + str(session_id),
+                headers={"Authorization": f"Bearer {token}"},
+            ) as response:
+                print(await response.text())
     except Exception as e:
+        # # This function is cancelled
+        # if isinstance(e, asyncio.CancelledError):
+        #     logger.info("Task was cancelled")
+        #     try:
+        #         if sb is not None:
+        #             await sb.terminate.aio()
+        #     except Exception as e:
+        #         logger.error(f"Unable to force close sandbox: {str(e)}")
+        
+        # logger.error(f"Error in session: {str(e)}")
+        
         send_log_entry(update_endpoint, session_id, machine_id, str(e))
         async with aiohttp.ClientSession() as client:
             token = generate_temporary_token(user_id, org_id)
@@ -413,6 +439,8 @@ def generate_temporary_token(
         "user_id": user_id,
         "exp": datetime.utcnow() + timedelta(hours=1),  # Default expiration of 1 hour
     }
+    
+    payload["modal"] = True
 
     if org_id:
         payload["org_id"] = org_id

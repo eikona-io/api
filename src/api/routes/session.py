@@ -1216,6 +1216,10 @@ async def delete_session(
     wait_for_shutdown: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> DeleteSessionResponse:
+    # If this is from our modal, we need to force close
+    is_modal = request.state.current_user.get("modal", False)
+    # print("is_modal", is_modal)
+    
     gpuEvent = cast(
         Optional[GPUEvent],
         (
@@ -1249,6 +1253,7 @@ async def delete_session(
         # Check if the session has been stuck for over an hour
         time_difference = datetime.now() - gpuEvent.created_at
         print("time_difference", time_difference.total_seconds())
+        # If this is from our modal, we need to force close
         if time_difference.total_seconds() > 3600:  # 3600 seconds = 1 hour
             gpuEvent.start_time = gpuEvent.created_at
             gpuEvent.end_time = gpuEvent.created_at
@@ -1263,7 +1268,10 @@ async def delete_session(
             )
             return {"success": True}
 
-    if modal_function_id is None:
+    # The reason that we are skipping this check for modal, is because tere will be a case the sandbox is still building
+    # and this will make sure it let it pass thru and contiune and turn off the session in our system
+    # Still there could be a case when it really get stuck in buildng and modal continue to start it afterawrd..
+    if modal_function_id is None and not is_modal:
         raise HTTPException(status_code=400, detail="Modal function id not found")
 
     try:
