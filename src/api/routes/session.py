@@ -1251,8 +1251,8 @@ async def delete_session(
         and not modal_function_id
     ):
         # Check if the session has been stuck for over an hour
-        time_difference = datetime.now() - gpuEvent.created_at
-        print("time_difference", time_difference.total_seconds())
+        time_difference = datetime.utcnow() - gpuEvent.created_at
+        # logfire.info("time_difference", time_difference=time_difference.total_seconds())
         # If this is from our modal, we need to force close
         if time_difference.total_seconds() > 3600:  # 3600 seconds = 1 hour
             gpuEvent.start_time = gpuEvent.created_at
