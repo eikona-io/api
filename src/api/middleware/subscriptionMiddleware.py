@@ -117,11 +117,26 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                     # print(f"[Local Cache] Caching plan_data for key: {redis_key}")
 
         if plan_data is None:
+            logfire.info("Plan data is None, defaulting to free tier", redis_key=redis_key)
             tier = "free"
         else:
-            plan_info = json.loads(plan_data)
-            plans = plan_info.get("plans", [])
-            tier = plans[0] if plans and len(plans) > 0 else "free"
+            try:
+                plan_info = json.loads(plan_data)
+                plans = plan_info.get("plans", [])
+                logfire.info("Plan info retrieved",
+                             redis_key=redis_key,
+                             has_plans=bool(plans),
+                             plans_length=len(plans),
+                             plans=plans)
+                tier = plans[0] if plans and len(plans) > 0 else "free"
+                if not plans or len(plans) == 0:
+                    logfire.warning("Empty plans array in Redis data", redis_key=redis_key, plan_info=plan_info)
+            except Exception as e:
+                logfire.error("Error parsing plan data",
+                              redis_key=redis_key,
+                              error=str(e),
+                              plan_data=plan_data)
+                tier = "free"
 
         logfire.info("Plan", tier=tier)
 
