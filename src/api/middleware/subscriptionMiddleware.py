@@ -207,4 +207,4 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 async with self.cache_lock:
                     self.local_cache[redis_key] = (new_data, time.time())
         except Exception as e:
-            logger.error(f"Failed to refresh cache for {redis_key}: {str(e)}")
+            logfire.error(f"Failed to refresh cache for {redis_key}: {str(e)}")
