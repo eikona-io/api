@@ -1303,6 +1303,13 @@
       "when": 1741716499129,
       "tag": "0185_futuristic_brother_voodoo",
       "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1741798656801,
+      "tag": "0186_sticky_zaladane",
+      "breakpoints": true
     }
   ]
 }

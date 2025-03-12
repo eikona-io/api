@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS "deployments_environment_index";--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deployments_environment_slug_index" ON "comfyui_deploy"."deployments" USING btree (environment,share_slug);
