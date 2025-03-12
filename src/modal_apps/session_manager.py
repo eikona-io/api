@@ -178,6 +178,12 @@ async def run_session(
 
     if modal_image_id:
         logger.info(f"Using existing modal image {modal_image_id}")
+        send_log_entry(
+            update_endpoint,
+            session_id,
+            machine_id,
+            f"Using existing modal image {modal_image_id}",
+        )
         dockerfile_image = modal.Image.from_id(modal_image_id)
     else:
         # Python version and base docker image setup
@@ -205,12 +211,12 @@ async def run_session(
                 )
 
     # Always add these commands regardless of the path taken
-    dockerfile_image = dockerfile_image.run_commands(
-        [
-            "rm -rf /private_models /comfyui/models /public_models",
-            "ln -s /private_models /comfyui/models",
-        ],
-    )
+    # dockerfile_image = dockerfile_image.run_commands(
+    #     [
+    #         "rm -rf /private_models /comfyui/models /public_models",
+    #         "ln -s /private_models /comfyui/models",
+    #     ],
+    # )
 
     # Always add extra_model_paths.yaml
     # current_directory = os.path.dirname(os.path.realpath(__file__))
@@ -313,10 +319,12 @@ async def run_session(
                     update_endpoint, session_id, machine_id, "Starting ComfyUI..."
                 )
 
+                models_path_command = "rm -rf /private_models /comfyui/models /public_models && ln -s /private_models /comfyui/models"
+
                 p = await sb.exec.aio(
                     "bash",
                     "-c",
-                    comfyui_cmd,
+                    models_path_command + " && " + comfyui_cmd,
                 )
 
                 async def log_stream(stream, stream_type: str):
