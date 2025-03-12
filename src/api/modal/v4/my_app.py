@@ -707,7 +707,12 @@ async def send_log_update(input: Input, log: str):
         ) as response:
             pass
 
-
+@app.function(
+    image=target_image,
+    gpu=None,
+)
+async def get_image_id():
+    return target_image.object_id
 
 @app.cls(
     image=target_image,

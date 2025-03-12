@@ -27,6 +27,7 @@ image = (
 
 ALGORITHM = "HS256"
 
+os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
 
 async def send_log_async(
     update_endpoint: str, session_id: UUID, machine_id: str, log_message: str
@@ -44,7 +45,8 @@ async def send_log_async(
                 "log": log_message,
             },
         ) as response:
-            print("send_log_async", await response.text())
+            pass
+            # print("send_log_async", await response.text())
 
 
 def send_log_entry(
@@ -96,6 +98,7 @@ async def run_session(
     shared_model_volume_name,
     tunnel_url_queue,
 ):
+    os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
     from modal._output import OutputManager
 
     class CustomOutputManager(OutputManager):
@@ -161,10 +164,21 @@ async def run_session(
         "models_" + (org_id if org_id is not None else user_id),
         create_if_missing=True,
     )
+    
+    modal_image_id = "modal_image_id" in docker_config and docker_config["modal_image_id"]
+    
+    if (machine_id is not None and modal_image_id is None):
+        # Lets try to fetch the modal image id from the machine
+        try:
+            get_image_id = modal.Function.from_name(machine_id, "get_image_id")
+            modal_image_id = await get_image_id.remote.aio()
+            print(f"Fetched modal image id: {modal_image_id}")
+        except Exception as e:
+            logger.error(f"Error fetching modal image id: {str(e)}")
 
-    if "modal_image_id" in docker_config and docker_config["modal_image_id"]:
-        logger.info(f"Using existing modal image {docker_config['modal_image_id']}")
-        dockerfile_image = modal.Image.from_id(docker_config["modal_image_id"])
+    if modal_image_id:
+        logger.info(f"Using existing modal image {modal_image_id}")
+        dockerfile_image = modal.Image.from_id(modal_image_id)
     else:
         # Python version and base docker image setup
         python_version = docker_config.get("python_version", "3.11")
