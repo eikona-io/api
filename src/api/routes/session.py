@@ -699,7 +699,7 @@ async def create_dynamic_sesssion_background_task(
         run_session = await modal.Function.lookup.aio("session_manager", "run_session")
         machine_version = docker_config.get("machine_version")
         send_log_entry(session_id, body.machine_id, "Starting session")
-        await run_session.spawn.aio(
+        result = await run_session.spawn.aio(
             user_id=user_id,
             org_id=org_id,
             session_id=session_id,
@@ -718,11 +718,14 @@ async def create_dynamic_sesssion_background_task(
             shared_model_volume_name=shared_model_volume_name,
             tunnel_url_queue=status_queue,
         )
+        return result.object_id
 
     except Exception as e:
         logger.error(f"Error creating dynamic session: {str(e)}")
         async with get_db_context() as db:
             await delete_session(request, str(session_id), db=db)
+            
+    return None
 
 
 @beta_router.get(
@@ -903,7 +906,7 @@ async def update_session_callback(
             .where(GPUEvent.session_id == body.session_id)
             .values(
                 tunnel_url=body.tunnel_url,
-                modal_function_id=body.sandbox_id,
+                # modal_function_id=body.sandbox_id,
                 start_time=datetime.now(),
                 machine_version_id=body.machine_version_id,
             )
@@ -1040,13 +1043,23 @@ async def create_dynamic_session(
 
     if body.wait_for_server:
         async with modal.Queue.ephemeral() as q:
-            await create_dynamic_sesssion_background_task(
+            modal_function_run_id = await create_dynamic_sesssion_background_task(
                 request,
                 gpu_event_id,
                 session_id,
                 body,
                 q,
             )
+
+            if modal_function_run_id is not None:
+                async with get_db_context() as db:
+                    await db.execute(
+                        update(GPUEvent)
+                        .where(GPUEvent.session_id == str(session_id))
+                        .values(
+                            modal_function_id=modal_function_run_id,
+                        )
+                    )
 
             try:
                 tunnel_url = await q.get.aio(timeout=300.0)
@@ -1062,9 +1075,20 @@ async def create_dynamic_session(
                     "url": None,
                 }
     else:
-        await create_dynamic_sesssion_background_task(
+        modal_function_run_id = await create_dynamic_sesssion_background_task(
             request, gpu_event_id, session_id, body
         )
+        
+        if modal_function_run_id is not None:
+            async with get_db_context() as db:
+                await db.execute(
+                    update(GPUEvent)
+                    .where(GPUEvent.session_id == str(session_id))
+                    .values(
+                        modal_function_id=modal_function_run_id,
+                    )
+                )
+        
         return {
             "session_id": session_id,
         }
