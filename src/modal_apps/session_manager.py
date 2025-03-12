@@ -391,6 +391,8 @@ async def run_session(
                 headers={"Authorization": f"Bearer {token}"},
             ) as response:
                 print(await response.text())
+        if (sb is not None):
+            await sb.terminate.aio()
     except Exception as e:
         # # This function is cancelled
         # if isinstance(e, asyncio.CancelledError):

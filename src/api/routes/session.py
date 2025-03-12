@@ -906,7 +906,8 @@ async def update_session_callback(
             .where(GPUEvent.session_id == body.session_id)
             .values(
                 tunnel_url=body.tunnel_url,
-                # modal_function_id=body.sandbox_id,
+                # Gonna override the modal_function_id with the sandbox_id
+                modal_function_id=body.sandbox_id,
                 start_time=datetime.now(),
                 machine_version_id=body.machine_version_id,
             )
@@ -1259,7 +1260,7 @@ async def delete_session(
             await db.execute(
                 (
                     select(GPUEvent)
-                    .where(GPUEvent.session_id == session_id)
+                    .where(GPUEvent.session_id == str(session_id))
                     .where(GPUEvent.end_time.is_(None))
                     .apply_org_check(request)
                 )
@@ -1334,6 +1335,14 @@ async def delete_session(
         )
     else:
         logfire.error(f"Session {session_id} has no start or end time when closing")
+        
+    # Update GPU event end time
+    # This cause probably they are closing the session before the build is complete
+    if gpuEvent.end_time is None and gpuEvent.start_time is None:
+        gpuEvent.start_time = datetime.now()
+        gpuEvent.end_time = datetime.now()
+        await db.commit()
+        await db.refresh(gpuEvent)
 
     await redis.delete("session:" + session_id + ":timeout_end")
 
