@@ -1,5 +1,7 @@
 import os
 from api.utils.autumn import get_autumn_customer
+# from api.middleware.subscriptionMiddleware import get_customer_plan_cached, get_customer_plan_cached_5_seconds
+from api.utils.multi_level_cache import multi_level_cached
 import logfire
 from pydantic import BaseModel
 from api.database import get_db
@@ -645,8 +647,6 @@ async def get_plans(
     db: AsyncSession,
     user_id: str,
     org_id: str,
-    request: Request,
-    background_tasks: BackgroundTasks,
 ) -> Dict[str, Any]:
     """Get plans information including current subscription details"""
 
@@ -657,7 +657,7 @@ async def get_plans(
     if AUTUMN_API_KEY:
         try:
             # Get the transformed data from cache or fetch and transform from Autumn
-            transformed_data = await get_customer_plan(request, background_tasks)
+            transformed_data = await get_customer_plan_cached_5_seconds(org_id or user_id) #get_customer_plan(request, background_tasks)
             if transformed_data:
                 logfire.info(
                     f"Successfully fetched transformed data for customer {org_id or user_id}"
@@ -783,7 +783,7 @@ async def get_api_plan(
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Get plans, machines, workflows and user settings in parallel
-    plans = await get_plans(db, user_id, org_id, request, background_tasks)
+    plans = await get_plans(db, user_id, org_id)
     machine_count = await get_machine_count(db, request)
     workflow_count = await get_workflow_count(db, request)
     user_settings = await get_user_settings_util(request, db)
@@ -2075,3 +2075,122 @@ async def get_customer_plan(
     except Exception as e:
         logfire.error(f"Error getting Redis data in get_customer_plan: {str(e)}")
         return await fetch_and_transform_from_autumn()
+
+
+async def get_customer_plan_v2(
+    user_or_org_id: str,
+):
+    logfire.info(f"Fetching fresh data from Autumn for {user_or_org_id}")
+    # Fetch raw data from Autumn
+    autumn_data = await get_autumn_customer(user_or_org_id)
+    if not autumn_data:
+        logfire.warning(f"No data returned from Autumn for {user_or_org_id}")
+        return None
+
+    # Transform Autumn data to our format
+    plans = []
+    names = []
+    prices = []
+    amounts = []
+    charges = []
+    cancel_at_period_end = False
+    canceled_at = None
+    payment_issue = False
+    payment_issue_reason = ""
+
+    # Process products and add-ons
+    all_products = autumn_data.get("products", []) + autumn_data.get("add_ons", [])
+
+    for product in all_products:
+        # Only process active products
+        if product.get("status") == "active":
+            # Get the plan name directly from product id
+            plan_key = product.get("id", "")
+            if plan_key:  # Only add if we have a plan key
+                plans.append(plan_key)
+                names.append(product.get("name", ""))
+
+                # Process pricing information
+                product_prices = product.get("prices", [])
+                if product_prices:
+                    # Use the first price entry
+                    price_info = product_prices[0]
+                    price_amount = price_info.get("amount", 0)
+
+                    # Add price ID and amount
+                    prices.append(plan_key)  # Using product ID as price ID
+                    amounts.append(price_amount * 100)
+
+                    # Calculate charges - using price amount directly for now
+                    charges.append(price_amount * 100)
+
+        # Check for canceled products for cancel status
+        product_canceled_at = product.get("canceled_at")
+        if product.get("status") == "canceled" or product_canceled_at:
+            cancel_at_period_end = True
+            canceled_at = product_canceled_at
+
+    # Extract payment issues
+    if any(product.get("status") not in ["active", "canceled"] for product in all_products):
+        payment_issue = True
+        payment_issue_reason = "Payment issue with subscription"
+
+    # Check if we have invoices data to compute charges
+    invoices = autumn_data.get("invoices", [])
+    if invoices and not charges:  # Use invoice data if available and charges is empty
+        for invoice in invoices:
+            if invoice.get("status") == "paid":
+                charges.append(invoice.get("total", 0))
+
+    # Create the transformed data structure
+    transformed_data = {
+        "plans": plans,
+        "names": names,
+        "prices": prices,
+        "amount": amounts,
+        "charges": charges,
+        "cancel_at_period_end": cancel_at_period_end,
+        "canceled_at": canceled_at,
+        "payment_issue": payment_issue,
+        "payment_issue_reason": payment_issue_reason,
+        "autumn_data": autumn_data,  # Keep the original data for reference
+        "last_invoice_timestamp": get_last_invoice_timestamp_from_autumn(autumn_data),
+        "source": "autumn",
+        "last_update": int(datetime.now().timestamp())
+    }
+
+    # try:
+    #     await redisMeta.set(redis_key, transformed_data)
+    #     logfire.info(f"Cached transformed Autumn data in Redis for {user_or_org_id}")
+    # except Exception as e:
+    #     logfire.error(f"Error updating {user_or_org_id} plan in Redis: {str(e)}")
+
+    return transformed_data
+
+
+@multi_level_cached(
+    key_prefix="plan",
+    # Time for local memory cache to refresh from redis
+    ttl_seconds=5,
+    # Time for redis to refresh from source (autumn)
+    redis_ttl_seconds=60,
+    version="1.0",
+    key_builder=lambda user_id_or_org_id: f"plan:{user_id_or_org_id}",
+)
+async def get_customer_plan_cached(user_id_or_org_id: str):
+    with logfire.span("get_customer_plan"):
+        return await get_customer_plan_v2(user_id_or_org_id)
+    
+@multi_level_cached(
+    key_prefix="plan",
+    # Time for local memory cache to refresh from redis
+    ttl_seconds=2,
+    # Time for redis to refresh from source (autumn)
+    redis_ttl_seconds=5,
+    version="1.0",
+    key_builder=lambda user_id_or_org_id: f"plan:{user_id_or_org_id}",
+)
+async def get_customer_plan_cached_5_seconds(user_id_or_org_id: str):
+    with logfire.span("get_customer_plan"):
+        return await get_customer_plan_v2(user_id_or_org_id)
+
