@@ -5,9 +5,8 @@ import os
 from pprint import pprint
 from api.modal.builder import insert_to_clickhouse
 from api.routes.machines import (
-    UpdateServerlessMachineModel,
+    GitCommitHash,
     redeploy_machine,
-    update_serverless_machine,
 )
 from api.utils.docker import (
     comfyui_hash,
@@ -330,7 +329,9 @@ class CreateDynamicSessionBody(BaseModel):
         None, description="The machine version id to use"
     )
     timeout: Optional[int] = Field(None, description="The timeout in minutes")
-    comfyui_hash: Optional[str] = Field(None, description="The comfyui hash to use")
+    comfyui_hash: Optional[GitCommitHash] = Field(
+        None, description="The comfyui hash to use"
+    )
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
         [],
         description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
@@ -962,13 +963,6 @@ async def create_dynamic_session(
 ) -> CreateSessionResponse:
     session_id = uuid4()
 
-    # Validate comfyui_hash if provided
-    if body.comfyui_hash is not None and not validate_github_hash(body.comfyui_hash):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid comfyui_hash format. Must be a valid GitHub hash.",
-        )
-
     # Validate free plan first before any other operations
     plan = request.state.current_user.get("plan")
     if plan == "free":
@@ -1401,19 +1395,3 @@ async def check_and_close_sessions(request: Request, session_id: str):
     except Exception as e:
         logger.error(f"Error checking session {session_id}: {str(e)}")
 
-
-def validate_github_hash(hash_str: str) -> bool:
-    """
-    Validates if a string is a valid GitHub hash.
-    GitHub hashes are hexadecimal and typically 7 or 40 characters long.
-    """
-    if hash_str is None:
-        return False
-
-    # Check if string contains only hexadecimal characters
-    pattern = re.compile(r"^[0-9a-f]+$", re.IGNORECASE)
-
-    # Verify length (accepting common hash lengths but being somewhat flexible)
-    valid_length = 6 <= len(hash_str) <= 40
-
-    return bool(pattern.match(hash_str)) and valid_length
