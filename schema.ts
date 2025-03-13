@@ -635,13 +635,19 @@ export const deploymentsTable = dbSchema.table("deployments", {
     (table) => {
         return {
             userSlugUnique: uniqueIndex("deployments_user_slug_unique")
-            .on(table.user_id, table.share_slug)
-            .where(sql`${table.org_id} IS NULL`),
+                .on(table.user_id, table.share_slug)
+                .where(sql`${table.org_id} IS NULL`),
             orgSlugUnique: uniqueIndex("deployments_org_slug_unique")
-            .on(table.org_id, table.share_slug)
-            .where(sql`${table.org_id} IS NOT NULL`),
+                .on(table.org_id, table.share_slug)
+                .where(sql`${table.org_id} IS NOT NULL`),
+            updatedAtIndex: index("deployments_updated_at_index").on(table.updated_at),
+            modalImageIdIndex: index("deployments_modal_image_id_index").on(table.modal_image_id),
+            userIdIndex: index("deployments_user_id_index").on(table.user_id),
+            orgIdIndex: index("deployments_org_id_index").on(table.org_id),
+            environmentSlugIndex: index("deployments_environment_slug_index").on(table.environment, table.share_slug),
         };
     }
+
 );
 
 export const shareSettings = createSelectSchema(deploymentsTable, {

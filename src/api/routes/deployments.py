@@ -30,6 +30,7 @@ from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
 from .share import create_dub_link, get_dub_link, update_dub_link
 from sqlalchemy import func
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -443,11 +444,12 @@ async def get_deployments(
         deployments = result.scalars().all()
 
         deployments_data = []
-        for deployment in deployments:
+        dub_link_tasks = {}
+
+        for idx, deployment in enumerate(deployments):
             deployment_dict = deployment.to_dict()
-            workflow_api = (
-                deployment.version.workflow_api if deployment.version else None
-            )
+
+            workflow_api = deployment.version.workflow_api if deployment.version else None
             inputs = get_inputs_from_workflow_api(workflow_api)
 
             workflow = deployment.version.workflow if deployment.version else None
@@ -460,14 +462,18 @@ async def get_deployments(
                 deployment_dict["output_types"] = outputs
 
             if deployment.environment == "public-share" and deployment.share_slug:
-                dub_link = await get_dub_link(deployment.share_slug)
-                print("dub_link", dub_link)
-                if dub_link:
-                    deployment_dict["dub_link"] = dub_link.short_link
+                dub_link_tasks[idx] = asyncio.create_task(get_dub_link(deployment.share_slug))
 
             deployments_data.append(deployment_dict)
 
+        if dub_link_tasks:
+            dub_link_results = await asyncio.gather(*dub_link_tasks.values())
+            for idx, dub_link in zip(dub_link_tasks.keys(), dub_link_results):
+                if dub_link:
+                    deployments_data[idx]["dub_link"] = dub_link.short_link
+
         return deployments_data
+
     except Exception as e:
         logger.error(f"Error getting deployments: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
