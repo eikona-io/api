@@ -73,7 +73,10 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
 
     async def check_subscription_access(self, request: Request):
         # Check if request.state exists and has current_user attribute
-        if not hasattr(request.state, 'current_user') or request.state.current_user is None:
+        if (
+            not hasattr(request.state, "current_user")
+            or request.state.current_user is None
+        ):
             return
 
         org_id = request.state.current_user.get("org_id")
@@ -84,28 +87,47 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         entity_id = org_id if org_id else user_id
         redis_key = f"plan:{entity_id}"
 
-        if redis_key in self.local_cache:
-            cached_data, timestamp = self.local_cache[redis_key]
-            if current_time - timestamp < self.cache_ttl:
-                # print(f"[Local Cache] Using fresh cached plan_data for key: {redis_key}")
-                plan_data = cached_data
-            else:
-                # print(f"[Local Cache] Using stale cached plan_data for key: {redis_key} and refreshing in background")
-                plan_data = cached_data
-                asyncio.create_task(self.refresh_cache(redis_key))
-        else:
-            # print(f"[Redis Fetch] Fetching plan_data from Redis for key: {redis_key}")
-            plan_data = await self.redis.get(redis_key)
-            if plan_data:
-                self.local_cache[redis_key] = (plan_data, current_time)
-                # print(f"[Local Cache] Caching plan_data for key: {redis_key}")
+        # Get plan data with better error handling
+        plan_data = None
+        try:
+            if redis_key in self.local_cache:
+                cached_data, timestamp = self.local_cache[redis_key]
+                cache_age = current_time - timestamp
+                logfire.info(
+                    "Cache hit",
+                    key=redis_key,
+                    cache_age=cache_age,
+                    data=cached_data,
+                )
 
+                if current_time - timestamp < self.cache_ttl:
+                    plan_data = cached_data
+                else:
+                    # Still use stale data but refresh in background
+                    plan_data = cached_data
+                    asyncio.create_task(self.refresh_cache(redis_key))
+
+            # If no cached data or cache is empty, fetch directly
+            if not plan_data:
+                plan_data = await self.redis.get(redis_key)
+                if plan_data:
+                    self.local_cache[redis_key] = (plan_data, current_time)
+        except Exception as e:
+            logfire.error(f"Error retrieving plan data: {str(e)}")
+            # Default to free tier on errors
+            plan_data = None
+
+        # Default to free tier if no plan data
         if plan_data is None:
             tier = "free"
         else:
-            plan_info = json.loads(plan_data)
-            plans = plan_info.get("plans", [])
-            tier = plans[0] if plans and len(plans) > 0 else "free"
+            try:
+                plan_info = json.loads(plan_data)
+                plans = plan_info.get("plans", [])
+                tier = plans[0] if plans and len(plans) > 0 else "free"
+            except (json.JSONDecodeError, TypeError, IndexError) as e:
+                logfire.error(f"Error parsing plan data: {str(e)}")
+                tier = "free"
 
         logfire.info("Plan", tier=tier)
 
@@ -169,12 +191,15 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
         return False
 
     async def refresh_cache(self, redis_key: str):
-        import time
-        # print(f"[Background Refresh] Refreshing plan_data for key: {redis_key}")
         try:
             new_data = await self.redis.get(redis_key)
             if new_data:
                 self.local_cache[redis_key] = (new_data, time.time())
-                # print(f"[Background Refresh] Updated local cache for key: {redis_key}")
+            else:
+                # If Redis returns None, we should remove the key from cache
+                # to prevent serving stale data indefinitely
+                self.local_cache.pop(redis_key, None)
+                logfire.warning(f"Redis returned None for key: {redis_key}")
         except Exception as e:
             logfire.error(f"Failed to refresh cache for {redis_key}: {str(e)}")
+            # Don't remove from cache on error - better to serve stale data than none
