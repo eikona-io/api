@@ -181,15 +181,15 @@ async def public_models(
 ):
     return await get_volumn_files(public_volume_name)
 
-@multi_level_cached(
-    # key_prefix="api_key",
-    # Time for local memory cache to refresh from redis
-    ttl_seconds=2,
-    # Time for redis to refresh from source (modal)
-    redis_ttl_seconds=5,
-    version="1.0",
-    key_builder=lambda key: f"volume_files_{key}",
-)
+# @multi_level_cached(
+#     # key_prefix="api_key",
+#     # Time for local memory cache to refresh from redis
+#     ttl_seconds=2,
+#     # Time for redis to refresh from source (modal)
+#     redis_ttl_seconds=5,
+#     version="1.0",
+#     key_builder=lambda key: f"volume_files_{key}",
+# )
 async def get_volumn_files(key):
     volume = await lookup_volume(key, create_if_missing=True)
     files = await volume.listdir.aio("/", recursive=True)
@@ -373,12 +373,12 @@ async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Dep
     volume_name = await get_volume_name(request, db)
 
     try:
-        volume = lookup_volume(volume_name)
+        volume = await lookup_volume(volume_name)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     # Check src_path is a file
-    is_valid, error_message = validate_file_path(src_path, volume)
+    is_valid, error_message = await validate_file_path(src_path, volume)
     if not is_valid:
         if "not found" in error_message:
             raise HTTPException(status_code=404, detail=error_message)
@@ -387,7 +387,7 @@ async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Dep
 
     # Check if destination file exists and if we can overwrite it
     try:
-        dst_contents = volume.listdir(dst_path)
+        dst_contents = await volume.listdir.aio(dst_path)
         if dst_contents:
             raise HTTPException(
                 status_code=400,
@@ -450,11 +450,11 @@ async def handle_file_download(
                 user_settings.hugging_face_token.strip() or hugging_face_token
             )
 
-        volume = lookup_volume(volume_name, create_if_missing=True)
+        volume = await lookup_volume(volume_name, create_if_missing=True)
         full_path = os.path.join(folder_path, filename)
 
         try:
-            file_exists = does_file_exist(full_path, volume)
+            file_exists = await does_file_exist(full_path, volume)
             if file_exists:
                 raise HTTPException(status_code=400, detail="File already exists.")
         except grpclib.exceptions.GRPCError as e:
@@ -731,9 +731,9 @@ async def create_model_error_record(
 #     return res
 
 
-def does_file_exist(path: str, volume: Volume) -> bool:
+async def does_file_exist(path: str, volume: Volume) -> bool:
     try:
-        contents = volume.listdir(path)
+        contents = await volume.listdir.aio(path)
         if not contents:
             return False
         if len(contents) == 1 and contents[0].type == FILE_TYPE:
@@ -765,9 +765,9 @@ async def validate_file_path_aio(path: str, volume: Volume):
             return False, str(e)
 
 
-def validate_file_path(path: str, volume: Volume):
+async def validate_file_path(path: str, volume: Volume):
     try:
-        contents = volume.listdir(path)
+        contents = await volume.listdir.aio(path)
         if not contents:
             return False, "No file found or the first item is not a file."
         if len(contents) > 1:
@@ -880,7 +880,7 @@ async def check_file_existence(
         
         full_path = os.path.join(custom_path, filename)
         try:
-            contents = volume.listdir(full_path)
+            contents = await volume.listdir.aio(full_path)
             if contents:
                 await create_model_error_record(
                     request=request,
@@ -1202,7 +1202,7 @@ async def add_huggingface_repo(
         
         # Check if the target folder already exists
         try:
-            contents = volume.listdir(target_folder)
+            contents = await volume.listdir.aio(target_folder)
             if contents:
                 # Folder exists and has content
                 raise HTTPException(
