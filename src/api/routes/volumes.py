@@ -1,4 +1,6 @@
 import time
+
+from api.utils.multi_level_cache import multi_level_cached
 from .types import Model
 from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
 from typing import Any, Dict, List, Tuple, Union, Optional, Literal
@@ -166,33 +168,41 @@ async def get_downloading_models(request: Request, db: AsyncSession):
 
 @router.get("/volume/private-models", response_model=List[ModalVolFile])
 async def private_models(
-    request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
+    request: Request, db: AsyncSession = Depends(get_db)
 ):
     volume_name = await get_volume_name(request, db)
-    try:
-        volume = lookup_volume(volume_name, create_if_missing=True)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return await get_volumn_files(volume_name)
 
-    try:
-        return volume.listdir("/", recursive=True)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+public_volume_name = os.environ.get("SHARED_MODEL_VOLUME_NAME")
 
 @router.get("/volume/public-models", response_model=List[ModalVolFile])
 async def public_models(
-    request: Request, disable_cache: bool = False, db: AsyncSession = Depends(get_db)
+    request: Request
 ):
-    volume_name  = os.environ.get("SHARED_MODEL_VOLUME_NAME")
-    try:
-        volume = lookup_volume(volume_name, create_if_missing=True)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    try:
-        return volume.listdir("/", recursive=True)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return await get_volumn_files(public_volume_name)
+
+@multi_level_cached(
+    # key_prefix="api_key",
+    # Time for local memory cache to refresh from redis
+    ttl_seconds=2,
+    # Time for redis to refresh from source (modal)
+    redis_ttl_seconds=5,
+    version="1.0",
+    key_builder=lambda key: f"volume_files_{key}",
+)
+async def get_volumn_files(key):
+    volume = await lookup_volume(key, create_if_missing=True)
+    files = await volume.listdir.aio("/", recursive=True)
+    # Convert to dictionaries for JSON serialization
+    return [
+        {
+            "path": file.path,
+            "type": file.type,
+            "size": file.size,
+            "mtime": file.mtime
+        }
+        for file in files
+    ]
 
 
 @router.get("/volume/downloading-models", response_model=List[Model])
@@ -782,9 +792,9 @@ def is_valid_filename(filename):
         return False
 
 
-def lookup_volume(volume_name: str, create_if_missing: bool = False):
+async def lookup_volume(volume_name: str, create_if_missing: bool = False):
     try:
-        return Volume.lookup(volume_name, create_if_missing=create_if_missing)
+        return await Volume.lookup.aio(volume_name, create_if_missing=create_if_missing)
     except Exception as e:
         raise Exception(f"Can't find Volume: {e}")
 
