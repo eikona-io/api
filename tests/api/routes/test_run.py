@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import requests
 import os
@@ -7,6 +8,7 @@ import os
 https://linear.app/comfy-deploy/project/test-case-81d2e9daade5/overview
 **************************************************
 """
+
 
 def get_ngrok_url_with_retry(max_retries=5, delay=1):
     """Get ngrok URL with retries"""
@@ -110,15 +112,19 @@ async def paid_user():
 
     redis = Redis(url=redis_url, token=redis_token)
     data = {
-        "plans": ["business_monthly"],
-        "names": [],
-        "prices": [],
-        "amount": [],
-        "charges": [],
-        "cancel_at_period_end": False,
-        "canceled_at": None,
-        "payment_issue": False,
-        "payment_issue_reason": "",
+        "data": {
+            "plans": ["business_monthly"],
+            "names": [],
+            "prices": [],
+            "amount": [],
+            "charges": [],
+            "cancel_at_period_end": False,
+            "canceled_at": None,
+            "payment_issue": False,
+            "payment_issue_reason": "",
+        },
+        "version": "1.0",
+        "timestamp": int(datetime.now().timestamp()),
     }
     redis.set(f"plan:{user_id}", json.dumps(data))
     print("redis set", redis.get(f"plan:{user_id}"))
