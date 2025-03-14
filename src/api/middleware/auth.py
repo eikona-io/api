@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 from api.routes.utils import select
+from api.utils.multi_level_cache import multi_level_cached
 from fastapi import Request, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
@@ -9,7 +10,8 @@ from typing import Optional, List
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_
 from api.models import APIKey
-from api.database import get_db
+from api.database import get_db, get_db_context
+from hashlib import sha256
 
 JWT_SECRET = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
@@ -31,14 +33,27 @@ async def parse_clerk_jwt(token: str) -> Optional[dict]:
     except JWTError:
         return None
 
+# Function to hash API key
+def hash_api_key(key: str) -> str:
+    return sha256(key.encode()).hexdigest()
 
 # Function to check if key is revoked
-async def is_key_revoked(key: str, db: AsyncSession) -> bool:
+@multi_level_cached(
+    key_prefix="api_key",
+    # Time for local memory cache to refresh from redis
+    ttl_seconds=2,
+    # Time for redis to refresh from source (autumn)
+    redis_ttl_seconds=5,
+    version="1.0",
+    key_builder=lambda key: f"api_key:{hash_api_key(key)}",
+)
+async def is_key_revoked(key: str) -> bool:
     query = select(APIKey).where(APIKey.key == key, APIKey.revoked == True)
-    result = await db.execute(query)
-    revoked_key = result.scalar_one_or_none()
-    # logger.info(f"Revoked key: {revoked_key}")
-    return revoked_key is not None
+    async with get_db_context() as db:
+        result = await db.execute(query)
+        revoked_key = result.scalar_one_or_none()
+        # logger.info(f"Revoked key: {revoked_key}")
+        return revoked_key is not None
 
 
 async def get_api_keys(request: Request, db: AsyncSession) -> List[APIKey]:
@@ -134,8 +149,9 @@ async def create_api_key(request: Request, db: AsyncSession):
     return {"key": api_key.key}
 
 # Dependency to get user data from token
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
+async def get_current_user(request: Request):
     # Check for cd_token in query parameters
+    # Coming from native run
     cd_token = request.query_params.get("cd_token")
 
     # Check for Authorization header
@@ -148,20 +164,25 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     else:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 
+    # Check API auth
     user_data = await parse_jwt(token)
 
+    is_clerk_token = False
+
+    # Check Clerk auth
     if not user_data:
         user_data = await parse_clerk_jwt(token)
         # backward compatibility for old clerk tokens
         if user_data is not None:
             user_data["user_id"] = user_data["sub"]
+            is_clerk_token = True
 
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     # If the key has no expiration, it's not a temporary key, so we check if it's revoked
-    if "exp" not in user_data:
-        if await is_key_revoked(token, db):
+    if "exp" not in user_data and not is_clerk_token:
+        if await is_key_revoked(token):
             raise HTTPException(status_code=401, detail="Revoked token")
 
     return user_data
