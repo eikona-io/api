@@ -124,7 +124,7 @@ async def paid_user():
             "payment_issue_reason": "",
         },
         "version": "1.0",
-        "timestamp": datetime.now().timestamp(),
+        "timestamp": int(datetime.now().timestamp()),
     }
     redis.set(f"plan:{user_id}", json.dumps(data))
     print("redis set", redis.get(f"plan:{user_id}"))
