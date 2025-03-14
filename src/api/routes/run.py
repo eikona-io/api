@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
 import fal_client
-from .internal import insert_to_clickhouse, send_realtime_update, send_workflow_update
+from .internal import insert_to_clickhouse
 from .utils import (
     clean_up_outputs,
     ensure_run_timeout,

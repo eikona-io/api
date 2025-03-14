@@ -15,7 +15,7 @@ from fastapi import (
 import asyncio
 import clickhouse_connect
 from uuid import uuid4
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from fastapi.responses import RedirectResponse
 from pydantic import UUID4, BaseModel, Field
 from typing import Optional, Any, cast
@@ -39,8 +39,6 @@ from .utils import (
     post_process_outputs,
     retry_fetch,
     select,
-    send_realtime_update,
-    send_workflow_update,
 )
 from sqlalchemy import update, case, and_
 
@@ -62,6 +60,7 @@ from api.utils.autumn import send_autumn_usage_event
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
 
 async def send_webhook(workflow_run, updatedAt: datetime, run_id: str, type: str = "run.updated"):
     # try:
@@ -85,17 +84,43 @@ async def send_webhook(workflow_run, updatedAt: datetime, run_id: str, type: str
 
     options = {"method": "POST", "headers": headers, "json": payload}
 
+    start_time = time.time()
     response = await retry_fetch(url, options)
+    latency_ms = (time.time() - start_time) * 1000
     if response.ok:
-        logging.info("Webhook sent successfully")
+        logfire.info("Webhook sent successfully", extra={
+            "latency_ms": latency_ms,
+            "workflow_run_id": workflow_run["id"],
+        })
+        logger.info(f"POST webhook {response.status_code}", extra={
+            "status_code": response.status_code,
+            "route": "webhook",  # Use low-cardinality route path
+            "full_route": "webhook",
+            "function_name": "send_webhook",
+            "method": "POST",
+            # "user_id": workflow_run["user_id"],
+            # "org_id": workflow_run["org_id"],
+            "latency_ms": latency_ms
+        })
         return {"status": "success", "message": "Webhook sent successfully"}
     else:
-        logging.info(
-            f"Webhook failed with status {response.status}",
-        )
         logfire.error(
             f"Webhook failed with status {response.status}",
-            attributes={"workflow_run_id": workflow_run["id"]},
+            workflow_run_id=workflow_run["id"],
+        )
+        logger.error(f"POST webhook {response.status_code}", extra={
+            "status_code": response.status_code,
+            "route": "webhook",  # Use low-cardinality route path
+            "full_route": "webhook",
+            "function_name": "send_webhook",
+            "method": "POST",
+            # "user_id": workflow_run["user_id"],
+            # "org_id": workflow_run["org_id"],
+            "latency_ms": latency_ms
+        })
+        logger.error(
+            f"Webhook failed with status {response.status}",
+            workflow_run_id=workflow_run["id"],
         )
         return {
             "status": "error",
@@ -414,6 +439,57 @@ async def update_run(
         # Add modal_function_call_id if it's provided and the existing value is empty
         if body.modal_function_call_id:
             update_values["modal_function_call_id"] = body.modal_function_call_id
+            
+        if body.status == "success":
+            logfire.info("Workflow run success", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
+            logger.info("Workflow run success", extra={
+                "route": "run-status/success",  # Use low-cardinality route path
+                "full_route": "run-status",
+                "function_name": "update_run",
+                "method": "POST",
+                "status_code": 200,
+                "user_id": workflow_run.user_id,
+                "org_id": workflow_run.org_id,
+                "workflow_run_id": workflow_run.id,
+                "workflow_id": workflow_run.workflow_id,
+            })
+        elif body.status == "failed":
+            logfire.error("Workflow run failed", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
+            logger.error("Workflow run failed", extra={
+                "route": "run-status/failed",  # Use low-cardinality route path
+                "full_route": "run-status",
+                "function_name": "update_run",
+                "method": "POST",
+                "status_code": 500,
+                "user_id": workflow_run.user_id,
+                "org_id": workflow_run.org_id,
+                "workflow_run_id": workflow_run.id,
+                "workflow_id": workflow_run.workflow_id,
+            })
+        elif body.status == "timeout":
+            logfire.error("Workflow run timeout", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
+            logger.warning("Workflow run timeout", extra={
+                "route": "run-status/timeout",  # Use low-cardinality route path
+                "full_route": "run-status",
+                "function_name": "update_run",
+                "method": "POST",
+                "user_id": workflow_run.user_id,
+                "org_id": workflow_run.org_id,
+                "workflow_run_id": workflow_run.id,
+                "workflow_id": workflow_run.workflow_id,
+            })
+        elif body.status == "cancelled":
+            logfire.error("Workflow run cancelled", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
+            logger.warning("Workflow run cancelled", extra={
+                "route": "run-status/cancelled",  # Use low-cardinality route path
+                "full_route": "run-status",
+                "function_name": "update_run",
+                "method": "POST",
+                "user_id": workflow_run.user_id,
+                "org_id": workflow_run.org_id,
+                "workflow_run_id": workflow_run.id,
+                "workflow_id": workflow_run.workflow_id,
+            })
 
         update_stmt = (
             update(WorkflowRun)

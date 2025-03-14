@@ -621,8 +621,8 @@ async def create_topic_if_not_exists(project_id: str, topic_id: str):
         raise
 
 
-async def send_realtime_update(id: str, data: dict):
-    return
+# async def send_realtime_update(id: str, data: dict):
+#     return
 
 
 async def fetch_with_timeout(url, options, timeout=20):
