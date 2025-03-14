@@ -1,7 +1,9 @@
+import asyncio
 from datetime import datetime
 import json
 import requests
 import os
+from aiohttp import web 
 
 """
 **************PLEASE UPDATE THE DOCS**************
@@ -377,10 +379,10 @@ Paid user
 """
 
 
-@pytest_asyncio.fixture(scope="function")
+@pytest_asyncio.fixture(scope="session")
 async def test_serverless_machine(app, paid_user):
     machine_data = {
-        "name": "test-serverless-machine",
+        "name": "test-serverless-machine-paid",
         "gpu": "CPU",
         "wait_for_build": True,
     }
@@ -392,8 +394,45 @@ async def test_serverless_machine(app, paid_user):
 
         yield machine_id
 
-        delete_response = await client.delete(f"/machine/{machine_id}")
+        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
         assert delete_response.status_code == 200
+        
+
+# @pytest_asyncio.fixture(scope="session")
+# async def test_serverless_machine_free_user(app, test_free_user):
+#     """Fixture that creates and tears down a test serverless machine"""
+#     async with get_test_client(app, test_free_user) as client:
+#         machine_data = {
+#             "name": "test-serverless-machine",
+#             "gpu": "CPU",
+#             "wait_for_build": True,
+#         }
+#         print("Creating test serverless machine")
+#         response = await client.post("/machine/serverless", json=machine_data)
+
+#         # Add detailed error logging
+#         if response.status_code != 200:
+#             print(
+#                 f"Failed to create serverless machine. Status code: {response.status_code}"
+#             )
+#             print(f"Response content: {response.text}")
+#             raise AssertionError(
+#                 f"Failed to create serverless machine: {response.text}"
+#             )
+
+#         machine_id = response.json()["id"]
+#         print(f"Successfully created serverless machine with ID: {machine_id}")
+
+#         yield machine_id
+
+#         # Add error logging for cleanup as well
+#         delete_response = await client.delete(f"/machine/{machine_id}?force=true")
+#         if delete_response.status_code != 200:
+#             print(
+#                 f"Failed to delete serverless machine. Status code: {delete_response.status_code}"
+#             )
+#             print(f"Response content: {delete_response.text}")
+#         assert delete_response.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -472,43 +511,6 @@ async def test_update_serverless_machine(app, paid_user, test_serverless_machine
             == update_data["docker_command_steps"]
         )
 
-
-'''
-@pytest_asyncio.fixture(scope="session")
-async def test_serverless_machine(app, test_user):
-    """Fixture that creates and tears down a test serverless machine"""
-    async with get_test_client(app, test_user) as client:
-        machine_data = {
-            "name": "test-serverless-machine",
-            "gpu": "CPU",
-            "wait_for_build": True,
-        }
-        print("Creating test serverless machine")
-        response = await client.post("/machine/serverless", json=machine_data)
-
-        # Add detailed error logging
-        if response.status_code != 200:
-            print(
-                f"Failed to create serverless machine. Status code: {response.status_code}"
-            )
-            print(f"Response content: {response.text}")
-            raise AssertionError(
-                f"Failed to create serverless machine: {response.text}"
-            )
-
-        machine_id = response.json()["id"]
-        print(f"Successfully created serverless machine with ID: {machine_id}")
-
-        yield machine_id
-
-        # Add error logging for cleanup as well
-        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
-        if delete_response.status_code != 200:
-            print(
-                f"Failed to delete serverless machine. Status code: {delete_response.status_code}"
-            )
-            print(f"Response content: {delete_response.text}")
-        assert delete_response.status_code == 200
 
 
 basic_workflow_json = """
@@ -641,9 +643,9 @@ basic_workflow_api_json = """
 
 
 @pytest_asyncio.fixture(scope="session")
-async def test_create_workflow_deployment(app, test_user, test_serverless_machine):
+async def test_create_workflow_deployment(app, paid_user, test_serverless_machine):
     """Test creating a workflow and deployment"""
-    async with get_test_client(app, test_user) as client:
+    async with get_test_client(app, paid_user) as client:
         workflow_data = {
             "name": "test-workflow",
             "workflow_json": basic_workflow_json,
@@ -680,9 +682,9 @@ async def test_create_workflow_deployment(app, test_user, test_serverless_machin
 
 
 @pytest.mark.asyncio
-async def test_run_deployment_sync(app, test_user, test_create_workflow_deployment):
+async def test_run_deployment_sync(app, paid_user, test_create_workflow_deployment):
     """Test running a deployment"""
-    async with get_test_client(app, test_user) as client:
+    async with get_test_client(app, paid_user) as client:
         deployment_id = test_create_workflow_deployment
         response = await client.post(
             "/run/deployment/sync", json={"deployment_id": deployment_id}
@@ -725,7 +727,7 @@ async def create_webhook_server():
 
 @pytest.mark.asyncio
 async def test_run_deployment_with_webhook(
-    app, test_user, test_create_workflow_deployment
+    app, paid_user, test_create_workflow_deployment
 ):
     """Test running a deployment with webhook notifications"""
     deployment_id = test_create_workflow_deployment
@@ -733,7 +735,7 @@ async def test_run_deployment_with_webhook(
     async with create_webhook_server() as (webhook_url, received_webhooks):
         webhook_url_with_params = f"{webhook_url}?target_events=run.output,run.updated"
 
-        async with get_test_client(app, test_user) as client:
+        async with get_test_client(app, paid_user) as client:
             response = await client.post(
                 "/run/deployment/sync",
                 json={
@@ -777,7 +779,7 @@ async def test_run_deployment_with_webhook(
 
 @pytest.mark.asyncio
 async def test_run_deployment_with_webhook_no_target_events(
-    app, test_user, test_create_workflow_deployment
+    app, paid_user, test_create_workflow_deployment
 ):
     """Test running a deployment with webhook notifications without specifying target_events - should receive run.updated by default but not run.output"""
     deployment_id = test_create_workflow_deployment
@@ -785,7 +787,7 @@ async def test_run_deployment_with_webhook_no_target_events(
     async with create_webhook_server() as (webhook_url, received_webhooks):
         # Note: Not specifying target_events in the webhook URL - should get run.updated by default
 
-        async with get_test_client(app, test_user) as client:
+        async with get_test_client(app, paid_user) as client:
             response = await client.post(
                 "/run/deployment/sync",
                 json={"deployment_id": deployment_id, "webhook": webhook_url},
@@ -826,22 +828,6 @@ async def test_run_deployment_with_webhook_no_target_events(
                 assert webhook["run_id"] == run_id, "Run ID mismatch in webhook"
 
 
-@pytest.mark.asyncio
-async def test_run_deployment_on_a_wrong_user(
-    app, test_user, test_user_2, test_create_workflow_deployment
-):
-    """Test running a deployment with webhook notifications and machine"""
-    deployment_id = test_create_workflow_deployment
-
-    async with get_test_client(app, test_user_2) as client:
-        response = await client.post(
-            "/run/deployment/sync", json={"deployment_id": deployment_id}
-        )
-        print(f"Response status: {response.status_code}")
-        print(f"Response content: {response.text}")
-        assert response.status_code == 404, "Expected 403 status code for wrong user"
-
-
 @pytest_asyncio.fixture(scope="session")
 async def test_free_user():
     """Fixture for a test user with free plan"""
@@ -857,16 +843,31 @@ async def test_free_user():
         await db.refresh(user)
     yield user
 
-
 @pytest.mark.asyncio
-async def test_free_user_session_timeout_limit(app, test_user, test_serverless_machine):
+async def test_run_deployment_on_a_wrong_user(
+    app, paid_user, test_free_user, test_create_workflow_deployment
+):
+    """Test running a deployment with webhook notifications and machine"""
+    deployment_id = test_create_workflow_deployment
+
+    async with get_test_client(app, test_free_user) as client:
+        response = await client.post(
+            "/run/deployment/sync", json={"deployment_id": deployment_id}
+        )
+        print(f"Response status: {response.status_code}")
+        print(f"Response content: {response.text}")
+        assert response.status_code == 404, "Expected 403 status code for wrong user"
+
+'''
+@pytest.mark.asyncio
+async def test_free_user_session_timeout_limit(app, test_free_user, test_serverless_machine_free_user):
     """Test that free users cannot set timeout beyond 30 minutes"""
-    async with get_test_client(app, test_user) as client:
+    async with get_test_client(app, test_free_user) as client:
         # Test creating session with timeout > 30 minutes
         response = await client.post(
             "/session/dynamic",
             json={
-                "machine_id": test_serverless_machine,
+                "machine_id": test_serverless_machine_free_user,
                 "timeout": 31,
                 "gpu": "CPU",
                 "wait_for_server": True,
@@ -882,7 +883,7 @@ async def test_free_user_session_timeout_limit(app, test_user, test_serverless_m
         response = await client.post(
             "/session/dynamic",
             json={
-                "machine_id": test_serverless_machine,
+                "machine_id": test_serverless_machine_free_user,
                 "timeout": 15,
                 "gpu": "CPU",
                 "wait_for_server": True,
@@ -921,19 +922,19 @@ async def test_free_user_session_timeout_limit(app, test_user, test_serverless_m
 
 
 @pytest.mark.asyncio
-async def test_free_user_concurrent_sessions(app, test_user, test_serverless_machine):
+async def test_free_user_concurrent_sessions(app, test_free_user, test_serverless_machine_free_user):
     """Test that free users cannot create concurrent sessions"""
-    print(f"\nTest user: {test_user.id}, {test_user.username}")
+    print(f"\nTest user: {test_free_user.id}, {test_free_user.username}")
     # test_serverless_machine = None
-    print(f"Test machine: {test_serverless_machine}")
+    print(f"Test machine: {test_serverless_machine_free_user}")
 
-    async with get_test_client(app, test_user) as client:
+    async with get_test_client(app, test_free_user) as client:
         # Create first session
         print("\nCreating first session...")
         response = await client.post(
             "/session/dynamic",
             json={
-                "machine_id": test_serverless_machine,
+                "machine_id": test_serverless_machine_free_user,
                 "timeout": 15,
                 "gpu": "CPU",
                 "wait_for_server": True,
@@ -958,7 +959,7 @@ async def test_free_user_concurrent_sessions(app, test_user, test_serverless_mac
         response = await client.post(
             "/session/dynamic",
             json={
-                "machine_id": test_serverless_machine,
+                "machine_id": test_serverless_machine_free_user,
                 "timeout": 15,
                 "gpu": "CPU",
                 "wait_for_server": True,
