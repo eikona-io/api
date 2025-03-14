@@ -62,7 +62,10 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-async def send_webhook(workflow_run, updatedAt: datetime, run_id: str, type: str = "run.updated"):
+
+async def send_webhook(
+    workflow_run, updatedAt: datetime, run_id: str, type: str = "run.updated"
+):
     # try:
     url = workflow_run["webhook"]
     extra_headers = {}  # You may want to define this based on your requirements
@@ -88,39 +91,45 @@ async def send_webhook(workflow_run, updatedAt: datetime, run_id: str, type: str
     response = await retry_fetch(url, options)
     latency_ms = (time.time() - start_time) * 1000
     if response.ok:
-        logfire.info("Webhook sent successfully", extra={
-            "latency_ms": latency_ms,
-            "workflow_run_id": workflow_run["id"],
-        })
-        logger.info(f"POST webhook {response.status_code}", extra={
-            "status_code": response.status_code,
-            "route": "webhook",  # Use low-cardinality route path
-            "full_route": "webhook",
-            "function_name": "send_webhook",
-            "method": "POST",
-            # "user_id": workflow_run["user_id"],
-            # "org_id": workflow_run["org_id"],
-            "latency_ms": latency_ms
-        })
+        logfire.info(
+            "Webhook sent successfully",
+            workflow_run_id=workflow_run["id"],
+            workflow_id=workflow_run["workflow_id"],
+            url=url,
+        )
+        logger.info(
+            f"POST webhook {response.status_code}",
+            extra={
+                "status_code": response.status_code,
+                "route": "webhook",  # Use low-cardinality route path
+                "full_route": "webhook",
+                "function_name": "send_webhook",
+                "method": "POST",
+                # "user_id": workflow_run["user_id"],
+                # "org_id": workflow_run["org_id"],
+                "latency_ms": latency_ms,
+            },
+        )
         return {"status": "success", "message": "Webhook sent successfully"}
     else:
         logfire.error(
             f"Webhook failed with status {response.status}",
             workflow_run_id=workflow_run["id"],
+            workflow_id=workflow_run["workflow_id"],
+            url=url,
         )
-        logger.error(f"POST webhook {response.status_code}", extra={
-            "status_code": response.status_code,
-            "route": "webhook",  # Use low-cardinality route path
-            "full_route": "webhook",
-            "function_name": "send_webhook",
-            "method": "POST",
-            # "user_id": workflow_run["user_id"],
-            # "org_id": workflow_run["org_id"],
-            "latency_ms": latency_ms
-        })
         logger.error(
-            f"Webhook failed with status {response.status}",
-            workflow_run_id=workflow_run["id"],
+            f"POST webhook {response.status_code}",
+            extra={
+                "status_code": response.status_code,
+                "route": "webhook",  # Use low-cardinality route path
+                "full_route": "webhook",
+                "function_name": "send_webhook",
+                "method": "POST",
+                # "user_id": workflow_run["user_id"],
+                # "org_id": workflow_run["org_id"],
+                "latency_ms": latency_ms,
+            },
         )
         return {
             "status": "error",
@@ -353,34 +362,38 @@ async def update_run(
         )
         workflow_run = existing_run.scalar_one_or_none()
         workflow_run = cast(WorkflowRun, workflow_run)
-        
+
         if workflow_run.webhook is not None:
             try:
                 # Parse the webhook URL and get query parameters
                 parsed_url = urlparse(workflow_run.webhook)
                 query_params = {}
-                
+
                 if parsed_url.query:
                     # Safely parse query parameters
-                    for param in parsed_url.query.split('&'):
+                    for param in parsed_url.query.split("&"):
                         try:
-                            if '=' in param:
-                                key, value = param.split('=', 1)
+                            if "=" in param:
+                                key, value = param.split("=", 1)
                                 query_params[key] = value
                         except Exception:
                             # Skip malformed query parameters
                             continue
-                
+
                 # Get target_events from query params and split into list
-                target_events = query_params.get('target_events', '').split(',')
-                target_events = [event.strip() for event in target_events if event.strip()]
-                
+                target_events = query_params.get("target_events", "").split(",")
+                target_events = [
+                    event.strip() for event in target_events if event.strip()
+                ]
+
                 # Send webhook if no target_events specified or if the event type is in target_events
                 if "run.output" in target_events:
                     workflow_run_data = workflow_run.to_dict()
                     workflow_run_data["outputs"] = [newOutput.to_dict()]
                     asyncio.create_task(
-                        send_webhook(workflow_run_data, updated_at, workflow_run.id, "run.output")
+                        send_webhook(
+                            workflow_run_data, updated_at, workflow_run.id, "run.output"
+                        )
                     )
             except Exception as e:
                 # Log the error but don't send webhook
@@ -439,64 +452,91 @@ async def update_run(
         # Add modal_function_call_id if it's provided and the existing value is empty
         if body.modal_function_call_id:
             update_values["modal_function_call_id"] = body.modal_function_call_id
-            
+
         if body.status == "success":
-            logfire.info("Workflow run success", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
-            logger.info("Workflow run success", extra={
-                "route": "run-status/success",  # Use low-cardinality route path
-                "full_route": "run-status",
-                "function_name": "update_run",
-                "method": "POST",
-                "status_code": 200,
-                "user_id": workflow_run.user_id,
-                "org_id": workflow_run.org_id,
-                "workflow_run_id": workflow_run.id,
-                "workflow_id": workflow_run.workflow_id,
-            })
+            logfire.info(
+                "Workflow run success",
+                workflow_run_id=workflow_run.id,
+                workflow_id=workflow_run.workflow_id,
+            )
+            logger.info(
+                "Workflow run success",
+                extra={
+                    "route": "run-status/success",  # Use low-cardinality route path
+                    "full_route": "run-status",
+                    "function_name": "update_run",
+                    "method": "POST",
+                    "status_code": 200,
+                    "user_id": workflow_run.user_id,
+                    "org_id": workflow_run.org_id,
+                    "workflow_run_id": workflow_run.id,
+                    "workflow_id": workflow_run.workflow_id,
+                },
+            )
         elif body.status == "failed":
-            logfire.error("Workflow run failed", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
-            logger.error("Workflow run failed", extra={
-                "route": "run-status/failed",  # Use low-cardinality route path
-                "full_route": "run-status",
-                "function_name": "update_run",
-                "method": "POST",
-                "status_code": 500,
-                "user_id": workflow_run.user_id,
-                "org_id": workflow_run.org_id,
-                "workflow_run_id": workflow_run.id,
-                "workflow_id": workflow_run.workflow_id,
-            })
+            logfire.error(
+                "Workflow run failed",
+                workflow_run_id=workflow_run.id,
+                workflow_id=workflow_run.workflow_id,
+            )
+            logger.error(
+                "Workflow run failed",
+                extra={
+                    "route": "run-status/failed",  # Use low-cardinality route path
+                    "full_route": "run-status",
+                    "function_name": "update_run",
+                    "method": "POST",
+                    "status_code": 500,
+                    "user_id": workflow_run.user_id,
+                    "org_id": workflow_run.org_id,
+                    "workflow_run_id": workflow_run.id,
+                    "workflow_id": workflow_run.workflow_id,
+                },
+            )
         elif body.status == "timeout":
-            logfire.error("Workflow run timeout", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
-            logger.warning("Workflow run timeout", extra={
-                "route": "run-status/timeout",  # Use low-cardinality route path
-                "full_route": "run-status",
-                "function_name": "update_run",
-                "method": "POST",
-                "user_id": workflow_run.user_id,
-                "org_id": workflow_run.org_id,
-                "workflow_run_id": workflow_run.id,
-                "workflow_id": workflow_run.workflow_id,
-            })
+            logfire.error(
+                "Workflow run timeout",
+                workflow_run_id=workflow_run.id,
+                workflow_id=workflow_run.workflow_id,
+            )
+            logger.warning(
+                "Workflow run timeout",
+                extra={
+                    "route": "run-status/timeout",  # Use low-cardinality route path
+                    "full_route": "run-status",
+                    "function_name": "update_run",
+                    "method": "POST",
+                    "user_id": workflow_run.user_id,
+                    "org_id": workflow_run.org_id,
+                    "workflow_run_id": workflow_run.id,
+                    "workflow_id": workflow_run.workflow_id,
+                },
+            )
         elif body.status == "cancelled":
-            logfire.error("Workflow run cancelled", workflow_run_id=workflow_run.id, workflow_id=workflow_run.workflow_id)
-            logger.warning("Workflow run cancelled", extra={
-                "route": "run-status/cancelled",  # Use low-cardinality route path
-                "full_route": "run-status",
-                "function_name": "update_run",
-                "method": "POST",
-                "user_id": workflow_run.user_id,
-                "org_id": workflow_run.org_id,
-                "workflow_run_id": workflow_run.id,
-                "workflow_id": workflow_run.workflow_id,
-            })
+            logfire.error(
+                "Workflow run cancelled",
+                workflow_run_id=workflow_run.id,
+                workflow_id=workflow_run.workflow_id,
+            )
+            logger.warning(
+                "Workflow run cancelled",
+                extra={
+                    "route": "run-status/cancelled",  # Use low-cardinality route path
+                    "full_route": "run-status",
+                    "function_name": "update_run",
+                    "method": "POST",
+                    "user_id": workflow_run.user_id,
+                    "org_id": workflow_run.org_id,
+                    "workflow_run_id": workflow_run.id,
+                    "workflow_id": workflow_run.workflow_id,
+                },
+            )
 
         update_stmt = (
             update(WorkflowRun)
             .where(
                 and_(
-                    WorkflowRun.id == body.run_id,
-                    ~WorkflowRun.status.in_(endStatuses)
+                    WorkflowRun.id == body.run_id, ~WorkflowRun.status.in_(endStatuses)
                 )
             )
             .values(**update_values)
@@ -506,7 +546,9 @@ async def update_run(
         await db.refresh(workflow_run)
 
         # Get the updated workflow run
-        existing_run = await db.execute(select(WorkflowRun).where(WorkflowRun.id == body.run_id))
+        existing_run = await db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
+        )
         workflow_run = existing_run.scalar_one_or_none()
         workflow_run = cast(WorkflowRun, workflow_run)
 
@@ -560,13 +602,15 @@ async def update_run(
 
 
 @router.post("/gpu_event", include_in_schema=False)
-async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSession = Depends(get_db)):
+async def create_gpu_event(
+    request: Request, data: Any = Body(...), db: AsyncSession = Depends(get_db)
+):
     # legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     # new_url = f"{legacy_api_url}/api/end_gpu_event"
 
     # Extract data from request body
     machine_id = data.get("machine_id")
-    timestamp = data.get("timestamp") 
+    timestamp = data.get("timestamp")
     gpu_type = data.get("gpuType")
     ws_gpu_type = data.get("wsGpuType")
     event_type = data.get("eventType")
@@ -577,7 +621,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
     session_id = data.get("session_id")
     modal_function_id = data.get("modal_function_id")
     environment = data.get("environment", None)
-   
+
     # Get token data from request
     token = request.headers.get("authorization", "").replace("Bearer ", "")
     if not token:
@@ -588,14 +632,12 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
     if not token_data.get("user_id"):
         return {"error": "user_id required"}, 404
 
-    final_user_id = user_id or token_data["user_id"] 
+    final_user_id = user_id or token_data["user_id"]
     final_org_id = org_id if user_id else token_data["org_id"]
-
 
     try:
         if event_type == "gpu_start":
-            
-            if (session_id is not None):
+            if session_id is not None:
                 # find the gpu event with the session_id and update the start time
                 gpu_event = await db.execute(
                     select(GPUEvent).where(GPUEvent.session_id == session_id)
@@ -614,7 +656,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                     if machine:
                         final_user_id = machine.user_id
                         final_org_id = machine.org_id
-                
+
                 gpu_event = GPUEvent(
                     id=uuid4(),
                     user_id=final_user_id,
@@ -626,12 +668,12 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                     gpu_provider=gpu_provider,
                     session_id=session_id,
                     modal_function_id=modal_function_id,
-                    environment=environment
+                    environment=environment,
                 )
 
                 db.add(gpu_event)
                 await db.commit()
-            
+
             logging.info(f"gpu_event: {gpu_event.id}")
             return {"event_id": gpu_event.id}
 
@@ -646,7 +688,7 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 .values(end_time=datetime.fromisoformat(timestamp))
                 .returning(GPUEvent)
             )
-            
+
             result = await db.execute(stmt)
             event = result.scalar_one()
             await db.commit()
@@ -658,29 +700,27 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
                 start_time=event.start_time,
                 end_time=event.end_time,
                 environment=event.environment,
-                idempotency_key=str(event.id)
+                idempotency_key=str(event.id),
             )
 
             # Cancel all executing runs associated with the GPU event
-            if event.session_id is  not None:
+            if event.session_id is not None:
                 updateExecutingRuns = (
                     update(WorkflowRun)
                     .where(
-                    and_(
-                        WorkflowRun.gpu_event_id == event.session_id,
-                        ~WorkflowRun.status.in_(endStatuses)
+                        and_(
+                            WorkflowRun.gpu_event_id == event.session_id,
+                            ~WorkflowRun.status.in_(endStatuses),
+                        )
                     )
-                    )
-                    .values(status='cancelled')
+                    .values(status="cancelled")
                 )
 
                 await db.execute(updateExecutingRuns)
                 await db.commit()
-            
-            
 
             # Get headers from the incoming request
-            headers = dict(request.headers) 
+            headers = dict(request.headers)
             # Remove host header as it will be set by aiohttp
             headers.pop("host", None)
             # Send a POST request to the legacy API to update the user spent usage.
@@ -701,16 +741,14 @@ async def create_gpu_event(request: Request, data: Any = Body(...), db: AsyncSes
             #                 if k.lower() != "content-encoding"
             #             },
             #         )
-            return { "event_id": event.id }
+            return {"event_id": event.id}
 
             logging.info(f"end_time added to gpu_event: {event.id}")
-
 
     except Exception as e:
         logging.error(f"Error: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-
 
     # async with aiohttp.ClientSession(
     #     headers=headers,
@@ -874,7 +912,7 @@ async def handle_clerk_webhook(
 ):
     try:
         user_data = webhook_data.data
-        
+
         if webhook_data.type == "user.created":
             # Check if user already exists
             existing_user = await db.execute(
@@ -885,12 +923,13 @@ async def handle_clerk_webhook(
 
             # Get username fallback (username or first_name + last_name)
             username_fallback = user_data.get("username") or (
-                (user_data.get("first_name") or "") + 
-                (user_data.get("last_name") or "")
+                (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
             )
 
             # Get name fallback
-            name_fallback = (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
+            name_fallback = (user_data.get("first_name") or "") + (
+                user_data.get("last_name") or ""
+            )
             if not name_fallback:
                 name_fallback = username_fallback
 
@@ -900,7 +939,7 @@ async def handle_clerk_webhook(
                 username=username_fallback,
                 name=name_fallback,
                 created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
+                updated_at=datetime.now(timezone.utc),
             )
 
             db.add(new_user)
@@ -908,34 +947,35 @@ async def handle_clerk_webhook(
             await db.refresh(new_user)
 
             return {"status": "success", "message": "User created successfully"}
-            
+
         elif webhook_data.type == "user.updated":
             # Get existing user
             existing_user = await db.execute(
                 select(User).where(User.id == user_data["id"])
             )
             user = existing_user.scalar_one_or_none()
-            
+
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
-            
+
             # Update username and name with same fallback logic
             username_fallback = user_data.get("username") or (
-                (user_data.get("first_name") or "") + 
-                (user_data.get("last_name") or "")
+                (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
             )
 
-            name_fallback = (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
+            name_fallback = (user_data.get("first_name") or "") + (
+                user_data.get("last_name") or ""
+            )
             if not name_fallback:
                 name_fallback = username_fallback
-            
+
             user.username = username_fallback
             user.name = name_fallback
             user.updated_at = datetime.now(timezone.utc)
-            
+
             await db.commit()
             await db.refresh(user)
-            
+
             return {"status": "success", "message": "User updated successfully"}
 
         return {"status": "success", "message": "Event processed"}
