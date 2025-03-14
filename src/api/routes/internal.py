@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from urllib.parse import urlparse, quote
 from api.sqlmodels import WorkflowRunStatus
 from api.middleware.auth import parse_jwt
@@ -15,7 +16,7 @@ from fastapi import (
 import asyncio
 import clickhouse_connect
 from uuid import uuid4
-from datetime import datetime, time, timezone
+from datetime import datetime, timezone
 from fastapi.responses import RedirectResponse
 from pydantic import UUID4, BaseModel, Field
 from typing import Optional, Any, cast
@@ -87,9 +88,9 @@ async def send_webhook(
 
     options = {"method": "POST", "headers": headers, "json": payload}
 
-    # start_time = time.time()
+    start_time = time.time()
     response = await retry_fetch(url, options)
-    # latency_ms = (time.time() - start_time) * 1000
+    latency_ms = (time.time() - start_time) * 1000
     print("webhook response", response.ok)
     if response.ok:
         logfire.info(
@@ -108,7 +109,7 @@ async def send_webhook(
                 "method": "POST",
                 # "user_id": workflow_run["user_id"],
                 # "org_id": workflow_run["org_id"],
-                # "latency_ms": latency_ms,
+                "latency_ms": latency_ms,
             },
         )
         return {"status": "success", "message": "Webhook sent successfully"}
@@ -129,7 +130,7 @@ async def send_webhook(
                 "method": "POST",
                 # "user_id": workflow_run["user_id"],
                 # "org_id": workflow_run["org_id"],
-                # "latency_ms": latency_ms,
+                "latency_ms": latency_ms,
             },
         )
         return {
