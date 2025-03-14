@@ -155,10 +155,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return path.startswith("/api")
 
     async def authenticate(self, request: Request):
-        async with AsyncSessionLocal() as db:
-            request.state.current_user = await get_current_user(request, db)
-            
-            if request.state.current_user is None:
-                raise HTTPException(status_code=401, detail="Unauthorized")
+        request.state.current_user = await get_current_user(request)
+        
+        if request.state.current_user is None:
+            raise HTTPException(status_code=401, detail="Unauthorized")
         # print("User authenticated and added to request state")  # Test print
         # logger.info("Added current_user to request state")

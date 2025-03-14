@@ -106,6 +106,13 @@ class MultiLevelCache:
 # Create a global cache instance
 multi_cache = MultiLevelCache(maxsize=1000, ttl_seconds=3600, redis_ttl_seconds=86400)
 
+async def update_redis_cache(cache_key, *args, **kwargs):
+    redis_value = await multi_cache.redis.get(cache_key)
+    if redis_value:
+        parsed_value = json.loads(redis_value)
+        multi_cache.memory_cache[cache_key] = (parsed_value, datetime.now())
+        multi_cache._cleanup_if_needed()
+
 def multi_level_cached(
     key_prefix: str = "", 
     ttl_seconds: int = None,
@@ -157,26 +164,19 @@ def multi_level_cached(
                     # Use function-specific TTL for freshness check
                     if age < func_memory_ttl:
                         pass
-                    elif age < func_redis_ttl: #60
-                        redis_refresh_cache_key = f"{cache_key}:redis_refresh"
-                        
-                        async def update_redis_cache(cache_key, *args, **kwargs):
-                            redis_value = await multi_cache.redis.get(cache_key)
-                            if redis_value:
-                                parsed_value = json.loads(redis_value)
-                                multi_cache.memory_cache[cache_key] = (parsed_value, datetime.now())
-                                multi_cache._cleanup_if_needed()
-                                
-                        if redis_refresh_cache_key not in multi_cache.refresh_tasks or multi_cache.refresh_tasks[redis_refresh_cache_key].done():
-                            logfire.info(f"Invalidating memory cache: {cache_key}")
-                            multi_cache.refresh_tasks[redis_refresh_cache_key] = asyncio.create_task(
-                                update_redis_cache(cache_key, *args, **kwargs)
-                            )
                     elif last_updated_age > func_redis_ttl:
                         if cache_key not in multi_cache.refresh_tasks or multi_cache.refresh_tasks[cache_key].done():
                             logfire.warning(f"Invalidating redis cache: {cache_key}")
                             multi_cache.refresh_tasks[cache_key] = asyncio.create_task(
                                 refresh_func(cache_key, *args, **kwargs)
+                            )
+                    elif age < func_redis_ttl: #60
+                        redis_refresh_cache_key = f"{cache_key}:redis_refresh"
+                        
+                        if redis_refresh_cache_key not in multi_cache.refresh_tasks or multi_cache.refresh_tasks[redis_refresh_cache_key].done():
+                            logfire.info(f"Invalidating memory cache: {cache_key}")
+                            multi_cache.refresh_tasks[redis_refresh_cache_key] = asyncio.create_task(
+                                update_redis_cache(cache_key, *args, **kwargs)
                             )
                             
                     logfire.info(f"Returning cached memory value: {cache_key}")

@@ -7,7 +7,6 @@ from api.routes.types import PlanInfo
 from upstash_redis.asyncio import Redis
 import os
 from api.database import AsyncSessionLocal
-from .auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
