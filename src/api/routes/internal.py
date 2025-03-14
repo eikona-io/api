@@ -99,9 +99,9 @@ async def send_webhook(
             url=url,
         )
         logger.info(
-            f"POST webhook {response.status_code}",
+            f"POST webhook {response.status}",
             extra={
-                "status_code": response.status_code,
+                "status_code": response.status,
                 "route": "webhook",  # Use low-cardinality route path
                 "full_route": "webhook",
                 "function_name": "send_webhook",
@@ -120,9 +120,9 @@ async def send_webhook(
             url=url,
         )
         logger.error(
-            f"POST webhook {response.status_code}",
+            f"POST webhook {response.status}",
             extra={
-                "status_code": response.status_code,
+                "status_code": response.status,
                 "route": "webhook",  # Use low-cardinality route path
                 "full_route": "webhook",
                 "function_name": "send_webhook",
