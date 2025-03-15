@@ -126,6 +126,21 @@ async def get_comfy_runner(
 
     return runner
 
+async def get_optimized_comfy_runner(
+    machine_id: str, session_id: str | UUID, timeout: int, gpu: str
+):
+    logger.info(machine_id)
+    ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunnerOptimizedImports")
+    runner = ComfyDeployRunner.with_options(
+        concurrency_limit=1,
+        allow_concurrent_inputs=1000,
+        # 2 seconds minimum idle timeout
+        container_idle_timeout=2,
+        timeout=timeout * 60,
+        gpu=gpu if gpu != "CPU" else None,
+    )()
+
+    return runner
 
 class Session(BaseModel):
     session_id: str
@@ -234,7 +249,7 @@ async def create_session_background_task(
     gpu: str,
     status_queue: Optional[asyncio.Queue] = None,
 ):
-    runner = await get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
+    runner = await get_optimized_comfy_runner(machine_id, session_id, 60 * 24, gpu)
 
     try:
         runner.increase_timeout
@@ -243,7 +258,7 @@ async def create_session_background_task(
         has_increase_timeout = False
 
     if not has_increase_timeout:
-        runner = await get_comfy_runner(machine_id, session_id, timeout, gpu)
+        runner = await get_optimized_comfy_runner(machine_id, session_id, timeout, gpu)
 
     print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
