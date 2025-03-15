@@ -922,11 +922,10 @@ async def handle_civitai_model(
             
         # Select version (latest if not specified)
         if version_id:
-            selected_version = None
-            for version in civitai_info["modelVersions"]:
-                if str(version["id"]) == version_id:
-                    selected_version = version
-                    break
+            selected_version = next(
+                (v for v in civitai_info["modelVersions"] if str(v["id"]) == version_id),
+                civitai_info["modelVersions"][0]
+            )
         else:
             selected_version = civitai_info["modelVersions"][0]
         
