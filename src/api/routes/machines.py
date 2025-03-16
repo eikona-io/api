@@ -1,5 +1,6 @@
 import asyncio
 from datetime import timedelta
+import datetime
 import hashlib
 import json
 
@@ -33,7 +34,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .utils import generate_persistent_token, select, is_valid_uuid
-from sqlalchemy import func, cast, String, or_
+from sqlalchemy import func, text
 from fastapi.responses import JSONResponse
 
 from api.models import (
@@ -70,55 +71,99 @@ async def get_machines(
     is_self_hosted: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    if include_has_workflows:
-        # Include workflow check only when requested
-        workflow_exists = (
-            select(Workflow)
-            .where(Workflow.selected_machine_id == Machine.id)
-            .exists()
-            .correlate(Machine)
-        )
-        query = select(Machine, workflow_exists.label('has_workflows'))
-    else:
-        # Simple query without workflow check
-        query = select(Machine)
+    # Build the SQL query
+    params = {}
 
-    query = (
-        query
-        .order_by(Machine.created_at.desc())
-        .where(Machine.deleted == is_deleted)
-        .where(Machine.is_workspace == is_workspace)
-        .apply_org_check(request)
-        .paginate(limit, offset)
-    )
-    
+    # Base query with organization check
+    sql = """
+    SELECT m.id,
+        m.user_id,
+        m.name,
+        m.created_at,
+        m.updated_at,
+        m.type,
+        m.org_id,
+        m.status,
+        m.gpu,
+        m.machine_version,
+        m.machine_builder_version,
+        m.comfyui_version,
+        m.import_failed_logs,
+        m.machine_version_id,
+        m.is_workspace,
+    """
+
+    # Add workflow check if needed
+    if include_has_workflows:
+        sql += """
+        (SELECT COUNT(w.id) > 0 FROM "comfyui_deploy"."workflows" w WHERE w.selected_machine_id = m.id) AS has_workflows
+        """
+    else:
+        sql += "FALSE AS has_workflows"
+
+    sql += """
+    FROM "comfyui_deploy"."machines" m
+    WHERE m.is_workspace = :is_workspace
+    """
+    params["is_workspace"] = is_workspace
+
+    # Add organization check
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+        params["org_id"] = org_id
+    else:
+        sql += " AND m.user_id = :user_id AND m.org_id IS NULL"
+        params["user_id"] = user_id
+
+    # Add filters
+    if is_deleted is not None:
+        sql += " AND m.deleted = :is_deleted"
+        params["is_deleted"] = is_deleted
+
     if is_self_hosted:
-        query = query.where(or_(Machine.type == MachineType.CLASSIC, Machine.type == MachineType.RUNPOD_SERVERLESS))
+        sql += " AND (m.type = 'classic' OR m.type = 'runpod-serverless')"
     elif is_docker:
-        query = query.where(Machine.type == MachineType.COMFY_DEPLOY_SERVERLESS)
+        sql += " AND m.type = 'comfy-deploy-serverless'"
 
     if search:
-        query = query.where(
-            func.lower(Machine.name).contains(search.lower())
-        )
+        sql += " AND m.name ILIKE :search"
+        params["search"] = f"%{search}%"
 
-    result = await db.execute(query)
-    rows = result.unique().all()
+    # Add ordering and pagination
+    sql += """
+    ORDER BY m.created_at DESC
+    LIMIT :limit OFFSET :offset
+    """
+    params["limit"] = limit
+    params["offset"] = offset
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
 
     if not rows:
         return []
 
-    # Convert to dict based on whether we included workflow check
-    if include_has_workflows:
-        machines_data = [
-            {**row.Machine.to_dict(), 'has_workflows': row.has_workflows}
-            for row in rows
-        ]
-    else:
-        machines_data = [
-            row.to_dict() if isinstance(row, Machine) else row.Machine.to_dict()
-            for row in rows
-        ]
+    # Convert to dict
+    machines_data = []
+    for row in rows:
+        machine_dict = {}
+        for k, v in row.items():
+            if k != 'has_workflows':
+                # Handle various non-serializable types
+                if isinstance(v, UUID):
+                    machine_dict[k] = str(v)
+                elif isinstance(v, datetime.datetime):
+                    machine_dict[k] = v.isoformat()
+                else:
+                    machine_dict[k] = v
+
+        if include_has_workflows:
+            machine_dict['has_workflows'] = row['has_workflows']
+        machines_data.append(machine_dict)
 
     return JSONResponse(content=machines_data)
 
