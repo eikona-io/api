@@ -43,7 +43,7 @@ from .utils import (
 )
 from sqlalchemy import update, case, and_
 
-from api.database import AsyncSessionLocal, get_clickhouse_client, get_db
+from api.database import AsyncSessionLocal, get_clickhouse_client, get_db, get_db_context
 from api.models import (
     GPUEvent,
     Machine,
@@ -605,7 +605,10 @@ async def update_run(
 
 @router.post("/gpu_event", include_in_schema=False)
 async def create_gpu_event(
-    request: Request, data: Any = Body(...), db: AsyncSession = Depends(get_db)
+    request: Request,
+    data: Any = Body(...),
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     # legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
     # new_url = f"{legacy_api_url}/api/end_gpu_event"
@@ -705,21 +708,8 @@ async def create_gpu_event(
                 idempotency_key=str(event.id),
             )
 
-            # Cancel all executing runs associated with the GPU event
             if event.session_id is not None:
-                updateExecutingRuns = (
-                    update(WorkflowRun)
-                    .where(
-                        and_(
-                            WorkflowRun.gpu_event_id == event.session_id,
-                            ~WorkflowRun.status.in_(endStatuses),
-                        )
-                    )
-                    .values(status="cancelled")
-                )
-
-                await db.execute(updateExecutingRuns)
-                await db.commit()
+                background_tasks.add_task(cancel_executing_runs, event.session_id)
 
             # Get headers from the incoming request
             headers = dict(request.headers)
@@ -745,29 +735,30 @@ async def create_gpu_event(
             #         )
             return {"event_id": event.id}
 
-            logging.info(f"end_time added to gpu_event: {event.id}")
+            # logging.info(f"end_time added to gpu_event: {event.id}")
 
     except Exception as e:
         logging.error(f"Error: {e}")
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-    # async with aiohttp.ClientSession(
-    #     headers=headers,
-    #     # Explicitly configure compression
-    #     compress=True,
-    #     # Enable auto decompression
-    #     auto_decompress=True,
-    # ) as session:
-    #     async with session.post(new_url, json=data) as response:
-    #         content = await response.text()
-    #         if response.status >= 400:
-    #             raise HTTPException(status_code=response.status, detail=content)
-    #         return Response(
-    #             content=content,
-    #             status_code=response.status,
-    #             headers=dict(response.headers),
-    #         )
+
+async def cancel_executing_runs(session_id: str):
+    # Create a new database session for this background task
+    async with get_db_context() as db:
+        updateExecutingRuns = (
+            update(WorkflowRun)
+            .where(
+                and_(
+                    WorkflowRun.gpu_event_id == session_id,
+                    ~WorkflowRun.status.in_(endStatuses),
+                )
+            )
+            .values(status="cancelled")
+        )
+
+        await db.execute(updateExecutingRuns)
+        await db.commit()
 
 
 # @router.post("/machine-built", include_in_schema=False)
