@@ -987,12 +987,14 @@ async def get_machine_versions(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
 
     params = {
         "machine_id": machine_id,
-        "user_id": user_id,
         "limit": limit,
-        "offset": offset
+        "offset": offset,
+        "user_id": user_id,
+        "org_id": org_id,
     }
 
     sql = """
@@ -1005,10 +1007,19 @@ async def get_machine_versions(
         mv.updated_at,
         mv.comfyui_version,
         mv.gpu,
-        mv.status
+        mv.status,
+        m.org_id
     FROM "comfyui_deploy"."machine_versions" mv
+    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
     WHERE mv.machine_id = :machine_id
-    AND mv.user_id = :user_id
+    """
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+    else:
+        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+
+    sql += """
     ORDER BY mv.version DESC
     LIMIT :limit OFFSET :offset
     """
@@ -1041,10 +1052,12 @@ async def get_all_machine_versions(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
 
     params = {
         "machine_id": machine_id,
         "user_id": user_id,
+        "org_id": org_id,
     }
 
     sql = """
@@ -1057,10 +1070,19 @@ async def get_all_machine_versions(
         mv.updated_at,
         mv.comfyui_version,
         mv.gpu,
-        mv.status
+        mv.status,
+        m.org_id
     FROM "comfyui_deploy"."machine_versions" mv
+    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
     WHERE mv.machine_id = :machine_id
-    AND mv.user_id = :user_id
+    """
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+    else:
+        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+
+    sql += """
     ORDER BY mv.version DESC
     """
 
@@ -1094,15 +1116,37 @@ async def get_machine_version(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
 
-    machine_version = await db.execute(
-        select(MachineVersion).where(
-            MachineVersion.id == version_id,
-            MachineVersion.user_id == user_id,
-        )
-    )
-    machine_version = machine_version.scalars().first()
-    return JSONResponse(content=machine_version.to_dict())
+    params = {
+        "version_id": version_id,
+        "user_id": user_id,
+        "org_id": org_id,
+    }
+
+    sql = """
+    SELECT mv.*, m.org_id FROM "comfyui_deploy"."machine_versions" mv
+    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
+    WHERE mv.id = :version_id
+    """
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+    else:
+        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+
+    result = await db.execute(text(sql), params)
+    machine_version = result.mappings().first()
+
+    version_dict = {}
+    for k, v in machine_version.items():
+        if isinstance(v, UUID):
+            version_dict[k] = str(v)
+        elif isinstance(v, datetime.datetime):
+            version_dict[k] = v.isoformat()
+        else:
+            version_dict[k] = v
+    return JSONResponse(content=version_dict)
 
 
 class RollbackMachineVersionBody(BaseModel):
