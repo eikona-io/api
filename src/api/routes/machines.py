@@ -134,7 +134,7 @@ async def get_machines(
 
     # Add ordering and pagination
     sql += """
-    ORDER BY m.created_at DESC
+    ORDER BY m.updated_at DESC
     LIMIT :limit OFFSET :offset
     """
     params["limit"] = limit
@@ -175,29 +175,70 @@ async def get_all_machines(
     limit: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    machines_query = (
-        select(Machine)
-        .order_by(Machine.created_at.desc())
-        .where(~Machine.deleted)
-        .apply_org_check(request)
-    )
+    params = {}
+
+    sql = """
+    SELECT m.id,
+        m.user_id,
+        m.name,
+        m.created_at,
+        m.updated_at,
+        m.type,
+        m.org_id,
+        m.status,
+        m.gpu,
+        m.machine_version,
+        m.machine_builder_version,
+        m.comfyui_version,
+        m.import_failed_logs,
+        m.machine_version_id,
+        m.is_workspace
+    """
+
+    sql += """
+    FROM "comfyui_deploy"."machines" m
+    WHERE m.deleted = FALSE
+    """
+
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+        params["org_id"] = org_id
+    else:
+        sql += " AND m.user_id = :user_id AND m.org_id IS NULL"
+        params["user_id"] = user_id
 
     if search:
-        if is_valid_uuid(search):
-            # Exact UUID match - most efficient
-            machines_query = machines_query.where(Machine.id == search)
-        else:
-            # Name search using trigram similarity for better performance
-            machines_query = machines_query.where(Machine.name.ilike(f"%{search}%"))
+        sql += " AND m.name ILIKE :search"
+        params["search"] = f"%{search}%"
+
+    sql += " ORDER BY m.updated_at DESC"
 
     if limit:
-        machines_query = machines_query.limit(limit)
+        sql += " LIMIT :limit"
+        params["limit"] = limit
 
-    result = await db.execute(machines_query)
-    machines = result.unique().scalars().all()
+    # execute the query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
 
-    return JSONResponse(content=[machine.to_dict() for machine in machines])
+    # Convert to dict and handle UUID/datetime serialization
+    machines_data = []
+    for row in rows:
+        machine_dict = {}
+        for k, v in row.items():
+            # Handle various non-serializable types
+            if isinstance(v, UUID):
+                machine_dict[k] = str(v)
+            elif isinstance(v, datetime.datetime):
+                machine_dict[k] = v.isoformat()
+            else:
+                machine_dict[k] = v
+        machines_data.append(machine_dict)
 
+    return JSONResponse(content=machines_data)
 
 @router.get("/machine/{machine_id}", response_model=MachineModel)
 async def get_machine(
@@ -205,17 +246,74 @@ async def get_machine(
     machine_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    machine = await db.execute(
-        select(Machine)
-        .where(Machine.id == machine_id)
-        .where(~Machine.deleted)
-        .apply_org_check(request)
-    )
-    machine = machine.scalars().first()
-    if not machine:
+    params = {"machine_id": machine_id}
+
+    # Base query
+    sql = """
+    SELECT m.id,
+        m.user_id,
+        m.name,
+        m.org_id,
+        m.created_at,
+        m.updated_at,
+        m.type,
+        m.machine_version,
+        m.deleted,
+        m.import_failed_logs,
+        m.machine_version_id,
+        m.status,
+        m.gpu,
+        m.machine_builder_version,
+        m.comfyui_version,
+        m.is_workspace,
+        -- auto scaling
+        m.concurrency_limit,
+        m.run_timeout,
+        m.idle_timeout,
+        m.docker_command_steps,
+        m.keep_warm,
+        -- advanced
+        m.allow_concurrent_inputs,
+        m.base_docker_image,
+        m.python_version,
+        m.extra_args,
+        m.prestart_command,
+        m.install_custom_node_with_gpu
+    FROM "comfyui_deploy"."machines" m
+    WHERE m.id = :machine_id
+    AND m.deleted = FALSE
+    """
+
+    # Add organization check
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+        params["org_id"] = org_id
+    else:
+        sql += " AND m.user_id = :user_id AND m.org_id IS NULL"
+        params["user_id"] = user_id
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    row = result.mappings().first()
+
+    if not row:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    return JSONResponse(content=machine.to_dict())
+    # Convert to dict and handle UUID/datetime serialization
+    machine_dict = {}
+    for k, v in row.items():
+        # Handle various non-serializable types
+        if isinstance(v, UUID):
+            machine_dict[k] = str(v)
+        elif isinstance(v, datetime.datetime):
+            machine_dict[k] = v.isoformat()
+        else:
+            machine_dict[k] = v
+
+    return JSONResponse(content=machine_dict)
 
 
 @router.get("/machine/{machine_id}/events", response_model=List[GPUEventModel])
