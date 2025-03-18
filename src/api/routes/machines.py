@@ -949,16 +949,48 @@ async def get_machine_versions(
     # First check if user has access to this machine
     await get_machine(request, machine_id, db)
 
-    machine_versions = await db.execute(
-        select(MachineVersion)
-        .where(MachineVersion.machine_id == machine_id)
-        .order_by(MachineVersion.version.desc())
-        .paginate(limit, offset)
-    )
+    params = {
+        "machine_id": machine_id,
+        "limit": limit,
+        "offset": offset
+    }
 
-    return JSONResponse(
-        content=[version.to_dict() for version in machine_versions.scalars().all()]
-    )
+    sql = """
+    SELECT
+        mv.id,
+        mv.machine_id,
+        mv.version,
+        mv.user_id,
+        mv.created_at,
+        mv.updated_at,
+        mv.comfyui_version,
+        mv.gpu,
+        mv.status
+    FROM "comfyui_deploy"."machine_versions" mv
+    WHERE mv.machine_id = :machine_id
+    ORDER BY mv.version DESC
+    LIMIT :limit OFFSET :offset
+    """
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
+
+    # Convert to dict and handle UUID/datetime serialization
+    versions_data = []
+    for row in rows:
+        version_dict = {}
+        for k, v in row.items():
+            # Handle various non-serializable types
+            if isinstance(v, UUID):
+                version_dict[k] = str(v)
+            elif isinstance(v, datetime.datetime):
+                version_dict[k] = v.isoformat()
+            else:
+                version_dict[k] = v
+        versions_data.append(version_dict)
+
+    return JSONResponse(content=versions_data)
 
 
 @router.get("/machine/serverless/{machine_id}/versions/all")
@@ -970,14 +1002,45 @@ async def get_all_machine_versions(
     # First check if user has access to this machine
     await get_machine(request, machine_id, db)
 
-    machine_versions = await db.execute(
-        select(MachineVersion)
-        .where(MachineVersion.machine_id == machine_id)
-        .order_by(MachineVersion.version.desc())
-    )
-    return JSONResponse(
-        content=[version.to_dict() for version in machine_versions.scalars().all()]
-    )
+    params = {
+        "machine_id": machine_id
+    }
+
+    sql = """
+    SELECT
+        mv.id,
+        mv.machine_id,
+        mv.version,
+        mv.user_id,
+        mv.created_at,
+        mv.updated_at,
+        mv.comfyui_version,
+        mv.gpu,
+        mv.status
+    FROM "comfyui_deploy"."machine_versions" mv
+    WHERE mv.machine_id = :machine_id
+    ORDER BY mv.version DESC
+    """
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
+
+    # Convert to dict and handle UUID/datetime serialization
+    versions_data = []
+    for row in rows:
+        version_dict = {}
+        for k, v in row.items():
+            # Handle various non-serializable types
+            if isinstance(v, UUID):
+                version_dict[k] = str(v)
+            elif isinstance(v, datetime.datetime):
+                version_dict[k] = v.isoformat()
+            else:
+                version_dict[k] = v
+        versions_data.append(version_dict)
+
+    return JSONResponse(content=versions_data)
 
 
 # get specific machine version
