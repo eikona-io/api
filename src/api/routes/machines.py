@@ -946,11 +946,11 @@ async def get_machine_versions(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    # First check if user has access to this machine
-    await get_machine(request, machine_id, db)
+    user_id = request.state.current_user.get("user_id")
 
     params = {
         "machine_id": machine_id,
+        "user_id": user_id,
         "limit": limit,
         "offset": offset
     }
@@ -968,6 +968,7 @@ async def get_machine_versions(
         mv.status
     FROM "comfyui_deploy"."machine_versions" mv
     WHERE mv.machine_id = :machine_id
+    AND mv.user_id = :user_id
     ORDER BY mv.version DESC
     LIMIT :limit OFFSET :offset
     """
@@ -999,11 +1000,11 @@ async def get_all_machine_versions(
     machine_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    # First check if user has access to this machine
-    await get_machine(request, machine_id, db)
+    user_id = request.state.current_user.get("user_id")
 
     params = {
-        "machine_id": machine_id
+        "machine_id": machine_id,
+        "user_id": user_id,
     }
 
     sql = """
@@ -1019,6 +1020,7 @@ async def get_all_machine_versions(
         mv.status
     FROM "comfyui_deploy"."machine_versions" mv
     WHERE mv.machine_id = :machine_id
+    AND mv.user_id = :user_id
     ORDER BY mv.version DESC
     """
 
@@ -1051,11 +1053,13 @@ async def get_machine_version(
     version_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    # First check if user has access to this machine
-    await get_machine(request, machine_id, db)
+    user_id = request.state.current_user.get("user_id")
 
     machine_version = await db.execute(
-        select(MachineVersion).where(MachineVersion.id == version_id)
+        select(MachineVersion).where(
+            MachineVersion.id == version_id,
+            MachineVersion.user_id == user_id,
+        )
     )
     machine_version = machine_version.scalars().first()
     return JSONResponse(content=machine_version.to_dict())
