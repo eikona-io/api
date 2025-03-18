@@ -1378,6 +1378,7 @@ async def update_comfyui_deploy_custom_node(docker_command_steps: dict) -> dict:
         # Add the updated comfyui-deploy custom node at the end
         comfyui_deploy_step = {
             "type": "custom-node",
+            "id": "comfyui-deploy",
             "data": {
                 "url": "https://github.com/BennyKok/comfyui-deploy",
                 "name": "ComfyUI Deploy",
