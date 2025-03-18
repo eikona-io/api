@@ -3,6 +3,10 @@ from datetime import timedelta
 import datetime
 import hashlib
 import json
+import aiohttp
+import os
+import httpx
+from .comfy_node import fetch_github_data, extract_repo_name
 
 # from http.client import HTTPException
 from fastapi import Request, HTTPException, Depends
@@ -22,6 +26,7 @@ from api.utils.docker import (
     DockerCommandResponse,
     generate_all_docker_commands,
     comfyui_hash,
+    comfydeploy_hash,
 )
 from pydantic import BaseModel, constr
 from .types import (
@@ -50,7 +55,9 @@ from api.models import (
 from api.database import get_db, get_db_context
 import logging
 from typing import Any, Dict, List, Optional, Literal
+
 # from fastapi_pagination import Page, add_pagination, paginate
+from api.utils.multi_level_cache import multi_level_cached
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +141,7 @@ async def get_machines(
 
     # Add ordering and pagination
     sql += """
-    ORDER BY m.created_at DESC
+    ORDER BY m.updated_at DESC
     LIMIT :limit OFFSET :offset
     """
     params["limit"] = limit
@@ -152,7 +159,7 @@ async def get_machines(
     for row in rows:
         machine_dict = {}
         for k, v in row.items():
-            if k != 'has_workflows':
+            if k != "has_workflows":
                 # Handle various non-serializable types
                 if isinstance(v, UUID):
                     machine_dict[k] = str(v)
@@ -162,7 +169,7 @@ async def get_machines(
                     machine_dict[k] = v
 
         if include_has_workflows:
-            machine_dict['has_workflows'] = row['has_workflows']
+            machine_dict["has_workflows"] = row["has_workflows"]
         machines_data.append(machine_dict)
 
     return JSONResponse(content=machines_data)
@@ -175,29 +182,70 @@ async def get_all_machines(
     limit: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    machines_query = (
-        select(Machine)
-        .order_by(Machine.created_at.desc())
-        .where(~Machine.deleted)
-        .apply_org_check(request)
-    )
+    params = {}
+
+    sql = """
+    SELECT m.id,
+        m.user_id,
+        m.name,
+        m.created_at,
+        m.updated_at,
+        m.type,
+        m.org_id,
+        m.status,
+        m.gpu,
+        m.machine_version,
+        m.machine_builder_version,
+        m.comfyui_version,
+        m.import_failed_logs,
+        m.machine_version_id,
+        m.is_workspace
+    """
+
+    sql += """
+    FROM "comfyui_deploy"."machines" m
+    WHERE m.deleted = FALSE
+    """
+
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+        params["org_id"] = org_id
+    else:
+        sql += " AND m.user_id = :user_id AND m.org_id IS NULL"
+        params["user_id"] = user_id
 
     if search:
-        if is_valid_uuid(search):
-            # Exact UUID match - most efficient
-            machines_query = machines_query.where(Machine.id == search)
-        else:
-            # Name search using trigram similarity for better performance
-            machines_query = machines_query.where(Machine.name.ilike(f"%{search}%"))
+        sql += " AND m.name ILIKE :search"
+        params["search"] = f"%{search}%"
+
+    sql += " ORDER BY m.updated_at DESC"
 
     if limit:
-        machines_query = machines_query.limit(limit)
+        sql += " LIMIT :limit"
+        params["limit"] = limit
 
-    result = await db.execute(machines_query)
-    machines = result.unique().scalars().all()
+    # execute the query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
 
-    return JSONResponse(content=[machine.to_dict() for machine in machines])
+    # Convert to dict and handle UUID/datetime serialization
+    machines_data = []
+    for row in rows:
+        machine_dict = {}
+        for k, v in row.items():
+            # Handle various non-serializable types
+            if isinstance(v, UUID):
+                machine_dict[k] = str(v)
+            elif isinstance(v, datetime.datetime):
+                machine_dict[k] = v.isoformat()
+            else:
+                machine_dict[k] = v
+        machines_data.append(machine_dict)
 
+    return JSONResponse(content=machines_data)
 
 @router.get("/machine/{machine_id}", response_model=MachineModel)
 async def get_machine(
@@ -205,17 +253,74 @@ async def get_machine(
     machine_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    machine = await db.execute(
-        select(Machine)
-        .where(Machine.id == machine_id)
-        .where(~Machine.deleted)
-        .apply_org_check(request)
-    )
-    machine = machine.scalars().first()
-    if not machine:
+    params = {"machine_id": machine_id}
+
+    # Base query
+    sql = """
+    SELECT m.id,
+        m.user_id,
+        m.name,
+        m.org_id,
+        m.created_at,
+        m.updated_at,
+        m.type,
+        m.machine_version,
+        m.deleted,
+        m.import_failed_logs,
+        m.machine_version_id,
+        m.status,
+        m.gpu,
+        m.machine_builder_version,
+        m.comfyui_version,
+        m.is_workspace,
+        -- auto scaling
+        m.concurrency_limit,
+        m.run_timeout,
+        m.idle_timeout,
+        m.docker_command_steps,
+        m.keep_warm,
+        -- advanced
+        m.allow_concurrent_inputs,
+        m.base_docker_image,
+        m.python_version,
+        m.extra_args,
+        m.prestart_command,
+        m.install_custom_node_with_gpu
+    FROM "comfyui_deploy"."machines" m
+    WHERE m.id = :machine_id
+    AND m.deleted = FALSE
+    """
+
+    # Add organization check
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+        params["org_id"] = org_id
+    else:
+        sql += " AND m.user_id = :user_id AND m.org_id IS NULL"
+        params["user_id"] = user_id
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    row = result.mappings().first()
+
+    if not row:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    return JSONResponse(content=machine.to_dict())
+    # Convert to dict and handle UUID/datetime serialization
+    machine_dict = {}
+    for k, v in row.items():
+        # Handle various non-serializable types
+        if isinstance(v, UUID):
+            machine_dict[k] = str(v)
+        elif isinstance(v, datetime.datetime):
+            machine_dict[k] = v.isoformat()
+        else:
+            machine_dict[k] = v
+
+    return JSONResponse(content=machine_dict)
 
 
 @router.get("/machine/{machine_id}/events", response_model=List[GPUEventModel])
@@ -237,6 +342,7 @@ async def get_machine_events(
     events = events.scalars().all()
     return JSONResponse(content=[event.to_dict() for event in events])
 
+
 @router.get("/machine/{machine_id}/workflows")
 async def get_machine_workflows(
     request: Request,
@@ -244,15 +350,22 @@ async def get_machine_workflows(
     db: AsyncSession = Depends(get_db),
 ):
     workflows = await db.execute(
-        select(Workflow).where(Workflow.selected_machine_id == machine_id).apply_org_check(request)
+        select(Workflow)
+        .where(Workflow.selected_machine_id == machine_id)
+        .apply_org_check(request)
     )
-    return JSONResponse(content=[workflow.to_dict() for workflow in workflows.scalars().all()])
+    return JSONResponse(
+        content=[workflow.to_dict() for workflow in workflows.scalars().all()]
+    )
+
 
 class DockerCommand(BaseModel):
     when: Literal["before", "after"]
     commands: List[str]
 
-GitCommitHash = constr(pattern=r'^[a-fA-F0-9]{40}$')
+
+GitCommitHash = constr(pattern=r"^[a-fA-F0-9]{40}$")
+
 
 class ServerlessMachineModel(BaseModel):
     name: str
@@ -343,7 +456,7 @@ async def validate_free_plan_restrictions(
     machine_data: dict,
     db: AsyncSession,
     is_update: bool = False,
-    existing_machine_id: UUID = None
+    existing_machine_id: UUID = None,
 ) -> None:
     """
     Validates restrictions for free plan users.
@@ -352,23 +465,27 @@ async def validate_free_plan_restrictions(
     plan = request.state.current_user.get("plan")
     if plan != "free":
         return
-    
-    raise HTTPException(status_code=403, detail="Free plan users cannot create machines, we are mitigating abuse, please wait")
+
+    raise HTTPException(
+        status_code=403,
+        detail="Free plan users cannot create machines, we are mitigating abuse, please wait",
+    )
 
     # Check machine count limit (only for creation)
     if not is_update:
         max_machine_count = 1
-        machine_count = (await db.execute(
-            select(func.count())
-            .select_from(Machine)
-            .where(~Machine.deleted)
-            .apply_org_check_by_type(Machine, request)
-        )).scalar()
-        
+        machine_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(Machine)
+                .where(~Machine.deleted)
+                .apply_org_check_by_type(Machine, request)
+            )
+        ).scalar()
+
         if machine_count >= max_machine_count:
             raise HTTPException(
-                status_code=400,
-                detail="Free plan does not support more than 1 machine"
+                status_code=400, detail="Free plan does not support more than 1 machine"
             )
 
     # Check restricted fields
@@ -384,17 +501,21 @@ async def validate_free_plan_restrictions(
         if field in machine_data and machine_data[field]:
             raise HTTPException(
                 status_code=403,
-                detail=f"Free plan users cannot use {field}. Please upgrade to use this feature."
+                detail=f"Free plan users cannot use {field}. Please upgrade to use this feature.",
             )
 
     # Check docker_command_steps separately for commands
-    if "docker_command_steps" in machine_data and machine_data["docker_command_steps"] is not None:
+    if (
+        "docker_command_steps" in machine_data
+        and machine_data["docker_command_steps"] is not None
+    ):
         steps = machine_data["docker_command_steps"].get("steps", [])
         if any("commands" in step for step in steps):
             raise HTTPException(
                 status_code=403,
-                detail="Free plan users cannot include custom commands in docker_command_steps. Please upgrade to use this feature."
+                detail="Free plan users cannot include custom commands in docker_command_steps. Please upgrade to use this feature.",
             )
+
 
 @router.post("/machine/serverless")
 async def create_serverless_machine(
@@ -405,13 +526,11 @@ async def create_serverless_machine(
 ) -> MachineModel:
     # Validate free plan restrictions
     await validate_free_plan_restrictions(
-        request=request,
-        machine_data=machine.model_dump(),
-        db=db
+        request=request, machine_data=machine.model_dump(), db=db
     )
-    
+
     wait_for_build = machine.wait_for_build
-    
+
     new_machine_id = uuid.uuid4()
     current_user = request.state.current_user
     user_id = current_user["user_id"]
@@ -422,7 +541,7 @@ async def create_serverless_machine(
 
     # async with db.begin():  # Single transaction for entire operation
     # Create initial machine
-    machine_data = machine.model_dump(exclude={'wait_for_build'})
+    machine_data = machine.model_dump(exclude={"wait_for_build"})
     machine = Machine(
         **machine_data,
         id=new_machine_id,
@@ -515,9 +634,9 @@ async def update_serverless_machine(
         machine_data=update_machine.model_dump(exclude_unset=True),
         db=db,
         is_update=True,
-        existing_machine_id=machine_id
+        existing_machine_id=machine_id,
     )
-    
+
     try:
         machine = await db.execute(
             select(Machine).where(Machine.id == machine_id).apply_org_check(request)
@@ -535,7 +654,10 @@ async def update_serverless_machine(
         user_id = current_user["user_id"]
         org_id = current_user["org_id"] if "org_id" in current_user else None
 
-        if machine.machine_version_id is None and machine.machine_builder_version == "4":
+        if (
+            machine.machine_version_id is None
+            and machine.machine_builder_version == "4"
+        ):
             # give it a default version 1
             await create_machine_version(db, machine, user_id)
             await db.commit()
@@ -581,8 +703,8 @@ async def update_serverless_machine(
         for key, value in update_machine.model_dump().items():
             if hasattr(machine, key) and value is not None:
                 setattr(machine, key, value)
-                
-        if (machine.comfyui_version is None):
+
+        if machine.comfyui_version is None:
             # put something here so it wont crash
             machine.comfyui_version = comfyui_hash
 
@@ -600,8 +722,8 @@ async def update_serverless_machine(
                 # Combine queries to get both max version and current version data
                 result = await db.execute(
                     select(
-                        func.max(MachineVersion.version).label('max_version'),
-                        MachineVersion
+                        func.max(MachineVersion.version).label("max_version"),
+                        MachineVersion,
                     )
                     .where(MachineVersion.machine_id == machine.id)
                     .group_by(MachineVersion)
@@ -625,7 +747,9 @@ async def update_serverless_machine(
 
                 # update that machine version's created_at to now
                 machine_version = await db.execute(
-                    select(MachineVersion).where(MachineVersion.id == rollback_version_id)
+                    select(MachineVersion).where(
+                        MachineVersion.id == rollback_version_id
+                    )
                 )
                 machine_version = machine_version.scalars().first()
                 machine_version.created_at = func.now()
@@ -680,7 +804,9 @@ async def update_serverless_machine(
                 extra_args=machine.extra_args,
                 machine_version_id=str(machine.machine_version_id),
                 machine_hash=docker_commands_hash,
-                modal_image_id=machine_version.modal_image_id if machine_version else None,
+                modal_image_id=machine_version.modal_image_id
+                if machine_version
+                else None,
             )
             background_tasks.add_task(build_logic, params)
 
@@ -688,7 +814,9 @@ async def update_serverless_machine(
             print("Keep warm changed", machine.keep_warm)
             set_machine_always_on(
                 str(machine.id),
-                KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=GPUType(machine.gpu)),
+                KeepWarmBody(
+                    warm_pool_size=machine.keep_warm, gpu=GPUType(machine.gpu)
+                ),
             )
 
         await db.commit()
@@ -745,27 +873,30 @@ async def redeploy_machine(
         background_tasks.add_task(build_logic, params)
     else:
         await build_logic(params)
-        
-        
+
+
 async def redeploy_machine_internal(
     machine_id: str,
 ):
     async with get_db_context() as db:
-        machine = await db.execute(
-            select(Machine).where(Machine.id == machine_id)
-        )
+        machine = await db.execute(select(Machine).where(Machine.id == machine_id))
         machine = machine.scalars().first()
         # volumes = await retrieve_model_volumes(request, db)
         volume_name = "models_" + machine.org_id if machine.org_id else machine.user_id
         machine_token = generate_persistent_token(machine.user_id, machine.org_id)
         machine_version = await db.execute(
-            select(MachineVersion).where(MachineVersion.id == machine.machine_version_id)
+            select(MachineVersion).where(
+                MachineVersion.id == machine.machine_version_id
+            )
         )
         machine_version = machine_version.scalars().first()
-        
+
         if machine_version.modal_image_id is None:
-            raise HTTPException(status_code=404, detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id")
-        
+            raise HTTPException(
+                status_code=404,
+                detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id",
+            )
+
     params = BuildMachineItem(
         machine_id=str(machine.id),
         name=str(machine.id),
@@ -793,22 +924,29 @@ async def redeploy_machine_internal(
         machine_hash=machine_version.machine_hash,
     )
     await build_logic(params)
-    
+
 
 async def redeploy_machine_deployment_internal(
     deployment: Deployment,
 ):
     async with get_db_context() as db:
-        volume_name = "models_" + deployment.org_id if deployment.org_id else deployment.user_id
+        volume_name = (
+            "models_" + deployment.org_id if deployment.org_id else deployment.user_id
+        )
         machine_token = generate_persistent_token(deployment.user_id, deployment.org_id)
         machine_version = await db.execute(
-            select(MachineVersion).where(MachineVersion.id == deployment.machine_version_id)
+            select(MachineVersion).where(
+                MachineVersion.id == deployment.machine_version_id
+            )
         )
         machine_version = machine_version.scalars().first()
-        
+
         if machine_version.modal_image_id is None:
-            raise HTTPException(status_code=404, detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id")
-        
+            raise HTTPException(
+                status_code=404,
+                detail="Machine doesnt support quick redeploy, and also doesnt have a modal image id",
+            )
+
     params = BuildMachineItem(
         machine_id=str(deployment.machine_id),
         name=str(deployment.id),
@@ -834,11 +972,11 @@ async def redeploy_machine_deployment_internal(
         # extra_args=machine.extra_args,
         machine_version_id=str(deployment.machine_version_id),
         machine_hash=machine_version.machine_hash,
-        
         is_deployment=True,
         environment=deployment.environment,
     )
     await build_logic(params)
+
 
 @router.get("/machine/serverless/{machine_id}/versions")
 async def get_machine_versions(
@@ -848,19 +986,63 @@ async def get_machine_versions(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    # First check if user has access to this machine
-    await get_machine(request, machine_id, db)
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
 
-    machine_versions = await db.execute(
-        select(MachineVersion)
-        .where(MachineVersion.machine_id == machine_id)
-        .order_by(MachineVersion.version.desc())
-        .paginate(limit, offset)
-    )
+    params = {
+        "machine_id": machine_id,
+        "limit": limit,
+        "offset": offset,
+        "user_id": user_id,
+        "org_id": org_id,
+    }
 
-    return JSONResponse(
-        content=[version.to_dict() for version in machine_versions.scalars().all()]
-    )
+    sql = """
+    SELECT
+        mv.id,
+        mv.machine_id,
+        mv.version,
+        mv.user_id,
+        mv.created_at,
+        mv.updated_at,
+        mv.comfyui_version,
+        mv.gpu,
+        mv.status,
+        m.org_id
+    FROM "comfyui_deploy"."machine_versions" mv
+    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
+    WHERE mv.machine_id = :machine_id
+    """
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+    else:
+        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+
+    sql += """
+    ORDER BY mv.version DESC
+    LIMIT :limit OFFSET :offset
+    """
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
+
+    # Convert to dict and handle UUID/datetime serialization
+    versions_data = []
+    for row in rows:
+        version_dict = {}
+        for k, v in row.items():
+            # Handle various non-serializable types
+            if isinstance(v, UUID):
+                version_dict[k] = str(v)
+            elif isinstance(v, datetime.datetime):
+                version_dict[k] = v.isoformat()
+            else:
+                version_dict[k] = v
+        versions_data.append(version_dict)
+
+    return JSONResponse(content=versions_data)
 
 
 @router.get("/machine/serverless/{machine_id}/versions/all")
@@ -869,17 +1051,60 @@ async def get_all_machine_versions(
     machine_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    # First check if user has access to this machine
-    await get_machine(request, machine_id, db)
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
 
-    machine_versions = await db.execute(
-        select(MachineVersion)
-        .where(MachineVersion.machine_id == machine_id)
-        .order_by(MachineVersion.version.desc())
-    )
-    return JSONResponse(
-        content=[version.to_dict() for version in machine_versions.scalars().all()]
-    )
+    params = {
+        "machine_id": machine_id,
+        "user_id": user_id,
+        "org_id": org_id,
+    }
+
+    sql = """
+    SELECT
+        mv.id,
+        mv.machine_id,
+        mv.version,
+        mv.user_id,
+        mv.created_at,
+        mv.updated_at,
+        mv.comfyui_version,
+        mv.gpu,
+        mv.status,
+        m.org_id
+    FROM "comfyui_deploy"."machine_versions" mv
+    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
+    WHERE mv.machine_id = :machine_id
+    """
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+    else:
+        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+
+    sql += """
+    ORDER BY mv.version DESC
+    """
+
+    # Execute the raw query
+    result = await db.execute(text(sql), params)
+    rows = result.mappings().all()
+
+    # Convert to dict and handle UUID/datetime serialization
+    versions_data = []
+    for row in rows:
+        version_dict = {}
+        for k, v in row.items():
+            # Handle various non-serializable types
+            if isinstance(v, UUID):
+                version_dict[k] = str(v)
+            elif isinstance(v, datetime.datetime):
+                version_dict[k] = v.isoformat()
+            else:
+                version_dict[k] = v
+        versions_data.append(version_dict)
+
+    return JSONResponse(content=versions_data)
 
 
 # get specific machine version
@@ -890,14 +1115,38 @@ async def get_machine_version(
     version_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    # First check if user has access to this machine
-    await get_machine(request, machine_id, db)
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
 
-    machine_version = await db.execute(
-        select(MachineVersion).where(MachineVersion.id == version_id)
-    )
-    machine_version = machine_version.scalars().first()
-    return JSONResponse(content=machine_version.to_dict())
+    params = {
+        "version_id": version_id,
+        "user_id": user_id,
+        "org_id": org_id,
+    }
+
+    sql = """
+    SELECT mv.*, m.org_id FROM "comfyui_deploy"."machine_versions" mv
+    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
+    WHERE mv.id = :version_id
+    """
+
+    if org_id:
+        sql += " AND m.org_id = :org_id"
+    else:
+        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+
+    result = await db.execute(text(sql), params)
+    machine_version = result.mappings().first()
+
+    version_dict = {}
+    for k, v in machine_version.items():
+        if isinstance(v, UUID):
+            version_dict[k] = str(v)
+        elif isinstance(v, datetime.datetime):
+            version_dict[k] = v.isoformat()
+        else:
+            version_dict[k] = v
+    return JSONResponse(content=version_dict)
 
 
 class RollbackMachineVersionBody(BaseModel):
@@ -1065,8 +1314,10 @@ async def create_custom_machine(
 ) -> MachineModel:
     plan = request.state.current_user.get("plan")
     if plan == "free":
-        raise HTTPException(status_code=403, detail="Free plan users cannot create custom machines")
-    
+        raise HTTPException(
+            status_code=403, detail="Free plan users cannot create custom machines"
+        )
+
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
@@ -1154,15 +1405,16 @@ async def get_machine_docker_commands(
 
     if machine.type != MachineType.COMFY_DEPLOY_SERVERLESS:
         raise HTTPException(
-            status_code=400,
-            detail="Machine is not a Comfy Deploy Serverless machine"
+            status_code=400, detail="Machine is not a Comfy Deploy Serverless machine"
         )
 
     # Get machine version if it exists
     machine_version = None
     if machine.machine_version_id:
         machine_version = await db.execute(
-            select(MachineVersion).where(MachineVersion.id == machine.machine_version_id)
+            select(MachineVersion).where(
+                MachineVersion.id == machine.machine_version_id
+            )
         )
         machine_version = machine_version.scalars().first()
 
@@ -1170,13 +1422,240 @@ async def get_machine_docker_commands(
     docker_commands = generate_all_docker_commands(machine)
     docker_commands_hash = hash_machine_dependencies(docker_commands)
 
-    return JSONResponse(content={
-        "docker_commands": docker_commands.model_dump()["docker_commands"],
-        "machine_hash": docker_commands_hash,
-        "python_version": machine.python_version,
-        "base_docker_image": machine.base_docker_image,
-        "machine_version": {
-            "id": str(machine.machine_version_id) if machine.machine_version_id else None,
-            "modal_image_id": machine_version.modal_image_id if machine_version else None
+    return JSONResponse(
+        content={
+            "docker_commands": docker_commands.model_dump()["docker_commands"],
+            "machine_hash": docker_commands_hash,
+            "python_version": machine.python_version,
+            "base_docker_image": machine.base_docker_image,
+            "machine_version": {
+                "id": str(machine.machine_version_id)
+                if machine.machine_version_id
+                else None,
+                "modal_image_id": machine_version.modal_image_id
+                if machine_version
+                else None,
+            },
         }
-    })
+    )
+
+
+@multi_level_cached(
+    key_prefix="custom_nodes_version",
+    ttl_seconds=60,  # Cache in local memory for 1 minute
+    redis_ttl_seconds=300,  # Cache in Redis for 5 minutes
+    version="1.0",
+    key_builder=lambda repo_name: f"custom_nodes_version:{repo_name}",
+)
+async def get_latest_commit_info(repo_name: str):
+    """Get the latest commit information from GitHub with caching."""
+    headers = {
+        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}",
+        "User-Agent": "request",
+    }
+
+    branch_url = f"https://api.github.com/repos/{repo_name}/branches/main"
+    branch_info = await fetch_github_data(branch_url, headers)
+    latest_commit = branch_info["commit"]["sha"]
+
+    commit_info = await fetch_github_data(
+        f"https://api.github.com/repos/{repo_name}/commits/{latest_commit}", headers
+    )
+
+    return {
+        "hash": latest_commit,
+        "message": commit_info["commit"]["message"],
+        "date": commit_info["commit"]["committer"]["date"],
+    }
+
+
+@router.get("/machine/{machine_id}/check-custom-nodes")
+async def check_custom_nodes_version(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Check if the comfyui-deploy custom nodes are up to date by comparing with the latest commit hash from the main branch.
+    """
+    # First verify the machine exists and user has access
+    machine = await db.execute(
+        select(Machine)
+        .where(Machine.id == machine_id)
+        .where(~Machine.deleted)
+        .apply_org_check(request)
+    )
+    machine = machine.scalars().first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    try:
+        # Get the repository name
+        repo_name = await extract_repo_name(
+            "https://github.com/BennyKok/comfyui-deploy"
+        )
+
+        # Get latest commit info using cached function
+        latest_commit_info = await get_latest_commit_info(repo_name)
+
+        # Find comfyui-deploy in docker_command_steps
+        local_commit = None
+        if machine.docker_command_steps and "steps" in machine.docker_command_steps:
+            for step in machine.docker_command_steps["steps"]:
+                if (
+                    step["type"] == "custom-node"
+                    and step["data"]["url"].lower()
+                    == "https://github.com/bennykok/comfyui-deploy"
+                ):
+                    local_commit = step["data"]["hash"]
+                    break
+
+        # If not found in steps, use the default hash from docker.py
+        if not local_commit:
+            local_commit = comfydeploy_hash
+
+        # Get local commit info
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}",
+            "User-Agent": "request",
+        }
+        local_commit_info = (
+            await fetch_github_data(
+                f"https://api.github.com/repos/{repo_name}/commits/{local_commit}",
+                headers,
+            )
+            if local_commit
+            else None
+        )
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "local_commit": {
+                    "hash": local_commit,
+                    "message": local_commit_info["commit"]["message"]
+                    if local_commit_info
+                    else None,
+                    "date": local_commit_info["commit"]["committer"]["date"]
+                    if local_commit_info
+                    else None,
+                },
+                "latest_commit": latest_commit_info,
+                "is_up_to_date": local_commit == latest_commit_info["hash"],
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error checking custom nodes version: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error checking custom nodes version: {str(e)}"
+        )
+
+
+async def update_comfyui_deploy_custom_node(docker_command_steps: dict) -> dict:
+    """
+    Updates or adds the comfyui-deploy custom node to the docker command steps.
+    Ensures it's placed at the end and prevents duplicates.
+    """
+    try:
+        if not docker_command_steps or "steps" not in docker_command_steps:
+            docker_command_steps = {"steps": []}
+
+        # Find and remove any existing comfyui-deploy custom node
+        filtered_steps = []
+        found_existing = False
+        for step in docker_command_steps["steps"]:
+            if (
+                step["type"] == "custom-node"
+                and step["data"]["url"].lower()
+                == "https://github.com/bennykok/comfyui-deploy"
+            ):
+                found_existing = True
+                continue
+            filtered_steps.append(step)
+
+        # Get the latest commit info
+        repo_name = "BennyKok/comfyui-deploy"
+        latest_commit_info = await get_latest_commit_info(repo_name)
+        if not latest_commit_info or "hash" not in latest_commit_info:
+            logger.error("Failed to get latest commit info")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to get latest commit information for comfyui-deploy",
+            )
+
+        # Add the updated comfyui-deploy custom node at the end
+        comfyui_deploy_step = {
+            "type": "custom-node",
+            "id": "comfyui-deploy",
+            "data": {
+                "url": "https://github.com/BennyKok/comfyui-deploy",
+                "name": "ComfyUI Deploy",
+                "hash": latest_commit_info["hash"],
+                "install_type": "git-clone",
+                "files": ["https://github.com/BennyKok/comfyui-deploy"],
+            },
+        }
+        filtered_steps.append(comfyui_deploy_step)
+
+        return {"steps": filtered_steps}
+    except Exception as e:
+        logger.error(f"Error updating comfyui-deploy custom node: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update custom nodes: {str(e)}"
+        )
+
+
+@router.post("/machine/{machine_id}/update-custom-nodes")
+async def update_machine_custom_nodes(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+) -> MachineModel:
+    """
+    Updates the comfyui-deploy custom nodes to the latest version and creates a new machine version.
+    """
+    try:
+        # Get the machine
+        machine = await db.execute(
+            select(Machine)
+            .where(Machine.id == machine_id)
+            .where(~Machine.deleted)
+            .apply_org_check(request)
+        )
+        machine = machine.scalars().first()
+        if not machine:
+            raise HTTPException(status_code=404, detail="Machine not found")
+
+        if machine.type != MachineType.COMFY_DEPLOY_SERVERLESS:
+            raise HTTPException(
+                status_code=400,
+                detail="Machine is not a Comfy Deploy Serverless machine",
+            )
+
+        # Update the docker command steps
+        updated_steps = await update_comfyui_deploy_custom_node(
+            machine.docker_command_steps
+        )
+
+        # Create update model with only the necessary changes
+        update_model = UpdateServerlessMachineModel(
+            docker_command_steps=updated_steps, is_trigger_rebuild=True
+        )
+
+        # Use existing update endpoint to handle the update
+        return await update_serverless_machine(
+            request=request,
+            machine_id=machine_id,
+            update_machine=update_model,
+            db=db,
+            background_tasks=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating machine custom nodes: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update custom nodes: {str(e)}"
+        )
