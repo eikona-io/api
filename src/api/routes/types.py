@@ -471,6 +471,7 @@ class RunStream(RootModel):
 class WorkflowRunNativeOutputModel(BaseModel):
     prompt_id: str
     workflow_api_raw: Dict[str, Any]
+    workflow: Optional[Dict[str, Any]]
     inputs: Optional[Dict[str, Any]]
     status_endpoint: str
     file_upload_endpoint: str
