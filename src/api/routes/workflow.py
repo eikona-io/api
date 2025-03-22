@@ -229,7 +229,7 @@ async def get_all_runs(
     request: Request,
     workflow_id: str,
     status: Optional[str] = None,
-    deployment_id: Optional[str] = None,
+    deployment_id: Optional[UUID] = None,
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -295,8 +295,8 @@ async def get_all_runs(
 @router.get("/workflow/{workflow_id}/runs/day", response_model=List[WorkflowRunModel])
 async def get_runs_day(
     request: Request,
-    workflow_id: str,
-    deployment_id: Optional[str] = None,
+    workflow_id: UUID,
+    deployment_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db),
 ):
     params = {
