@@ -228,15 +228,25 @@ def serialize_row(row_data):
 async def get_all_runs(
     request: Request,
     workflow_id: str,
+    status: Optional[str] = None,
+    deployment_id: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    query = text("""
-    SELECT 
-        r.id, r.status, r.created_at, r.updated_at, r.ended_at, r.queued_at, r.started_at, 
-        r.workflow_id, r.user_id, r.org_id, r.origin, r.gpu, r.machine_version, r.machine_type, 
-        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id, r.workflow_version_id,
+    params = {
+        "workflow_id": workflow_id,
+        "org_id": request.state.current_user["org_id"],
+        "user_id": request.state.current_user["user_id"],
+        "limit": limit,
+        "offset": offset,
+    }
+
+    query = """
+    SELECT
+        r.id, r.status, r.created_at, r.updated_at, r.ended_at, r.queued_at, r.started_at,
+        r.workflow_id, r.user_id, r.org_id, r.origin, r.gpu, r.machine_version, r.machine_type,
+        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id, r.workflow_version_id, r.deployment_id,
         -- Computing timing metrics
         EXTRACT(EPOCH FROM (r.ended_at - r.created_at)) as duration,
         EXTRACT(EPOCH FROM (r.queued_at - r.created_at)) as comfy_deploy_cold_start,
@@ -250,25 +260,25 @@ async def get_all_runs(
     AND (
         (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
         OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
-    )
+    )"""
+
+    if status:
+        query += " AND r.status = :status"
+        params["status"] = status
+
+    if deployment_id:
+        query += " AND r.deployment_id = :deployment_id"
+        params["deployment_id"] = deployment_id
+
+    query += """
     ORDER BY r.created_at DESC
     LIMIT :limit
     OFFSET :offset
-    """)
-
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if "org_id" in current_user else None
+    """
 
     result = await db.execute(
-        query,
-        {
-            "user_id": user_id,
-            "org_id": org_id,
-            "limit": limit,
-            "workflow_id": workflow_id,
-            "offset": offset,
-        },
+        text(query),
+        params,
     )
 
     # Convert raw SQL results using our standalone serialization function
