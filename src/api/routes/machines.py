@@ -273,6 +273,7 @@ async def get_machine(
         m.machine_builder_version,
         m.comfyui_version,
         m.is_workspace,
+        m.endpoint,
         -- auto scaling
         m.concurrency_limit,
         m.run_timeout,
