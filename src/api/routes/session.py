@@ -127,17 +127,20 @@ async def get_comfy_runner(
     return runner
 
 
-class Session(BaseModel):
-    session_id: str
-    gpu_event_id: str
-    url: Optional[str]
-    gpu: str
-    created_at: datetime
-    timeout: Optional[int]
-    timeout_end: Optional[datetime]
-    machine_id: Optional[str]
-    machine_version_id: Optional[str]
-
+class SessionResponse(BaseModel):
+    id: str = Field(..., description="The session ID")
+    session_id: str = Field(..., description="The session ID", deprecated=True)
+    gpu_event_id: str = Field(..., description="The GPU event ID")
+    url: Optional[str] = Field(None, description="The tunnel URL for the session")
+    gpu: str = Field(..., description="The GPU type being used")
+    created_at: datetime = Field(..., description="When the session was created")
+    timeout: Optional[int] = Field(None, description="Session timeout in minutes")
+    timeout_end: Optional[datetime] = Field(None, description="When the session will timeout")
+    machine_id: Optional[str] = Field(None, description="Associated machine ID")
+    machine_version_id: Optional[str] = Field(None, description="Associated machine version ID")
+    status: str = Field("running", description="Session status")
+    user_id: Optional[str] = Field(None, description="Associated user ID")
+    org_id: Optional[str] = Field(None, description="Associated organization ID")
 
 # Return the session tunnel url
 @router.get(
@@ -148,7 +151,7 @@ class Session(BaseModel):
 )
 async def get_session(
     request: Request, session_id: str, db: AsyncSession = Depends(get_db)
-) -> Session:
+) -> SessionResponse:
     result = await db.execute(
         select(
             GPUEvent.id,
@@ -158,6 +161,8 @@ async def get_session(
             GPUEvent.session_timeout,
             GPUEvent.machine_id,
             GPUEvent.machine_version_id,
+            GPUEvent.user_id,
+            GPUEvent.org_id,
         )
         .where((GPUEvent.session_id == session_id) & (GPUEvent.end_time.is_(None)))
         .apply_org_check(request)
@@ -165,27 +170,25 @@ async def get_session(
     )
 
     timeout_end = await redis.get(f"session:{session_id}:timeout_end")
-
     gpuEvent = result.first()
-
-    # print(gpuEvent)
 
     if gpuEvent is None:
         raise HTTPException(status_code=404, detail="GPUEvent not found")
 
-    return {
-        "session_id": session_id,
-        "url": gpuEvent.tunnel_url,
-        "gpu_event_id": str(gpuEvent.id),
-        "gpu": gpuEvent.gpu,
-        "created_at": gpuEvent.created_at,
-        "timeout": gpuEvent.session_timeout,
-        "machine_id": str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
-        "machine_version_id": str(gpuEvent.machine_version_id)
-        if gpuEvent.machine_version_id
-        else None,
-        "timeout_end": timeout_end,
-    }
+    return SessionResponse(
+        id=session_id,
+        session_id=session_id,
+        user_id=str(gpuEvent.user_id),
+        org_id=str(gpuEvent.org_id),
+        gpu_event_id=str(gpuEvent.id),
+        url=gpuEvent.tunnel_url,
+        gpu=gpuEvent.gpu,
+        created_at=gpuEvent.created_at,
+        timeout=gpuEvent.session_timeout,
+        machine_id=str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
+        machine_version_id=str(gpuEvent.machine_version_id) if gpuEvent.machine_version_id else None,
+        timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
+    )
 
 
 class GetSessionsBody(BaseModel):
@@ -203,7 +206,7 @@ async def get_machine_sessions(
     request: Request,
     machine_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
-) -> List[GPUEventModel]:
+) -> List[SessionResponse]:
     query = (
         select(GPUEvent)
         .where(GPUEvent.end_time.is_(None))
@@ -216,7 +219,29 @@ async def get_machine_sessions(
         query = query.where(GPUEvent.machine_id == machine_id)
 
     result = await db.execute(query)
-    return result.scalars().all()
+    gpu_events = result.scalars().all()
+    
+    sessions = []
+    for event in gpu_events:
+        # Skipping this for now to save performance
+        # timeout_end = await redis.get(f"session:{event.session_id}:timeout_end")
+        sessions.append(
+            SessionResponse(
+                session_id=str(event.session_id),
+                user_id=str(event.user_id),
+                org_id=str(event.org_id),
+                id=str(event.session_id),
+                gpu_event_id=str(event.id),
+                url=event.tunnel_url,
+                gpu=event.gpu,
+                created_at=event.created_at,
+                timeout=event.session_timeout,
+                machine_id=str(event.machine_id) if event.machine_id else None,
+                machine_version_id=str(event.machine_version_id) if event.machine_version_id else None,
+                # timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
+            )
+        )
+    return sessions
 
 
 async def increase_timeout_task(
