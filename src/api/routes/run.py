@@ -445,7 +445,7 @@ async def cancel_run(
 
             if existing_run and existing_run.modal_function_call_id:
                 a = modal.functions.FunctionCall.from_id(existing_run.modal_function_call_id)
-                a.cancel()
+                await a.cancel.aio()
             else:
                 raise HTTPException(status_code=404, detail="Run not found or has no modal function call ID")
 
