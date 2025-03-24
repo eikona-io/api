@@ -234,10 +234,14 @@ async def get_all_runs(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
+
+    org_id = request.state.current_user.get("org_id")
+    user_id = request.state.current_user.get("user_id")
+
     params = {
         "workflow_id": workflow_id,
-        "org_id": request.state.current_user["org_id"],
-        "user_id": request.state.current_user["user_id"],
+        "org_id": org_id,
+        "user_id": user_id,
         "limit": limit,
         "offset": offset,
     }
