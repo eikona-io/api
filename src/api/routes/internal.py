@@ -610,9 +610,6 @@ async def create_gpu_event(
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    # legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-    # new_url = f"{legacy_api_url}/api/end_gpu_event"
-
     # Extract data from request body
     machine_id = data.get("machine_id")
     timestamp = data.get("timestamp")
