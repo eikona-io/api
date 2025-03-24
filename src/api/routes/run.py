@@ -351,7 +351,7 @@ async def create_run_workflow_stream(
     summary="Queue a workflow",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
     callbacks=webhook_router.routes,
-    # include_in_schema=False,
+    include_in_schema=False,
     openapi_extra={
         "x-speakeasy-name-override": "queue",
     },
@@ -373,7 +373,7 @@ async def create_run_queue(
     summary="Run a workflow in sync",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
     callbacks=webhook_router.routes,
-    # include_in_schema=False,
+    include_in_schema=False,
     openapi_extra={
         "x-speakeasy-name-override": "sync",
     },
@@ -394,6 +394,7 @@ async def create_run_sync(
     response_model=RunStream,
     response_class=StreamingResponse,
     deprecated=True,
+    include_in_schema=False,
     responses={
         200: {
             "description": "Stream of workflow run events",
