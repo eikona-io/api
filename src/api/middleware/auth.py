@@ -38,15 +38,15 @@ def hash_api_key(key: str) -> str:
     return sha256(key.encode()).hexdigest()
 
 # Function to check if key is revoked
-@multi_level_cached(
-    key_prefix="api_key",
-    # Time for local memory cache to refresh from redis
-    ttl_seconds=2,
-    # Time for redis to refresh from source (autumn)
-    redis_ttl_seconds=5,
-    version="1.0",
-    key_builder=lambda key: f"api_key:{hash_api_key(key)}",
-)
+# @multi_level_cached(
+#     key_prefix="api_key",
+#     # Time for local memory cache to refresh from redis
+#     ttl_seconds=2,
+#     # Time for redis to refresh from source (autumn)
+#     redis_ttl_seconds=5,
+#     version="1.0",
+#     key_builder=lambda key: f"api_key:{hash_api_key(key)}",
+# )
 async def is_key_revoked(key: str) -> bool:
     query = select(APIKey).where(APIKey.key == key, APIKey.revoked == True)
     async with get_db_context() as db:
