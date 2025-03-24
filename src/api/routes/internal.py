@@ -708,8 +708,8 @@ async def create_gpu_event(
                 idempotency_key=str(event.id),
             )
 
-            if event.session_id is not None:
-                background_tasks.add_task(cancel_executing_runs, event.session_id)
+            # if event.session_id is not None:
+            #     background_tasks.add_task(cancel_executing_runs, event.session_id)
 
             # Get headers from the incoming request
             headers = dict(request.headers)
