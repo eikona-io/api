@@ -169,7 +169,7 @@ async def get_session(
         .limit(1)
     )
 
-    timeout_end = await redis.get(f"session:{session_id}:timeout_end")
+    # timeout_end = await redis.get(f"session:{session_id}:timeout_end")
     gpuEvent = result.first()
 
     if gpuEvent is None:
@@ -187,7 +187,7 @@ async def get_session(
         timeout=gpuEvent.session_timeout,
         machine_id=str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
         machine_version_id=str(gpuEvent.machine_version_id) if gpuEvent.machine_version_id else None,
-        timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
+        # timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
     )
 
 
