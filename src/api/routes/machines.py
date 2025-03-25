@@ -1301,10 +1301,10 @@ class CustomMachineModel(BaseModel):
 
 
 class UpdateCustomMachineModel(BaseModel):
-    name: Optional[str]
-    type: Optional[MachineType]
-    endpoint: Optional[str]
-    auth_token: Optional[str]
+    name: Optional[str] = None
+    type: Optional[MachineType] = None
+    endpoint: Optional[str] = None
+    auth_token: Optional[str] = None
 
 
 @router.post("/machine/custom")
