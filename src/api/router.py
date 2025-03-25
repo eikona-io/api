@@ -18,6 +18,7 @@ app = FastAPI(
 
 api_router = APIRouter()  # Remove the prefix here
 public_api_router = APIRouter()  # Remove the prefix here
+basic_public_api_router = APIRouter()  # Remove the prefix here
 
 # add_pagination(app)
 
@@ -154,4 +155,80 @@ async def scalar_html_internal():
         servers=[
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
+    )
+
+def custom_simple_openapi(with_code_samples: bool = True):
+    """Generate a simplified OpenAPI schema with only specific endpoints"""
+    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    
+    if (fetch_from_speakeasy):
+        # In development mode, fetch from Speakeasy
+        import requests
+        try:
+            response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
+            full_schema = response.json()
+        except Exception as e:
+            # Fallback to default schema generation
+            full_schema = get_openapi(
+                title="ComfyDeploy API - Simple",
+                version="V2",
+                description=docs,
+                routes=public_api_router.routes,
+                servers=app.servers,
+                webhooks=app.webhooks.routes,
+            )
+    else:
+        full_schema = get_openapi(
+            title="ComfyDeploy API - Simple",
+            version="V2",
+            description=docs,
+            routes=public_api_router.routes,
+            servers=app.servers,
+            webhooks=app.webhooks.routes,
+        )
+    
+    # Filter paths to only include the specified endpoints
+    limited_paths = {
+        "/run/{run_id}": full_schema["paths"].get("/run/{run_id}", {}),
+        "/run/deployment/queue": full_schema["paths"].get("/run/deployment/queue", {})
+    }
+    
+    # Create limited schema
+    limited_schema = {
+        **full_schema,
+        "paths": limited_paths
+    }
+    
+    # Add security schemes
+    limited_schema["components"]["securitySchemes"] = {
+        "Bearer": {
+            "type": "http",
+            "scheme": "bearer",
+        }
+    }
+    
+    # Apply Bearer Auth security globally
+    limited_schema["security"] = [{"Bearer": []}]
+    
+    return limited_schema
+
+@app.get("/openapi-simple.json", include_in_schema=False)
+async def openapi_simple_json():
+    """Return a simplified OpenAPI schema with only specific endpoints"""
+    return JSONResponse(status_code=200, content=custom_simple_openapi())
+
+@app.get("/openapi-simple.json/with-no-code-samples", include_in_schema=False)
+async def openapi_simple_json_no_samples():
+    """Return a simplified OpenAPI schema without code samples"""
+    return JSONResponse(status_code=200, content=custom_simple_openapi(with_code_samples=False))
+
+@app.get("/simple-docs", include_in_schema=False)
+async def scalar_html_simple():
+    """Return Scalar docs UI for simplified API endpoints"""
+    return get_scalar_api_reference(
+        openapi_url="/openapi-simple.json",
+        title="ComfyDeploy API - Simple",
+        scalar_proxy_url="https://proxy.scalar.com",
+        hide_models=True,
+        servers=[{"url": server["url"]} for server in app.servers],
     )

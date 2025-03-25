@@ -27,7 +27,7 @@ from .types import (
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Body
 from fastapi.responses import StreamingResponse
 import modal
-from sqlalchemy import func, update
+from sqlalchemy import func, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
@@ -351,7 +351,7 @@ async def create_run_workflow_stream(
     summary="Queue a workflow",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
     callbacks=webhook_router.routes,
-    # include_in_schema=False,
+    include_in_schema=False,
     openapi_extra={
         "x-speakeasy-name-override": "queue",
     },
@@ -373,7 +373,7 @@ async def create_run_queue(
     summary="Run a workflow in sync",
     description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
     callbacks=webhook_router.routes,
-    # include_in_schema=False,
+    include_in_schema=False,
     openapi_extra={
         "x-speakeasy-name-override": "sync",
     },
@@ -394,6 +394,7 @@ async def create_run_sync(
     response_model=RunStream,
     response_class=StreamingResponse,
     deprecated=True,
+    include_in_schema=False,
     responses={
         200: {
             "description": "Stream of workflow run events",
@@ -425,25 +426,28 @@ async def create_run_stream(
     return await _create_run(request, data, background_tasks, db, client)
 
 
-class CancelFunctionBody(BaseModel):
-    function_id: str
 
 
 @router.post("/run/{run_id}/cancel")
 async def cancel_run(
-    run_id: str, body: CancelFunctionBody, db: AsyncSession = Depends(get_db)
+    run_id: str, db: AsyncSession = Depends(get_db)
 ):
     try:
         # Cancel the modal function
-        a = modal.functions.FunctionCall.from_id(body.function_id)
-        a.cancel()
-
-        # Update the database if run_id is provided
         if run_id:
-            # First check if the run is already in an end state
-            query = select(WorkflowRun).where(WorkflowRun.id == run_id)
-            result = await db.execute(query)
-            existing_run = result.scalar_one_or_none()
+            query = """
+                SELECT modal_function_call_id, status, id
+                FROM "comfyui_deploy"."workflow_runs"
+                WHERE id = :run_id
+            """
+            result = await db.execute(text(query), {"run_id": run_id})
+            existing_run = result.mappings().first()
+
+            if existing_run and existing_run.modal_function_call_id:
+                a = modal.functions.FunctionCall.from_id(existing_run.modal_function_call_id)
+                await a.cancel.aio()
+            else:
+                raise HTTPException(status_code=404, detail="Run not found or has no modal function call ID")
 
             if existing_run and existing_run.status not in [
                 "success",
@@ -455,9 +459,8 @@ async def cancel_run(
                 # Update the run status
                 stmt = (
                     update(WorkflowRun)
-                    .where(WorkflowRun.modal_function_call_id == body.function_id)
+                    .where(WorkflowRun.id == run_id)  # Use run_id instead of function_id
                     .values(status="cancelled", updated_at=now, ended_at=now)
-                    .returning(WorkflowRun)
                 )
                 await db.execute(stmt)
                 await db.commit()

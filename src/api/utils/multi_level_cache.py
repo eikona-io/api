@@ -185,22 +185,23 @@ def multi_level_cached(
             logfire.warning(f"Cache miss memory: {cache_key}")
             # If not in memory or too stale, try Redis (L2)
             try:
-                redis_value = await multi_cache.redis.get(cache_key)
-                if redis_value:
-                    # Parse the JSON value
-                    parsed_value = json.loads(redis_value)
-                    
-                    # Check version in Redis cache
-                    redis_version = parsed_value.get("version")
-                    if redis_version != version:
-                        logfire.warning(f"Version mismatch in Redis cache for {cache_key}. Cached: {redis_version}, Current: {version}")
-                        await multi_cache.invalidate(cache_key)
-                    else:
-                        logfire.info(f"Cache hit redis: {cache_key}")
-                        # Update memory cache
-                        multi_cache.memory_cache[cache_key] = (parsed_value, datetime.now())
-                        multi_cache._cleanup_if_needed()
-                        return parsed_value.get("data")
+                with logfire.span("Getting cache from redis"):
+                    redis_value = await multi_cache.redis.get(cache_key)
+                    if redis_value:
+                        # Parse the JSON value
+                        parsed_value = json.loads(redis_value)
+                        
+                        # Check version in Redis cache
+                        redis_version = parsed_value.get("version")
+                        if redis_version != version:
+                            logfire.warning(f"Version mismatch in Redis cache for {cache_key}. Cached: {redis_version}, Current: {version}")
+                            await multi_cache.invalidate(cache_key)
+                        else:
+                            logfire.info(f"Cache hit redis: {cache_key}")
+                            # Update memory cache
+                            multi_cache.memory_cache[cache_key] = (parsed_value, datetime.now())
+                            multi_cache._cleanup_if_needed()
+                            return parsed_value.get("data")
             except Exception as e:
                 logfire.error(f"Redis cache error: {str(e)}")
                 
