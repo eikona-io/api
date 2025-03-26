@@ -121,24 +121,24 @@ def custom_openapi_internal():
     return openapi_schema
 
 
-app.openapi = custom_openapi
+# app.openapi = custom_openapi
 
-@app.get("/", include_in_schema=False)
-async def scalar_html():
-    return get_scalar_api_reference(
-        openapi_url=app.openapi_url,
-        title=app.title,
-        scalar_proxy_url="https://proxy.scalar.com",
-        hide_models=True,
-        servers=[
-            {"url": server["url"]} for server in app.servers
-        ],  # Remove "/api" here
-    )
+# @app.get("/", include_in_schema=False)
+# async def scalar_html():
+#     return get_scalar_api_reference(
+#         openapi_url=app.openapi_url,
+#         title=app.title,
+#         scalar_proxy_url="https://proxy.scalar.com",
+#         hide_models=True,
+#         servers=[
+#             {"url": server["url"]} for server in app.servers
+#         ],  # Remove "/api" here
+#     )
     
     
-@app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
-async def openapi_json():
-    return JSONResponse(status_code=200, content=custom_openapi(with_code_samples=False))
+# @app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
+# async def openapi_json():
+#     return JSONResponse(status_code=200, content=custom_openapi(with_code_samples=False))
 
 
 @app.get("/internal/openapi.json", include_in_schema=False)
@@ -159,27 +159,34 @@ async def scalar_html_internal():
 
 def custom_simple_openapi(with_code_samples: bool = True):
     """Generate a simplified OpenAPI schema with only specific endpoints"""
+    # Define allowed endpoints
+    allowed_paths = [
+        "/run/{run_id}",
+        "/run/deployment/queue",
+        "/run/{run_id}/cancel"
+    ]
+    
+    # Get full schema (either from Speakeasy or generate locally)
     fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
     
-    if (fetch_from_speakeasy):
-        # In development mode, fetch from Speakeasy
-        import requests
-        try:
+    try:
+        if fetch_from_speakeasy:
+            import requests
             response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
             full_schema = response.json()
-        except Exception as e:
-            # Fallback to default schema generation
+        else:
             full_schema = get_openapi(
-                title="ComfyDeploy API - Simple",
+                title="ComfyDeploy API",
                 version="V2",
                 description=docs,
                 routes=public_api_router.routes,
                 servers=app.servers,
                 webhooks=app.webhooks.routes,
             )
-    else:
+    except Exception as e:
+        # Fallback to local generation if Speakeasy fails
         full_schema = get_openapi(
-            title="ComfyDeploy API - Simple",
+            title="ComfyDeploy API",
             version="V2",
             description=docs,
             routes=public_api_router.routes,
@@ -187,47 +194,35 @@ def custom_simple_openapi(with_code_samples: bool = True):
             webhooks=app.webhooks.routes,
         )
     
-    # Filter paths to only include the specified endpoints
-    limited_paths = {
-        "/run/{run_id}": full_schema["paths"].get("/run/{run_id}", {}),
-        "/run/deployment/queue": full_schema["paths"].get("/run/deployment/queue", {})
-    }
-    
-    # Create limited schema
-    limited_schema = {
+    # Create limited schema with only allowed paths
+    return {
         **full_schema,
-        "paths": limited_paths
+        "paths": {path: full_schema["paths"].get(path, {}) for path in allowed_paths},
+        "components": {
+            **full_schema.get("components", {}),
+            "securitySchemes": {"Bearer": {"type": "http", "scheme": "bearer"}}
+        },
+        "security": [{"Bearer": []}]
     }
-    
-    # Add security schemes
-    limited_schema["components"]["securitySchemes"] = {
-        "Bearer": {
-            "type": "http",
-            "scheme": "bearer",
-        }
-    }
-    
-    # Apply Bearer Auth security globally
-    limited_schema["security"] = [{"Bearer": []}]
-    
-    return limited_schema
 
-@app.get("/openapi-simple.json", include_in_schema=False)
+app.openapi = custom_simple_openapi
+
+@app.get("/openapi.json", include_in_schema=False)
 async def openapi_simple_json():
     """Return a simplified OpenAPI schema with only specific endpoints"""
     return JSONResponse(status_code=200, content=custom_simple_openapi())
 
-@app.get("/openapi-simple.json/with-no-code-samples", include_in_schema=False)
+@app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
 async def openapi_simple_json_no_samples():
     """Return a simplified OpenAPI schema without code samples"""
     return JSONResponse(status_code=200, content=custom_simple_openapi(with_code_samples=False))
 
-@app.get("/simple-docs", include_in_schema=False)
+@app.get("/", include_in_schema=False)
 async def scalar_html_simple():
     """Return Scalar docs UI for simplified API endpoints"""
     return get_scalar_api_reference(
-        openapi_url="/openapi-simple.json",
-        title="ComfyDeploy API - Simple",
+        openapi_url="/openapi.json",
+        title="ComfyDeploy API",
         scalar_proxy_url="https://proxy.scalar.com",
         hide_models=True,
         servers=[{"url": server["url"]} for server in app.servers],

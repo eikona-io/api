@@ -83,7 +83,7 @@ webhook_router = APIRouter(tags=["Callbacks"])
 @webhook_router.post(
     "{$request.body#/webhook}",
     response_model=WorkflowRunWebhookResponse,
-    summary="Receive run status updates via webhook",
+    summary="Run Update Webhook",
     description="This endpoint is called by the workflow runner to update the status of a run.",
 )
 async def run_update(
@@ -195,7 +195,7 @@ async def create_run_all(
 @router.post(
     "/run/deployment/queue",
     response_model=CreateRunResponse,
-    summary="Deployment - Queue",
+    summary="Queue Run",
     description="Create a new deployment run with the given parameters.",
     openapi_extra={
         "x-speakeasy-group": "run.deployment",
