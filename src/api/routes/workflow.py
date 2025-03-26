@@ -301,7 +301,7 @@ async def get_runs_day(
 ):
     params = {
         "workflow_id": workflow_id,
-        "org_id": request.state.current_user["org_id"],
+        "org_id": request.state.current_user.get("org_id", None),
         "user_id": request.state.current_user["user_id"],
     }
 
