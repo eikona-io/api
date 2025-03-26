@@ -229,7 +229,7 @@ async def get_all_runs(
     request: Request,
     workflow_id: str,
     status: Optional[str] = None,
-    deployment_id: Optional[str] = None,
+    deployment_id: Optional[UUID] = None,
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -292,8 +292,47 @@ async def get_all_runs(
     return JSONResponse(content=runs)
 
 
+@router.get("/workflow/{workflow_id}/runs/day", response_model=List[WorkflowRunModel])
+async def get_runs_day(
+    request: Request,
+    workflow_id: UUID,
+    deployment_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    params = {
+        "workflow_id": workflow_id,
+        "org_id": request.state.current_user.get("org_id", None),
+        "user_id": request.state.current_user["user_id"],
+    }
+
+    query = """
+    SELECT r.id, r.created_at, r.status FROM comfyui_deploy.workflow_runs r
+    WHERE r.workflow_id = :workflow_id
+    AND (
+        (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
+        OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
+    )
+    AND r.created_at >= NOW() - INTERVAL '24 hours'
+    """
+
+    if deployment_id:
+        query += " AND r.deployment_id = :deployment_id"
+        params["deployment_id"] = deployment_id
+
+    query += """
+    ORDER BY r.created_at DESC
+    """
+
+    result = await db.execute(text(query), params)
+    runs = [serialize_row(dict(row._mapping)) for row in result.fetchall()]
+    if not runs:
+        return []
+
+    return JSONResponse(content=runs)
+
+
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
-async def get_all_runs(
+async def get_all_runs_v1(
     request: Request,
     workflow_id: str,
     limit: int = 100,
