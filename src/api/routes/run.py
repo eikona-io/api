@@ -428,7 +428,12 @@ async def create_run_stream(
 
 
 
-@router.post("/run/{run_id}/cancel")
+@router.post(
+    "/run/{run_id}/cancel",
+    openapi_extra={
+        "x-speakeasy-name-override": "cancel",
+    },
+)
 async def cancel_run(
     run_id: str, db: AsyncSession = Depends(get_db)
 ):
