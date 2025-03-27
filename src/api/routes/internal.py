@@ -114,9 +114,7 @@ async def send_webhook(
                 "latency_ms": latency_ms,
                 "url": url,
                 "message": json_safe_value(response.text) if not response.ok else None,
-                "workflow_run_status": json_safe_value(workflow_run["status"]),
-                "workflow_run_live_status": json_safe_value(workflow_run["live_status"]),
-                "workflow_run_progress": json_safe_value(workflow_run["progress"]),
+                "payload": json.dumps(payload),
             }),
         )
     ]
