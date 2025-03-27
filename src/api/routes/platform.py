@@ -2036,9 +2036,9 @@ async def get_customer_plan_v2(
 @multi_level_cached(
     key_prefix="plan",
     # Time for local memory cache to refresh from redis
-    ttl_seconds=5,
+    ttl_seconds=60,
     # Time for redis to refresh from source (autumn)
-    redis_ttl_seconds=60,
+    redis_ttl_seconds=120,
     version="1.0",
     key_builder=lambda user_id_or_org_id: f"plan:{user_id_or_org_id}",
 )

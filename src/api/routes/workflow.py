@@ -228,15 +228,25 @@ def serialize_row(row_data):
 async def get_all_runs(
     request: Request,
     workflow_id: str,
+    status: Optional[str] = None,
+    deployment_id: Optional[UUID] = None,
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    query = text("""
-    SELECT 
-        r.id, r.status, r.created_at, r.updated_at, r.ended_at, r.queued_at, r.started_at, 
-        r.workflow_id, r.user_id, r.org_id, r.origin, r.gpu, r.machine_version, r.machine_type, 
-        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id, r.workflow_version_id,
+    params = {
+        "workflow_id": workflow_id,
+        "org_id": request.state.current_user.get("org_id", None),
+        "user_id": request.state.current_user["user_id"],
+        "limit": limit,
+        "offset": offset,
+    }
+
+    query = """
+    SELECT
+        r.id, r.status, r.created_at, r.updated_at, r.ended_at, r.queued_at, r.started_at,
+        r.workflow_id, r.user_id, r.org_id, r.origin, r.gpu, r.machine_version, r.machine_type,
+        r.modal_function_call_id, r.webhook_status, r.webhook_intermediate_status, r.batch_id, r.workflow_version_id, r.deployment_id,
         -- Computing timing metrics
         EXTRACT(EPOCH FROM (r.ended_at - r.created_at)) as duration,
         EXTRACT(EPOCH FROM (r.queued_at - r.created_at)) as comfy_deploy_cold_start,
@@ -250,25 +260,25 @@ async def get_all_runs(
     AND (
         (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
         OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
-    )
+    )"""
+
+    if status:
+        query += " AND r.status = :status"
+        params["status"] = status
+
+    if deployment_id:
+        query += " AND r.deployment_id = :deployment_id"
+        params["deployment_id"] = deployment_id
+
+    query += """
     ORDER BY r.created_at DESC
     LIMIT :limit
     OFFSET :offset
-    """)
-
-    current_user = request.state.current_user
-    user_id = current_user["user_id"]
-    org_id = current_user["org_id"] if "org_id" in current_user else None
+    """
 
     result = await db.execute(
-        query,
-        {
-            "user_id": user_id,
-            "org_id": org_id,
-            "limit": limit,
-            "workflow_id": workflow_id,
-            "offset": offset,
-        },
+        text(query),
+        params,
     )
 
     # Convert raw SQL results using our standalone serialization function
@@ -282,8 +292,47 @@ async def get_all_runs(
     return JSONResponse(content=runs)
 
 
+@router.get("/workflow/{workflow_id}/runs/day", response_model=List[WorkflowRunModel])
+async def get_runs_day(
+    request: Request,
+    workflow_id: UUID,
+    deployment_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    params = {
+        "workflow_id": workflow_id,
+        "org_id": request.state.current_user.get("org_id", None),
+        "user_id": request.state.current_user["user_id"],
+    }
+
+    query = """
+    SELECT r.id, r.created_at, r.status FROM comfyui_deploy.workflow_runs r
+    WHERE r.workflow_id = :workflow_id
+    AND (
+        (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
+        OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
+    )
+    AND r.created_at >= NOW() - INTERVAL '24 hours'
+    """
+
+    if deployment_id:
+        query += " AND r.deployment_id = :deployment_id"
+        params["deployment_id"] = deployment_id
+
+    query += """
+    ORDER BY r.created_at DESC
+    """
+
+    result = await db.execute(text(query), params)
+    runs = [serialize_row(dict(row._mapping)) for row in result.fetchall()]
+    if not runs:
+        return []
+
+    return JSONResponse(content=runs)
+
+
 @router.get("/workflow/{workflow_id}/runs", response_model=List[WorkflowRunModel])
-async def get_all_runs(
+async def get_all_runs_v1(
     request: Request,
     workflow_id: str,
     limit: int = 100,

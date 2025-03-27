@@ -18,6 +18,7 @@ app = FastAPI(
 
 api_router = APIRouter()  # Remove the prefix here
 public_api_router = APIRouter()  # Remove the prefix here
+basic_public_api_router = APIRouter()  # Remove the prefix here
 
 # add_pagination(app)
 
@@ -120,24 +121,24 @@ def custom_openapi_internal():
     return openapi_schema
 
 
-app.openapi = custom_openapi
+# app.openapi = custom_openapi
 
-@app.get("/", include_in_schema=False)
-async def scalar_html():
-    return get_scalar_api_reference(
-        openapi_url=app.openapi_url,
-        title=app.title,
-        scalar_proxy_url="https://proxy.scalar.com",
-        hide_models=True,
-        servers=[
-            {"url": server["url"]} for server in app.servers
-        ],  # Remove "/api" here
-    )
+# @app.get("/", include_in_schema=False)
+# async def scalar_html():
+#     return get_scalar_api_reference(
+#         openapi_url=app.openapi_url,
+#         title=app.title,
+#         scalar_proxy_url="https://proxy.scalar.com",
+#         hide_models=True,
+#         servers=[
+#             {"url": server["url"]} for server in app.servers
+#         ],  # Remove "/api" here
+#     )
     
     
-@app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
-async def openapi_json():
-    return JSONResponse(status_code=200, content=custom_openapi(with_code_samples=False))
+# @app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
+# async def openapi_json():
+#     return JSONResponse(status_code=200, content=custom_openapi(with_code_samples=False))
 
 
 @app.get("/internal/openapi.json", include_in_schema=False)
@@ -154,4 +155,75 @@ async def scalar_html_internal():
         servers=[
             {"url": server["url"]} for server in app.servers
         ],  # Remove "/api" here
+    )
+
+def custom_simple_openapi(with_code_samples: bool = True):
+    """Generate a simplified OpenAPI schema with only specific endpoints"""
+    # Define allowed endpoints
+    allowed_paths = [
+        "/run/{run_id}",
+        "/run/deployment/queue",
+        "/run/{run_id}/cancel"
+    ]
+    
+    # Get full schema (either from Speakeasy or generate locally)
+    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    
+    try:
+        if fetch_from_speakeasy:
+            import requests
+            response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
+            full_schema = response.json()
+        else:
+            full_schema = get_openapi(
+                title="ComfyDeploy API",
+                version="V2",
+                description=docs,
+                routes=public_api_router.routes,
+                servers=app.servers,
+                webhooks=app.webhooks.routes,
+            )
+    except Exception as e:
+        # Fallback to local generation if Speakeasy fails
+        full_schema = get_openapi(
+            title="ComfyDeploy API",
+            version="V2",
+            description=docs,
+            routes=public_api_router.routes,
+            servers=app.servers,
+            webhooks=app.webhooks.routes,
+        )
+    
+    # Create limited schema with only allowed paths
+    return {
+        **full_schema,
+        "paths": {path: full_schema["paths"].get(path, {}) for path in allowed_paths},
+        "components": {
+            **full_schema.get("components", {}),
+            "securitySchemes": {"Bearer": {"type": "http", "scheme": "bearer"}}
+        },
+        "security": [{"Bearer": []}]
+    }
+
+app.openapi = custom_simple_openapi
+
+@app.get("/openapi.json", include_in_schema=False)
+async def openapi_simple_json():
+    """Return a simplified OpenAPI schema with only specific endpoints"""
+    return JSONResponse(status_code=200, content=custom_simple_openapi())
+
+@app.get("/openapi.json/with-no-code-samples", include_in_schema=False)
+async def openapi_simple_json_no_samples():
+    """Return a simplified OpenAPI schema without code samples"""
+    return JSONResponse(status_code=200, content=custom_simple_openapi(with_code_samples=False))
+
+@app.get("/", include_in_schema=False)
+async def scalar_html_simple():
+    """Return Scalar docs UI for simplified API endpoints"""
+    return get_scalar_api_reference(
+        openapi_url="/openapi.json",
+        title="ComfyDeploy API",
+        scalar_proxy_url="https://proxy.scalar.com",
+        hide_models=True,
+        servers=[{"url": server["url"]} for server in app.servers],
     )
