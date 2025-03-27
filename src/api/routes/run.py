@@ -27,7 +27,7 @@ from .types import (
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Body
 from fastapi.responses import StreamingResponse
 import modal
-from sqlalchemy import func, update, text
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
@@ -36,12 +36,14 @@ from .internal import insert_to_clickhouse
 from .utils import (
     clean_up_outputs,
     ensure_run_timeout,
+    execute_with_org_check,
     generate_temporary_token,
     get_temporary_download_url,
     get_user_settings,
     post_process_output_data,
     post_process_outputs,
     select,
+    text,
 )
 from botocore.config import Config
 import random
@@ -435,7 +437,9 @@ async def create_run_stream(
     },
 )
 async def cancel_run(
-    run_id: str, db: AsyncSession = Depends(get_db)
+    request: Request,
+    run_id: str,
+    db: AsyncSession = Depends(get_db)
 ):
     try:
         # Cancel the modal function
@@ -445,8 +449,16 @@ async def cancel_run(
                 FROM "comfyui_deploy"."workflow_runs"
                 WHERE id = :run_id
             """
-            result = await db.execute(text(query), {"run_id": run_id})
+            result = await execute_with_org_check(
+                db,
+                query,
+                request,
+                WorkflowRun,
+                {"run_id": run_id}
+            )
             existing_run = result.mappings().first()
+
+            print(existing_run)
 
             if existing_run and existing_run.modal_function_call_id:
                 a = modal.functions.FunctionCall.from_id(existing_run.modal_function_call_id)

@@ -7,7 +7,7 @@ from typing import Any, Literal, Self, TypeVar, Tuple, Union
 from api.routes.types import WorkflowRunOutputModel
 from fastapi import Request
 import logfire
-from sqlalchemy import GenerativeSelect, Select
+from sqlalchemy import GenerativeSelect, Select, text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql.selectable import _ColumnsClauseArgument
 import os
@@ -710,4 +710,50 @@ def is_valid_uuid(uuid_string: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+async def execute_with_org_check(
+    db: AsyncSession,
+    sql: str,
+    request: Request,
+    model: Base,  # SQLAlchemy model
+    params: dict = None
+) -> Any:
+    """
+    Execute SQL with organization check.
+    
+    Args:
+        db: The database session
+        sql: The SQL query
+        request: The FastAPI request object
+        model: The SQLAlchemy model class
+        params: Additional query parameters (optional)
+    """
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user.get("org_id")
+
+    # Add org check to WHERE clause
+    if "WHERE" in sql.upper():
+        sql = f"{sql} AND"
+    else:
+        sql = f"{sql} WHERE"
+
+    table_name = model.__table__.name
+    
+    # Use model columns for proper type handling
+    if org_id:
+        sql = f"{sql} ({table_name}.org_id = :org_id)"
+    else:
+        sql = f"{sql} ({table_name}.user_id = :user_id AND {table_name}.org_id IS NULL)"
+
+    # Combine parameters
+    execute_params = {
+        "user_id": user_id,
+        "org_id": org_id,
+        **(params or {})
+    }
+
+    print(sql)
+    return await db.execute(text(sql), execute_params)
 
