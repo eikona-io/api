@@ -167,7 +167,11 @@ async def stream_progress_endpoint(
     machine_id: Optional[str] = None,
     return_run: Optional[bool] = False,
     from_start: Optional[bool] = False,
-    # db: AsyncSession = Depends(get_db),
+
+    # filter params
+    status: Optional[str] = None,
+    deployment_id: Optional[str] = None,
+
     client=Depends(get_clickhouse_client),
 ):
     if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
@@ -179,7 +183,7 @@ async def stream_progress_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_progress(id_type, id_value, request, client, return_run, from_start),
+        stream_progress(id_type, id_value, request, client, return_run, from_start, status, deployment_id),
         media_type="text/event-stream",
     )
 
@@ -191,7 +195,10 @@ async def stream_progress(
     client,
     return_run: Optional[bool] = False,
     from_start: Optional[bool] = False,
-    # db: AsyncSession = Depends(get_db),
+
+    # filter params
+    status: Optional[str] = None,
+    deployment_id: Optional[str] = None,
 ):
     async with get_db_context() as db:
         user_settings = await get_user_settings(request, db)
@@ -270,6 +277,12 @@ async def stream_progress(
                             .where(WorkflowRun.id == run_id)
                             .apply_org_check(request)
                         )
+
+                        if status:
+                            query = query.where(WorkflowRun.status == status)
+
+                        if deployment_id:
+                            query = query.where(WorkflowRun.deployment_id == deployment_id)
 
                         result = await db.execute(query)
                         run = result.unique().scalar_one_or_none()
