@@ -119,6 +119,20 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
 
     run = cast(WorkflowRun, run)
 
+    # If the run is not in a terminal state, check if the GPU event ended
+    # logfire.info(str(run.status))
+    if run.status not in ["success", "failed", "timeout", "cancelled"]:
+        if run.gpu_event_id is not None:
+            # Right now we are tracking session_id
+            gpu_event = await db.execute(select(GPUEvent).where(GPUEvent.session_id == str(run.gpu_event_id)))
+            gpu_event = gpu_event.unique().scalar_one_or_none()
+            # logfire.info(run.gpu_event_id)
+            # logfire.info(gpu_event)
+            # GPU event ended, this run should have been ended
+            if gpu_event and gpu_event.end_time is not None:
+                run.status = "cancelled"
+                await db.commit()
+
     user_settings = await get_user_settings(request, db)
     ensure_run_timeout(run)
     clean_up_outputs(run.outputs)

@@ -47,6 +47,15 @@ from pydantic import BaseModel
 #     created_at: datetime
 #     updated_at: datetime
 
+class MachineGPU(str, Enum):
+    CPU = "CPU"
+    T4 = "T4"
+    L4 = "L4"
+    A10G = "A10G"
+    L40S = "L40S"
+    A100 = "A100"
+    A100_80GB = "A100-80GB"
+    H100 = "H100"
 
 def format_datetime(dt: Optional[datetime]) -> Optional[str]:
     print(dt)
@@ -193,16 +202,6 @@ class MachineStatus(str, Enum):
     RUNNING = "running"
     PAUSED = "paused"
     STARTING = "starting"
-
-
-class MachineGPU(str, Enum):
-    T4 = "T4"
-    L4 = "L4"
-    A10G = "A10G"
-    L40S = "L40S"
-    A100 = "A100"
-    A100_80GB = "A100-80GB"
-    H100 = "H100"
 
 
 class WorkspaceGPU(str, Enum):
@@ -616,15 +615,7 @@ class DeploymentFeaturedModel(BaseModel):
     description: Optional[str] = None
     share_slug: Optional[str] = None
 
-class MachineGPU(str, Enum):
-    CPU = "CPU"
-    T4 = "T4"
-    L4 = "L4"
-    A10G = "A10G"
-    L40S = "L40S"
-    A100 = "A100"
-    A100_80GB = "A100-80GB"
-    H100 = "H100"
+
 
 
 class WorkspaceGPU(str, Enum):
