@@ -218,43 +218,55 @@ class WorkflowRun(SerializableMixin, Base):
 
 
 class WorkflowRunWithExtra(WorkflowRun):
-    pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Initialize default values for computed properties
+        self.number = 0  # Default value for row number
+        # Calculate duration only if both timestamps exist
+        self.duration = self._calculate_duration(self.ended_at, self.created_at)
+        self.cold_start_duration = self._calculate_duration(self.started_at, self.queued_at)
+        self.cold_start_duration_total = self._calculate_duration(self.started_at, self.created_at)
+        self.run_duration = self._calculate_duration(self.ended_at, self.started_at)
 
+    def _calculate_duration(self, end_time, start_time):
+        if end_time and start_time:
+            return (end_time - start_time).total_seconds()
+        return 0
 
-# Add these properties to your WorkflowRun model
-WorkflowRunWithExtra.number = column_property(
-    func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
-)
-WorkflowRunWithExtra.duration = column_property(
-    (
-        func.extract("epoch", WorkflowRun.ended_at)
-        - func.extract("epoch", WorkflowRun.created_at)
-    ).label("duration")
-)
-WorkflowRunWithExtra.comfy_deploy_cold_start = column_property(
-    (
-        func.extract("epoch", WorkflowRun.queued_at)
-        - func.extract("epoch", WorkflowRun.created_at)
-    ).label("comfy_deploy_cold_start")
-)
-WorkflowRunWithExtra.cold_start_duration = column_property(
-    (
-        func.extract("epoch", WorkflowRun.started_at)
-        - func.extract("epoch", WorkflowRun.queued_at)
-    ).label("cold_start_duration")
-)
-WorkflowRunWithExtra.cold_start_duration_total = column_property(
-    (
-        func.extract("epoch", WorkflowRun.started_at)
-        - func.extract("epoch", WorkflowRun.created_at)
-    ).label("cold_start_duration_total")
-)
-WorkflowRunWithExtra.run_duration = column_property(
-    (
-        func.extract("epoch", WorkflowRun.ended_at)
-        - func.extract("epoch", WorkflowRun.started_at)
-    ).label("run_duration")
-)
+    # Keep the existing column_property definitions for SQL queries
+    number = column_property(
+        func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
+    )
+    duration = column_property(
+        (
+            func.extract("epoch", WorkflowRun.ended_at)
+            - func.extract("epoch", WorkflowRun.created_at)
+        ).label("duration")
+    )
+    comfy_deploy_cold_start = column_property(
+        (
+            func.extract("epoch", WorkflowRun.queued_at)
+            - func.extract("epoch", WorkflowRun.created_at)
+        ).label("comfy_deploy_cold_start")
+    )
+    cold_start_duration = column_property(
+        (
+            func.extract("epoch", WorkflowRun.started_at)
+            - func.extract("epoch", WorkflowRun.queued_at)
+        ).label("cold_start_duration")
+    )
+    cold_start_duration_total = column_property(
+        (
+            func.extract("epoch", WorkflowRun.started_at)
+            - func.extract("epoch", WorkflowRun.created_at)
+        ).label("cold_start_duration_total")
+    )
+    run_duration = column_property(
+        (
+            func.extract("epoch", WorkflowRun.ended_at)
+            - func.extract("epoch", WorkflowRun.started_at)
+        ).label("run_duration")
+    )
 
 
 class WorkflowRunOutput(SerializableMixin, Base):
