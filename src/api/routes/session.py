@@ -116,14 +116,32 @@ async def get_comfy_runner_for_workspace(
 ):
     logger.info(machine_id)
     ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunner" if not optimized_runner else "ComfyDeployRunnerOptimizedImports")
-    runner = ComfyDeployRunner.with_options(
-        concurrency_limit=5,
-        allow_concurrent_inputs=1,
-        # 2 seconds minimum idle timeout
-        container_idle_timeout=2,
-        timeout=timeout * 60,
-        gpu=gpu if gpu != "CPU" else None,
-    )(gpu=gpu, is_workspace=True)
+    
+    try:
+        ComfyDeployRunner.new_tunnel_params
+        has_new_tunnel_params = True
+    except (AttributeError, modal.exception.Error):
+        has_new_tunnel_params = False
+
+    print("has_new_tunnel_params", has_new_tunnel_params)
+    if has_new_tunnel_params:
+        runner = ComfyDeployRunner.with_options(
+            concurrency_limit=5,
+            allow_concurrent_inputs=1,
+            # 2 seconds minimum idle timeout
+            container_idle_timeout=2,
+            timeout=timeout * 60,
+            gpu=gpu if gpu != "CPU" else None,
+        )(gpu=gpu, is_workspace=True)
+    else:
+        runner = ComfyDeployRunner.with_options(
+            concurrency_limit=1,
+            allow_concurrent_inputs=1000,
+            # 2 seconds minimum idle timeout
+            container_idle_timeout=2,
+            timeout=timeout * 60,
+            gpu=gpu if gpu != "CPU" else None,
+        )(session_id=session_id, is_workspace=True)
 
     return runner
 
