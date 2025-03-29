@@ -110,35 +110,19 @@ session_callback_endpoint = os.environ.get("CURRENT_API_URL")
 # print("status_endpoint", status_endpoint)
 
 
-async def get_comfy_runner(
-    machine_id: str, session_id: str | UUID, timeout: int, gpu: str
+async def get_comfy_runner_for_workspace(
+    machine_id: str, session_id: str | UUID, timeout: int, gpu: str, optimized_runner: bool = False
 ):
     logger.info(machine_id)
-    ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunner")
+    ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunner" if not optimized_runner else "ComfyDeployRunnerOptimizedImports")
     runner = ComfyDeployRunner.with_options(
-        concurrency_limit=1,
-        allow_concurrent_inputs=1000,
+        concurrency_limit=5,
+        allow_concurrent_inputs=1,
         # 2 seconds minimum idle timeout
         container_idle_timeout=2,
         timeout=timeout * 60,
         gpu=gpu if gpu != "CPU" else None,
-    )(session_id=str(session_id), gpu=gpu)
-
-    return runner
-
-async def get_optimized_comfy_runner(
-    machine_id: str, session_id: str | UUID, timeout: int, gpu: str
-):
-    logger.info(machine_id)
-    ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunnerOptimizedImports")
-    runner = ComfyDeployRunner.with_options(
-        concurrency_limit=1,
-        allow_concurrent_inputs=1000,
-        # 2 seconds minimum idle timeout
-        container_idle_timeout=2,
-        timeout=timeout * 60,
-        gpu=gpu if gpu != "CPU" else None,
-    )()
+    )(gpu=gpu, is_workspace=True)
 
     return runner
 
@@ -260,9 +244,9 @@ async def get_machine_sessions(
 
 
 async def increase_timeout_task(
-    machine_id: str, session_id: UUID, timeout: int, gpu: str
+    machine_id: str, session_id: UUID, timeout: int, gpu: str, optimized_runner: bool = False
 ):
-    runner = await get_comfy_runner(machine_id, session_id, 60 * 24, gpu)
+    runner = await get_comfy_runner_for_workspace(machine_id, session_id, 60 * 24, gpu, optimized_runner)
     await runner.increase_timeout.spawn.aio(timeout)
 
 
@@ -274,7 +258,18 @@ async def create_session_background_task(
     gpu: str,
     status_queue: Optional[asyncio.Queue] = None,
 ):
-    runner = await get_optimized_comfy_runner(machine_id, session_id, 60 * 24, gpu)
+    send_log_entry(session_id, machine_id, "Creating session", "info")
+    try:
+        async with get_db_context() as db:
+            machine = await db.execute(select(Machine.optimized_runner).where(Machine.id == machine_id))
+            optimized_runner = machine.scalar_one()
+    except Exception as e:
+        print("optimized_runner", e)
+        optimized_runner = False
+
+    print("optimized_runner", optimized_runner)
+
+    runner = await get_comfy_runner_for_workspace(machine_id, session_id, 60 * 24, gpu, optimized_runner)
 
     try:
         runner.increase_timeout
@@ -283,12 +278,12 @@ async def create_session_background_task(
         has_increase_timeout = False
 
     if not has_increase_timeout:
-        runner = await get_optimized_comfy_runner(machine_id, session_id, timeout, gpu)
+        runner = await get_comfy_runner_for_workspace(machine_id, session_id, timeout, gpu, optimized_runner)
 
     print("async_creation", status_queue)
     async with modal.Queue.ephemeral() as q:
         if has_increase_timeout:
-            result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout)
+            result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout, str(session_id))
         else:
             result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
 
@@ -331,26 +326,68 @@ async def create_session_background_task(
             gpuEvent = result.scalar_one()
             await db.refresh(gpuEvent)
 
-        while True:
-            msg = await q.get.aio()
-            if msg.startswith("url:"):
-                url = msg[4:]
-                break
-            else:
-                logger.info(msg)
 
-        async with get_db_context() as db:
-            result = await db.execute(
-                update(GPUEvent)
-                .where(GPUEvent.session_id == str(session_id))
-                .values(tunnel_url=url)
-                .returning(GPUEvent)
-            )
-            await db.commit()
-            gpuEvent = result.scalar_one()
-            print("gpuEvent", gpuEvent)
-            await db.refresh(gpuEvent)
-            return gpuEvent
+        async def wait_for_url_from_queue():
+            while True:
+                msg = await q.get.aio()
+                if msg.startswith("url:"):
+                    url = msg[4:]
+                    break
+                else:
+                    logger.info(msg)
+                
+                print("async_creation", msg)
+
+            async with get_db_context() as db:
+                result = await db.execute(
+                    update(GPUEvent)
+                    .where(GPUEvent.session_id == str(session_id))
+                    .values(tunnel_url=url)
+                    .returning(GPUEvent)
+                )
+                await db.commit()
+                gpuEvent = result.scalar_one()
+                print("gpuEvent", gpuEvent)
+                await db.refresh(gpuEvent)
+                return gpuEvent
+            
+        # async def wait_for_url_from_callback():
+            # while True:
+            #     async with get_db_context() as db:
+            #         result = await db.execute(
+            #             select(GPUEvent)
+            #             .where(GPUEvent.session_id == session_id)
+            #             .where(GPUEvent.end_time.is_(None))
+            #         )
+            #         gpuEvent = result.scalar_one_or_none()
+
+            #         print("gpuEvent", gpuEvent.modal_function_id)
+                    
+            #         if gpuEvent.tunnel_url:
+            #             logger.info(f"Session {session_id} tunnel URL updated")
+            #             return gpuEvent
+                
+            #     await asyncio.sleep(1)
+
+        # done, pending = await asyncio.wait(
+        #     [
+        #         asyncio.create_task(wait_for_url_from_queue()),
+        #         asyncio.create_task(wait_for_url_from_callback())
+        #     ],
+        #     return_when=asyncio.FIRST_COMPLETED
+        # )
+
+        # print("done", done.result())
+
+        # # Cancel any pending tasks
+        # for task in pending:
+        #     task.cancel()
+
+        # return done.result()
+
+        result = await wait_for_url_from_queue()
+
+        return result
 
 
 class CreateSessionBody(BaseModel):
@@ -422,9 +459,12 @@ async def increase_timeout(
 
     if gpu_event is None:
         raise HTTPException(status_code=404, detail="GPU event not found")
+    
+    machine = await db.execute(select(Machine.optimized_runner).where(Machine.id == body.machine_id))
+    optimized_runner = machine.scalar_one()
 
     await increase_timeout_task(
-        body.machine_id, body.session_id, body.timeout, body.gpu
+        body.machine_id, body.session_id, body.timeout, body.gpu, optimized_runner
     )
 
     # in the database we save the timeout in minutes
@@ -928,7 +968,7 @@ async def get_docker_commands_from_dynamic_session_body(
 
 class UpdateSessionCallbackBody(BaseModel):
     session_id: str
-    sandbox_id: str
+    sandbox_id: Optional[str] = None
     tunnel_url: str
     machine_version_id: Optional[str] = None
 

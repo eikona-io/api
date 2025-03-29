@@ -509,6 +509,7 @@ class Machine(SerializableMixin, Base):
         UUID(as_uuid=True), ForeignKey("machine_versions.id", ondelete="set null")
     )
     is_workspace = Column(Boolean, nullable=False, default=False)
+    optimized_runner = Column(Boolean, nullable=False, default=False)
 
     # Add shared columns
     locals().update(get_machine_columns())

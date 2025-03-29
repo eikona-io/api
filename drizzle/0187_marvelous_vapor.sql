@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "optimized_runner" boolean DEFAULT false NOT NULL;--> statement-breakpoint
