@@ -141,7 +141,7 @@ async def get_comfy_runner_for_workspace(
             container_idle_timeout=2,
             timeout=timeout * 60,
             gpu=gpu if gpu != "CPU" else None,
-        )(session_id=session_id, is_workspace=True)
+        )(session_id=str(session_id), gpu=gpu)
 
     return runner
 
