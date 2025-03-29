@@ -151,12 +151,12 @@ class WorkflowRunModel(BaseModel):
     webhook_intermediate_status: bool = Field(default=False)
     outputs: List[WorkflowRunOutputModel] = []
 
-    number: int
+    number: Optional[int] = 0
     # total: int
-    duration: Optional[float]
-    cold_start_duration: Optional[float]
-    cold_start_duration_total: Optional[float]
-    run_duration: Optional[float]
+    duration: Optional[float] = 0
+    cold_start_duration: Optional[float] = 0
+    cold_start_duration_total: Optional[float] = 0
+    run_duration: Optional[float] = 0
 
     class Config:
         from_attributes = True

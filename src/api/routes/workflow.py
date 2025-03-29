@@ -230,6 +230,7 @@ async def get_all_runs(
     workflow_id: str,
     status: Optional[str] = None,
     deployment_id: Optional[UUID] = None,
+    rf: Optional[int] = None,  # relative from now
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -269,6 +270,10 @@ async def get_all_runs(
     if deployment_id:
         query += " AND r.deployment_id = :deployment_id"
         params["deployment_id"] = deployment_id
+
+    if rf:
+        query += " AND r.created_at >= to_timestamp(:rf)"
+        params["rf"] = rf
 
     query += """
     ORDER BY r.created_at DESC

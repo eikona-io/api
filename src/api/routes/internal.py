@@ -64,8 +64,17 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def json_safe_value(value):
+    if callable(value):
+        return str(value)
+    return value
+
 async def send_webhook(
-    workflow_run, updatedAt: datetime, run_id: str, type: str = "run.updated"
+    workflow_run,
+    updated_at: datetime,
+    run_id: str,
+    type: str = "run.updated",
+    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     # try:
     url = workflow_run["webhook"]
@@ -91,7 +100,29 @@ async def send_webhook(
     start_time = time.time()
     response = await retry_fetch(url, options)
     latency_ms = (time.time() - start_time) * 1000
-    print("webhook response", response.ok)
+
+    webhook_clickhouse_data = [
+        (
+            uuid4(),
+            workflow_run["id"],
+            workflow_run["workflow_id"],
+            workflow_run["machine_id"],
+            datetime.fromtimestamp(start_time, tz=timezone.utc),
+            "webhook",
+            json.dumps({
+                "status": json_safe_value(response.status),
+                "latency_ms": latency_ms,
+                "url": url,
+                "message": json_safe_value(response.text) if not response.ok else None,
+                "payload": json.dumps(payload),
+            }),
+        )
+    ]
+
+    asyncio.create_task(
+        insert_to_clickhouse(client, "log_entries", webhook_clickhouse_data)
+    )
+
     if response.ok:
         logfire.info(
             "Webhook sent successfully",
@@ -305,7 +336,12 @@ async def update_run(
             and workflow_run.webhook_intermediate_status
         ):
             asyncio.create_task(
-                send_webhook(workflow_run.to_dict(), updated_at, workflow_run.id)
+                send_webhook(
+                    workflow_run=workflow_run.to_dict(),
+                    updated_at=updated_at,
+                    run_id=workflow_run.id,
+                    client=client,
+                )
             )
             # background_tasks.add_task(
             #     send_webhook, workflow_run, updated_at, workflow_run.id
@@ -395,7 +431,11 @@ async def update_run(
                     workflow_run_data["outputs"] = [newOutput.to_dict()]
                     asyncio.create_task(
                         send_webhook(
-                            workflow_run_data, updated_at, workflow_run.id, "run.output"
+                            workflow_run=workflow_run_data,
+                            updated_at=updated_at,
+                            run_id=workflow_run.id,
+                            type="run.output",
+                            client=client,
                         )
                     )
             except Exception as e:
@@ -593,7 +633,12 @@ async def update_run(
 
         if workflow_run.webhook is not None:
             asyncio.create_task(
-                send_webhook(workflow_run_data, updated_at, workflow_run.id)
+                send_webhook(
+                    workflow_run=workflow_run_data,
+                    updated_at=updated_at,
+                    run_id=workflow_run.id,
+                    client=client,
+                )
             )
             # background_tasks.add_task(
             #     send_webhook, workflow_run, updated_at, workflow_run.id

@@ -220,11 +220,6 @@ class WorkflowRun(SerializableMixin, Base):
 class WorkflowRunWithExtra(WorkflowRun):
     pass
 
-
-# Add these properties to your WorkflowRun model
-WorkflowRunWithExtra.number = column_property(
-    func.row_number().over(order_by=WorkflowRun.created_at.asc()).label("number")
-)
 WorkflowRunWithExtra.duration = column_property(
     (
         func.extract("epoch", WorkflowRun.ended_at)
