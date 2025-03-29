@@ -37,6 +37,7 @@ import time
 from collections import deque
 import shutil
 from contextlib import contextmanager
+from io import StringIO
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 
@@ -1682,6 +1683,60 @@ class BaseComfyDeployRunner:
 
         print("comfy-modal - cleanup done")
 
+    def setup_native_logging(self):
+        """
+        Sets up logging for native ComfyUI implementation to capture logs similarly to subprocess implementation.
+        Returns the configured handler for cleanup if needed.
+        """
+        # Create a StringIO object to capture logs
+        log_stream = StringIO()
+        
+        class DualHandler(logging.Handler):
+            def __init__(self, machine_logs, log_queues, cold_start_queue, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.machine_logs = machine_logs
+                self.log_queues = log_queues
+                self.cold_start_queue = cold_start_queue
+
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    print(msg, flush=True)  # Print to stdout
+                    
+                    log_entry = {
+                        "logs": msg,
+                        "timestamp": time.time()
+                    }
+                    
+                    # Add to machine logs
+                    self.machine_logs.append(log_entry)
+                    
+                    # Add to appropriate queue
+                    target_log = (self.log_queues[0]["logs"] 
+                                if self.log_queues is not None and len(self.log_queues) > 0 
+                                else self.cold_start_queue)
+                    target_log.append(log_entry)
+                except Exception as e:
+                    print(f"Error in log handler: {e}")
+
+        # Create and configure the handler
+        handler = DualHandler(
+            machine_logs=self.machine_logs,
+            log_queues=self.log_queues,
+            cold_start_queue=self.cold_start_queue
+        )
+        
+        # Set format
+        formatter = logging.Formatter('%(message)s')
+        handler.setFormatter(formatter)
+
+        # Get the root logger and add our handler
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
+
+        return handler
+
 class _ComfyDeployRunner(BaseComfyDeployRunner):
     workflow_api_raw = None
 
@@ -1799,6 +1854,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         )
 
     async def start_native_comfy_server(self):
+        self.log_handler = self.setup_native_logging()
         # with cProfile.Profile() as pr:
         import sys
         from pathlib import Path
@@ -1999,7 +2055,6 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         #     workflow_end_time - workflow_start_time
         # )
 
-
     def load_args(self):
         from comfy.cli_args import args
 
@@ -2019,10 +2074,11 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             args.cpu = False
         
 
-
     @modal.exit()
     async def exit(self):
         print("Exiting ComfyUI")
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(self.log_handler)
         await self.handle_container_exit()
 
 
