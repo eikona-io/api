@@ -258,7 +258,7 @@ async def create_session_background_task(
     gpu: str,
     status_queue: Optional[asyncio.Queue] = None,
 ):
-    send_log_entry(session_id, machine_id, "Creating session", "info")
+    send_log_entry(session_id, machine_id, "Creating session...", "info")
     try:
         async with get_db_context() as db:
             machine = await db.execute(select(Machine.optimized_runner).where(Machine.id == machine_id))
@@ -268,6 +268,9 @@ async def create_session_background_task(
         optimized_runner = False
 
     print("optimized_runner", optimized_runner)
+
+    if optimized_runner:
+        send_log_entry(session_id, machine_id, "Using optimized runner...", "info")
 
     runner = await get_comfy_runner_for_workspace(machine_id, session_id, 60 * 24, gpu, optimized_runner)
 
@@ -280,114 +283,120 @@ async def create_session_background_task(
     if not has_increase_timeout:
         runner = await get_comfy_runner_for_workspace(machine_id, session_id, timeout, gpu, optimized_runner)
 
-    print("async_creation", status_queue)
-    async with modal.Queue.ephemeral() as q:
-        if has_increase_timeout:
-            result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout, str(session_id))
-        else:
-            result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
-
-        modal_function_id = result.object_id
-        print("modal_function_id", modal_function_id)
-
-        # gpuEvent = None
-        # while gpuEvent is None:
-        # async with get_db_context() as db:
-        #     gpuEvent = cast(
-        #         Optional[GPUEvent],
-        #         (
-        #             await db.execute(
-        #                 (
-        #                     select(GPUEvent)
-        #                     .where(GPUEvent.session_id == str(session_id))
-        #                     .where(GPUEvent.end_time.is_(None))
-        #                     .apply_org_check(request)
-        #                 )
-        #             )
-        #         ).scalar_one_or_none(),
-        #     )
-
-        # if gpuEvent is None:
-        #     await asyncio.sleep(1)
-
+    try:
         print("async_creation", status_queue)
-        if status_queue is not None:
-            await status_queue.put(modal_function_id)
-        print("async_creation", modal_function_id)
+        async with modal.Queue.ephemeral() as q:
+            if has_increase_timeout:
+                result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout, str(session_id))
+            else:
+                result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
 
-        async with get_db_context() as db:
-            result = await db.execute(
-                update(GPUEvent)
-                .where(GPUEvent.session_id == str(session_id))
-                .values(modal_function_id=modal_function_id, session_timeout=timeout)
-                .returning(GPUEvent)
-            )
-            await db.commit()
-            gpuEvent = result.scalar_one()
-            await db.refresh(gpuEvent)
+            modal_function_id = result.object_id
+            print("modal_function_id", modal_function_id)
 
+            # gpuEvent = None
+            # while gpuEvent is None:
+            # async with get_db_context() as db:
+            #     gpuEvent = cast(
+            #         Optional[GPUEvent],
+            #         (
+            #             await db.execute(
+            #                 (
+            #                     select(GPUEvent)
+            #                     .where(GPUEvent.session_id == str(session_id))
+            #                     .where(GPUEvent.end_time.is_(None))
+            #                     .apply_org_check(request)
+            #                 )
+            #             )
+            #         ).scalar_one_or_none(),
+            #     )
 
-        async def wait_for_url_from_queue():
-            while True:
-                msg = await q.get.aio()
-                if msg.startswith("url:"):
-                    url = msg[4:]
-                    break
-                else:
-                    logger.info(msg)
-                
-                print("async_creation", msg)
+            # if gpuEvent is None:
+            #     await asyncio.sleep(1)
+
+            print("async_creation", status_queue)
+            if status_queue is not None:
+                await status_queue.put(modal_function_id)
+            print("async_creation", modal_function_id)
 
             async with get_db_context() as db:
                 result = await db.execute(
                     update(GPUEvent)
                     .where(GPUEvent.session_id == str(session_id))
-                    .values(tunnel_url=url)
+                    .values(modal_function_id=modal_function_id, session_timeout=timeout)
                     .returning(GPUEvent)
                 )
                 await db.commit()
                 gpuEvent = result.scalar_one()
-                print("gpuEvent", gpuEvent)
                 await db.refresh(gpuEvent)
-                return gpuEvent
-            
-        # async def wait_for_url_from_callback():
-            # while True:
-            #     async with get_db_context() as db:
-            #         result = await db.execute(
-            #             select(GPUEvent)
-            #             .where(GPUEvent.session_id == session_id)
-            #             .where(GPUEvent.end_time.is_(None))
-            #         )
-            #         gpuEvent = result.scalar_one_or_none()
 
-            #         print("gpuEvent", gpuEvent.modal_function_id)
+
+            async def wait_for_url_from_queue():
+                while True:
+                    msg = await q.get.aio()
+                    if msg.startswith("url:"):
+                        url = msg[4:]
+                        break
+                    else:
+                        logger.info(msg)
                     
-            #         if gpuEvent.tunnel_url:
-            #             logger.info(f"Session {session_id} tunnel URL updated")
-            #             return gpuEvent
+                    print("async_creation", msg)
+
+                async with get_db_context() as db:
+                    result = await db.execute(
+                        update(GPUEvent)
+                        .where(GPUEvent.session_id == str(session_id))
+                        .values(tunnel_url=url)
+                        .returning(GPUEvent)
+                    )
+                    await db.commit()
+                    gpuEvent = result.scalar_one()
+                    print("gpuEvent", gpuEvent)
+                    await db.refresh(gpuEvent)
+                    return gpuEvent
                 
-            #     await asyncio.sleep(1)
+            # async def wait_for_url_from_callback():
+                # while True:
+                #     async with get_db_context() as db:
+                #         result = await db.execute(
+                #             select(GPUEvent)
+                #             .where(GPUEvent.session_id == session_id)
+                #             .where(GPUEvent.end_time.is_(None))
+                #         )
+                #         gpuEvent = result.scalar_one_or_none()
 
-        # done, pending = await asyncio.wait(
-        #     [
-        #         asyncio.create_task(wait_for_url_from_queue()),
-        #         asyncio.create_task(wait_for_url_from_callback())
-        #     ],
-        #     return_when=asyncio.FIRST_COMPLETED
-        # )
+                #         print("gpuEvent", gpuEvent.modal_function_id)
+                        
+                #         if gpuEvent.tunnel_url:
+                #             logger.info(f"Session {session_id} tunnel URL updated")
+                #             return gpuEvent
+                    
+                #     await asyncio.sleep(1)
 
-        # print("done", done.result())
+            # done, pending = await asyncio.wait(
+            #     [
+            #         asyncio.create_task(wait_for_url_from_queue()),
+            #         asyncio.create_task(wait_for_url_from_callback())
+            #     ],
+            #     return_when=asyncio.FIRST_COMPLETED
+            # )
 
-        # # Cancel any pending tasks
-        # for task in pending:
-        #     task.cancel()
+            # print("done", done.result())
 
-        # return done.result()
+            # # Cancel any pending tasks
+            # for task in pending:
+            #     task.cancel()
 
-        result = await wait_for_url_from_queue()
+            # return done.result()
 
-        return result
+            result = await wait_for_url_from_queue()
+
+            return result
+    except Exception as e:
+        send_log_entry(session_id, machine_id, str(e), "info")
+        async with get_db_context() as db:
+            await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+        raise e
 
 
 class CreateSessionBody(BaseModel):

@@ -69,6 +69,8 @@ prestart_command = config["prestart_command"]
 global_extra_args = config["extra_args"]
 modal_image_id = config["modal_image_id"]
 
+logger = logging.getLogger(__name__)
+
 # print(base_docker_image, python_version, prestart_command, global_extra_args)
 
 
@@ -746,6 +748,104 @@ async def wait_for_server(
         # Wait for the specified delay before retrying
         await asyncio.sleep(delay / 1000)
 
+async def send_log_async(
+    update_endpoint: str, session_id: uuid.UUID, machine_id: str, log_message: str
+):
+    import aiohttp
+
+    async with aiohttp.ClientSession() as client:
+        # token = generate_temporary_token("modal")
+        token = config["auth_token"]
+        async with client.post(
+            update_endpoint + "/api/session/callback/log",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "session_id": str(session_id),
+                "machine_id": machine_id,
+                "log": log_message,
+            },
+        ) as response:
+            pass
+            # print("send_log_async", await response.text())
+
+
+def send_log_entry(
+    update_endpoint: str, session_id: uuid.UUID, machine_id: str, log_message: str
+):  # noqa: F821
+    asyncio.create_task(
+        send_log_async(update_endpoint, session_id, machine_id, log_message)
+    )
+
+
+async def check_for_timeout(
+    update_endpoint: str, session_id: str
+):
+    try:
+        while True:
+            async with aiohttp.ClientSession() as client:
+                # token = generate_temporary_token(user_id, org_id)
+                token = config["auth_token"]
+                async with client.post(
+                    update_endpoint + "/api/session/callback/check-timeout",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={
+                        "session_id": str(session_id),
+                    },
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("continue", True):
+                            await asyncio.sleep(1)
+                        else:
+                            send_log_entry(
+                                update_endpoint,
+                                session_id,
+                                config["machine_id"],
+                                "Session closed due to timeout",
+                            )
+                            break
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        logger.info(f"Timeout checker cancelled for session {session_id}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in timeout checker for session {session_id}: {str(e)}")
+        raise
+
+async def delete_session(
+    update_endpoint: str, session_id: str
+):
+    try:
+        while True:
+            async with aiohttp.ClientSession() as client:
+                # token = generate_temporary_token(user_id, org_id)
+                token = config["auth_token"]
+                async with client.delete(
+                    update_endpoint + "/api/session/" + str(session_id),
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("continue", True):
+                            await asyncio.sleep(1)
+                        else:
+                            send_log_entry(
+                                update_endpoint,
+                                session_id,
+                                config["machine_id"],
+                                "Session closed",
+                            )
+                            break
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        logger.info(f"Timeout checker cancelled for session {session_id}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in timeout checker for session {session_id}: {str(e)}")
+        raise
+
 class BaseComfyDeployRunner:
     machine_logs = []
     last_sent_log_index = 0
@@ -1205,9 +1305,17 @@ class BaseComfyDeployRunner:
 
     @modal.method()
     async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
-        if self.is_workspace and not self.gpu_event_id and self.container_start_time and session_id:
+        if self.current_tunnel_url == "exhausted":
+            update_endpoint = status_endpoint.split("/api")[0]
+            send_log_entry(update_endpoint, session_id, config["machine_id"], "Tunnel exhausted, please wait for the session to end, and start a new one.")
+            await delete_session(update_endpoint, session_id)
+            raise Exception("Tunnel exhausted, please wait for the session to end, and start a new one.")
+
+        if self.is_workspace and not self.gpu_event_id and session_id:
             print("creating gpu event id")
             self.session_id = session_id
+            if self.container_start_time is None:
+                self.container_start_time = datetime.now(timezone.utc)
             self.gpu_event_id = await sync_report_gpu_event(
                 event_id=None,
                 is_workspace= self.is_workspace,
@@ -1236,7 +1344,7 @@ class BaseComfyDeployRunner:
             # asyncio.create_task(q.put.aio(event))
 
         if self.current_tunnel_url != "":
-            await q.put.aio("url:" + self.current_tunnel_url)
+            # await q.put.aio("url:" + self.current_tunnel_url)
             return
 
         with modal.forward(8188) as tunnel:
@@ -1262,6 +1370,10 @@ class BaseComfyDeployRunner:
                     ok = await interrupt_comfyui()
                 except Exception as e:
                     pass
+
+        # Ended
+        self.current_tunnel_url = "exhausted"
+        self.container_start_time = None
 
     @modal.method()
     async def close_container(self):
