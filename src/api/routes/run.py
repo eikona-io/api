@@ -143,11 +143,12 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
     return run.to_dict()
 
 
-async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optional[Deployment] = None):
+async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optional[Deployment] = None, optimized_runner: bool = False):
     # Only when this deployment is using latest modal_image
     target_app_name = str(deployment.id if deployment is not None and deployment.modal_image_id is not None else machine_id)
+    class_name = "ComfyDeployRunner" if not optimized_runner else "ComfyDeployRunnerOptimizedImports"
     try:
-        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, class_name)
     except modal.exception.NotFoundError as e:
         logger.info(f"App not found for machine {target_app_name}, redeploying...")
         if deployment is not None:
@@ -158,7 +159,7 @@ async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optiona
         else:
             # We are deploying the modal app as machine
             await redeploy_machine_internal(target_app_name)
-        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, class_name)
             
     return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
 
@@ -1232,7 +1233,7 @@ async def _create_run(
                 match machine.type:
                     case "comfy-deploy-serverless":
                         # print("shit", str(machine_id))
-                        ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
+                        ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment, machine.optimized_runner if machine else False)
                         with logfire.span("spawn-run"):
                             result = ComfyDeployRunner.run._experimental_spawn(params)
                             new_run.modal_function_call_id = result.object_id
@@ -1324,7 +1325,7 @@ async def _create_run(
                 return {"run_id": new_run.id}
             elif data.execution_mode in ["sync", "sync_first_result"]:
                 with logfire.span("run-sync"):
-                    ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
+                    ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment, machine.optimized_runner if machine else False)
                     result = await ComfyDeployRunner.run.remote.aio(params)
 
                 if data.execution_mode == "sync_first_result":
@@ -1383,7 +1384,7 @@ async def _create_run(
 
                     return [output.to_dict() for output in outputs]
             elif data.execution_mode == "stream":
-                ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment)
+                ComfyDeployRunner = await get_comfy_deploy_runner(machine_id, gpu, deployment, machine.optimized_runner if machine else False)
                 user_settings = await get_user_settings(request, db)
 
                 async def wrapped_generator():

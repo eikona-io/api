@@ -1,3 +1,6 @@
+import gc
+import logging
+import threading
 from config import config
 import modal
 from time import time
@@ -33,6 +36,8 @@ import asyncio
 import time
 from collections import deque
 import shutil
+from contextlib import contextmanager
+from io import StringIO
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 
@@ -64,6 +69,8 @@ python_version = (
 prestart_command = config["prestart_command"]
 global_extra_args = config["extra_args"]
 modal_image_id = config["modal_image_id"]
+
+logger = logging.getLogger(__name__)
 
 # print(base_docker_image, python_version, prestart_command, global_extra_args)
 
@@ -536,6 +543,7 @@ async def sync_report_gpu_event(
     user_id: str | None = None,
     org_id: str | None = None,
     session_id: str | None = None,
+    custom_timestamp: datetime | None = None,
 ) -> str:
     import requests
     from pprint import pprint
@@ -557,12 +565,12 @@ async def sync_report_gpu_event(
     # Prepare the body with the current timestamp and optional instance_id
     body = {
         "machine_id": machine_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": custom_timestamp.isoformat() if custom_timestamp is not None else datetime.now(timezone.utc).isoformat(),
         "gpuType": gpu_type if gpu is None else gpu,
         "eventType": event_type.value,
         "gpu_provider": "modal",
         "event_id": event_id,
-        "is_workspace": is_workspace,
+        # "is_workspace": is_workspace,
         "user_id": user_id,
         "org_id": org_id,
         "session_id": session_id,
@@ -644,24 +652,6 @@ idle_timeout = config["idle_timeout"]
 ws_timeout = config["ws_timeout"]
 
 
-modal_secrets = []
-if "TAILSCALE_AUTHKEY" in config and config["TAILSCALE_AUTHKEY"] is not None:
-    modal_secrets = [
-        modal.Secret.from_dict(
-            {
-                "ALL_PROXY": "socks5://localhost:1080/",
-                "HTTP_PROXY": "http://localhost:1080/",
-                "http_proxy": "http://localhost:1080/",
-            }
-        ),
-        modal.Secret.from_dict(
-            {
-                "TAILSCALE_AUTHKEY": config["TAILSCALE_AUTHKEY"],
-            }
-        ),
-    ]
-
-
 async def send_status_update(
     input: Input,
     status: str,
@@ -707,27 +697,157 @@ async def send_log_update(input: Input, log: str):
         ) as response:
             pass
 
-@app.function(
-    image=target_image,
-    gpu=None,
-)
-async def get_image_id():
-    return target_image.object_id
 
-@app.cls(
-    image=target_image,
-    # will be overridden by the run function
-    gpu=None,
-    volumes=volumes,
-    timeout=(config["run_timeout"] + 20),
-    container_idle_timeout=config["idle_timeout"],
-    allow_concurrent_inputs=config["allow_concurrent_inputs"],
-    concurrency_limit=config["concurrency_limit"],
-    secrets=modal_secrets,
-    # _allow_background_volume_commits=True,
-)
-class ComfyDeployRunner:
-    web_app = FastAPI()
+import pickle
+
+load = pickle.load
+
+class Empty:
+    pass
+
+class Unpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        #TODO: safe unpickle
+        if module.startswith("pytorch_lightning"):
+            return Empty
+        return super().find_class(module, name)
+
+async def wait_for_server(
+    url=f"http://{COMFY_HOST}", delay=50, logs=[], last_sent_log_index=-1
+):
+    """
+    Checks if the API is reachable
+    """
+    import aiohttp
+
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    # If the response status code is 200, the server is up and running
+                    if response.status == 200:
+                        print("API is reachable")
+                        # yield f"event: event_update\ndata: {json.dumps({'event': 'comfyui_api_ready'})}\n\n"
+                        return
+
+        except Exception as e:
+            # If an exception occurs, the server may not be ready
+            pass
+
+        if logs and last_sent_log_index != -1:
+            while last_sent_log_index < len(logs):
+                log = logs[last_sent_log_index]
+                if isinstance(log["timestamp"], float):
+                    log["timestamp"] = (
+                        datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                    )
+                print(log)
+                yield log
+                # yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
+                last_sent_log_index += 1
+
+        # Wait for the specified delay before retrying
+        await asyncio.sleep(delay / 1000)
+
+async def send_log_async(
+    update_endpoint: str, session_id: uuid.UUID, machine_id: str, log_message: str
+):
+    import aiohttp
+
+    async with aiohttp.ClientSession() as client:
+        # token = generate_temporary_token("modal")
+        token = config["auth_token"]
+        async with client.post(
+            update_endpoint + "/api/session/callback/log",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "session_id": str(session_id),
+                "machine_id": machine_id,
+                "log": log_message,
+            },
+        ) as response:
+            pass
+            # print("send_log_async", await response.text())
+
+
+def send_log_entry(
+    update_endpoint: str, session_id: uuid.UUID, machine_id: str, log_message: str
+):  # noqa: F821
+    asyncio.create_task(
+        send_log_async(update_endpoint, session_id, machine_id, log_message)
+    )
+
+
+async def check_for_timeout(
+    update_endpoint: str, session_id: str
+):
+    try:
+        while True:
+            async with aiohttp.ClientSession() as client:
+                # token = generate_temporary_token(user_id, org_id)
+                token = config["auth_token"]
+                async with client.post(
+                    update_endpoint + "/api/session/callback/check-timeout",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={
+                        "session_id": str(session_id),
+                    },
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("continue", True):
+                            await asyncio.sleep(1)
+                        else:
+                            send_log_entry(
+                                update_endpoint,
+                                session_id,
+                                config["machine_id"],
+                                "Session closed due to timeout",
+                            )
+                            break
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        logger.info(f"Timeout checker cancelled for session {session_id}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in timeout checker for session {session_id}: {str(e)}")
+        raise
+
+async def delete_session(
+    update_endpoint: str, session_id: str
+):
+    try:
+        while True:
+            async with aiohttp.ClientSession() as client:
+                # token = generate_temporary_token(user_id, org_id)
+                token = config["auth_token"]
+                async with client.delete(
+                    update_endpoint + "/api/session/" + str(session_id),
+                    headers={"Authorization": f"Bearer {token}"},
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data.get("continue", True):
+                            await asyncio.sleep(1)
+                        else:
+                            send_log_entry(
+                                update_endpoint,
+                                session_id,
+                                config["machine_id"],
+                                "Session closed",
+                            )
+                            break
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        logger.info(f"Timeout checker cancelled for session {session_id}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in timeout checker for session {session_id}: {str(e)}")
+        raise
+
+class BaseComfyDeployRunner:
     machine_logs = []
     last_sent_log_index = 0
 
@@ -1185,25 +1305,52 @@ class ComfyDeployRunner:
     current_tunnel_url = ""
 
     @modal.method()
-    async def create_tunnel(self, q, status_endpoint, timeout):
+    async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
+        if self.current_tunnel_url == "exhausted":
+            update_endpoint = status_endpoint.split("/api")[0]
+            send_log_entry(update_endpoint, session_id, config["machine_id"], "Previous session exhausted, please start a new one.")
+            await delete_session(update_endpoint, session_id)
+            raise Exception("Previous session exhausted, please start a new one.")
+
+        if self.is_workspace and not self.gpu_event_id and session_id:
+            print("creating gpu event id")
+            self.session_id = session_id
+            if self.container_start_time is None:
+                self.container_start_time = datetime.now(timezone.utc)
+            self.gpu_event_id = await sync_report_gpu_event(
+                event_id=None,
+                is_workspace= self.is_workspace,
+                gpu=self.gpu,
+                user_id=self.user_id,
+                org_id=self.org_id,
+                session_id=str(session_id),
+                custom_timestamp=self.container_start_time,
+            )
+        print("gpu event id", self.gpu_event_id)
+        
         self.status_endpoint = status_endpoint
         self.start_time = time.time()
         # timeout input is in minutes, so we need to convert it to seconds
         self.session_timeout = timeout * 60
         # print("status_endpoint", status_endpoint)
 
-        async for event in check_server_with_log(
-            f"http://{COMFY_HOST}",
-            COMFY_API_AVAILABLE_MAX_RETRIES,
-            COMFY_API_AVAILABLE_INTERVAL_MS,
-            self.machine_logs,
-            self.last_sent_log_index,
-        ):
-            pass
+        try:
+            async for event in check_server_with_log(
+                f"http://{COMFY_HOST}",
+                COMFY_API_AVAILABLE_MAX_RETRIES,
+                COMFY_API_AVAILABLE_INTERVAL_MS,
+                self.machine_logs,
+                self.last_sent_log_index,
+            ):
+                pass
+        except asyncio.CancelledError:
+            self.current_tunnel_url = "exhausted"
+            print("cancelled")
+        
             # asyncio.create_task(q.put.aio(event))
 
         if self.current_tunnel_url != "":
-            await q.put.aio("url:" + self.current_tunnel_url)
+            # await q.put.aio("url:" + self.current_tunnel_url)
             return
 
         with modal.forward(8188) as tunnel:
@@ -1211,14 +1358,15 @@ class ComfyDeployRunner:
             self.current_function_call_id = modal.current_function_call_id()
 
             await q.put.aio("url:" + self.current_tunnel_url)
-            # await q.put.aio(tunnel.url)
-
             print(f"tunnel.url        = {tunnel.url}")
             print(f"tunnel.tls_socket = {tunnel.tls_socket}")
 
             # Wait for the server process to exit
             try:
                 while True:
+                    # if self.kill_session_asap:
+                    #     ok = await interrupt_comfyui()
+                    #     break
                     if self.start_time + self.session_timeout < time.time():
                         await self.timeout_and_exit(0, True)
                     await asyncio.sleep(1)  # Che  ck every 1 seconds
@@ -1228,6 +1376,10 @@ class ComfyDeployRunner:
                     ok = await interrupt_comfyui()
                 except Exception as e:
                     pass
+
+        # Ended
+        self.current_tunnel_url = "exhausted"
+        self.container_start_time = None
 
     @modal.method()
     async def close_container(self):
@@ -1258,101 +1410,16 @@ class ComfyDeployRunner:
                     elapsed_time = time.time() - start_time
                     print(f"[{timestamp}] Failed to disable {node}: {e} (took {elapsed_time:.2f} seconds)")
 
-    @enter()
-    async def setup(self):
-        # Make sure that the ComfyUI API is available
-        print(f"comfy-modal - check server")
-        # reload volumes
-        public_model_volume.reload()
-        self.private_volume.reload()
-
-        # Disable specified custom nodes
-        self.disable_customnodes(["ComfyUI-Manager"])
-
-        # directory_path = "/comfyui/models"
-        # if os.path.exists(directory_path):
-        #     directory_contents = os.listdir(directory_path)
-        #     directory_path = "/comfyui/models/ipadapter"
-        #     print(directory_contents)
-        #     if os.path.exists(directory_path):
-        #         directory_contents = os.listdir(directory_path)
-        #         print(directory_contents)
-        # else:
-        #     print(f"Directory {directory_path} does not exist.")
-
-        self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU")
-            + " --disable-metadata",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd="/comfyui",
-            # env={**os.environ, "COLUMNS": "10000"}
-            # env={
-            #     "ALL_PROXY": "socks5://localhost:1080/",
-            #     "HTTP_PROXY": "http://localhost:1080/",
-            #     "http_proxy": "http            #     "TAILSCALE_AUTHKEY": config["TAILSCALE_AUTHKEY"],
-            # },
-        )
-
-        print("setting up stdout and stderr")
-
-        self.stdout_task = asyncio.create_task(
-            self.read_stream(self.server_process.stdout, False)
-        )
-        self.stderr_task = asyncio.create_task(
-            self.read_stream(self.server_process.stderr, True)
-        )
-
-        print("setting up log queue 2")
-
-        self.log_task = asyncio.create_task(self.process_log_queue())
-
-        print("setting up gpu event id")
-
-        self.gpu_event_id = await sync_report_gpu_event(
-            None,
-            self.is_workspace,
-            self.gpu,
-            self.user_id,
-            self.org_id,
-            self.session_id,
-        )
-
-        print("setting up timeout")
-
-        if self.timeout is not None:
-            print("timeout", self.timeout)
-            self.timeout_start_time = time.time()
-            self.timeout_task = asyncio.create_task(self.timeout_and_exit(self.timeout))
-
-    @exit()
-    async def cleanup(self):
-        if self.cleanup_done:
-            return
-
-        print(f"comfy-modal - cleanup")
-
-        await sync_report_gpu_event(
-            self.gpu_event_id, self.is_workspace, self.gpu, self.user_id, self.org_id
-        )
-        self.stdout_task.cancel()
-        self.stderr_task.cancel()
-        self.log_task.cancel()
-        # await self.stdout_task
-        # await self.stderr_task
-
-        # try:
-        #     self.private_volume.remove_file("temp", recursive=True)
-        #     self.private_volume.remove_file("output", recursive=True)
-        # except Exception as e:
-        #     print("Issues when cleaning up", e)
-
-        print(f"comfy-modal - cleanup done")
-
     @modal.method()
     async def increase_timeout(self, timeout):
         # timeout input is in minutes, so we need to convert it to seconds
         self.session_timeout = self.session_timeout + (timeout * 60)
+
+    # kill_session_asap = False
+
+    # @modal.method()
+    # async def kill_session(self):
+    #     self.kill_session_asap = True
 
     @modal.method()
     async def run(self, input: Input):
@@ -1556,6 +1623,624 @@ class ComfyDeployRunner:
         # commit by default so commit after the workflow is executed
         self.private_volume.commit()
         return result
+
+    async def handle_container_enter_before_comfy(self):
+        # Make sure that the ComfyUI API is available
+        print("comfy-modal - check server")
+
+        # reload volumes
+        await public_model_volume.reload.aio()
+        await self.private_volume.reload.aio()
+
+        # Disable specified custom nodes
+        self.disable_customnodes(["ComfyUI-Manager"])
+
+        # directory_path = "/comfyui/models"
+        # if os.path.exists(directory_path):
+        #     directory_contents = os.listdir(directory_path)
+        #     directory_path = "/comfyui/models/ipadapter"
+        #     print(directory_contents)
+        #     if os.path.exists(directory_path):
+        #         directory_contents = os.listdir(directory_path)
+        #         print(directory_contents)
+        # else:
+        #     print(f"Directory {directory_path} does not exist.")
+
+        pass
+
+    container_start_time: datetime | None = None
+
+    async def handle_container_enter(self):
+        print("setting up stdout and stderr")
+
+        self.log_task = asyncio.create_task(self.process_log_queue())
+
+        self.container_start_time = datetime.now(timezone.utc)
+
+        if not self.is_workspace:
+            print("setting up gpu event id")
+            self.gpu_event_id = await sync_report_gpu_event(
+                None,
+                self.is_workspace,
+                self.gpu,
+                self.user_id,
+                self.org_id,
+                self.session_id,
+            )
+
+        print("setting up timeout")
+
+        if self.timeout is not None:
+            print("timeout", self.timeout)
+            self.timeout_start_time = time.time()
+            self.timeout_task = asyncio.create_task(self.timeout_and_exit(self.timeout))
+
+    async def handle_container_exit(self):
+        if self.cleanup_done:
+            return
+
+        print("comfy-modal - cleanup")
+
+        await sync_report_gpu_event(
+            self.gpu_event_id, self.is_workspace, self.gpu, self.user_id, self.org_id
+        )
+        self.log_task.cancel()
+
+        print("comfy-modal - cleanup done")
+
+    def setup_native_logging(self):
+        """
+        Sets up logging for native ComfyUI implementation to capture logs similarly to subprocess implementation.
+        Returns the configured handler for cleanup if needed.
+        """
+        # Create a StringIO object to capture logs
+        log_stream = StringIO()
+        
+        class DualHandler(logging.Handler):
+            def __init__(self, machine_logs, log_queues, cold_start_queue, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.machine_logs = machine_logs
+                self.log_queues = log_queues
+                self.cold_start_queue = cold_start_queue
+
+            def emit(self, record):
+                try:
+                    msg = self.format(record)
+                    print(msg, flush=True)  # Print to stdout
+                    
+                    log_entry = {
+                        "logs": msg,
+                        "timestamp": time.time()
+                    }
+                    
+                    # Add to machine logs
+                    self.machine_logs.append(log_entry)
+                    
+                    # Add to appropriate queue
+                    target_log = (self.log_queues[0]["logs"] 
+                                if self.log_queues is not None and len(self.log_queues) > 0 
+                                else self.cold_start_queue)
+                    target_log.append(log_entry)
+                except Exception as e:
+                    print(f"Error in log handler: {e}")
+
+        # Create and configure the handler
+        handler = DualHandler(
+            machine_logs=self.machine_logs,
+            log_queues=self.log_queues,
+            cold_start_queue=self.cold_start_queue
+        )
+        
+        # Set format
+        formatter = logging.Formatter('%(message)s')
+        handler.setFormatter(formatter)
+
+        # Get the root logger and add our handler
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
+
+        return handler
+
+class _ComfyDeployRunner(BaseComfyDeployRunner):
+    workflow_api_raw = None
+
+    # load_workflow_path = "/root/workflow/workflow_api.json"
+
+    native = True
+    # native: int = (  # see section on torch.compile below for details
+    #     modal.parameter(default=1)
+    # )
+
+    skip_workflow_api_validation: bool = False
+
+    logs = []
+
+    models_cache = {}
+
+    nodes_cache = {}
+
+    model_urls = {
+        # "checkpoints": [
+        #     "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt",
+        # ],
+    }
+
+    loading_time = {}
+
+    start_time = None
+    current_time = None
+
+    prompt_executor = None
+
+    # To optimize imports, we duplicated the function
+    # - prompt_worker
+    # - run_server
+    # - start_native_comfy_server
+    # from ComfyUI, better to figure out cleaner way to do this
+
+    def prompt_worker(self, q, server):
+        import execution
+        import comfy
+
+        e = execution.PromptExecutor(server)
+        self.__class__.prompt_executor = e
+
+        last_gc_collect = 0
+        need_gc = False
+        gc_collect_interval = 10.0
+
+        while True:
+            timeout = 1000.0
+            if need_gc:
+                timeout = max(
+                    gc_collect_interval - (current_time - last_gc_collect), 0.0
+                )
+
+            queue_item = q.get(timeout=timeout)
+            if queue_item is not None:
+                item, item_id = queue_item
+                execution_start_time = time.perf_counter()
+                prompt_id = item[1]
+                server.last_prompt_id = prompt_id
+
+                e.execute(item[2], prompt_id, item[3], item[4])
+                need_gc = True
+                q.task_done(
+                    item_id,
+                    e.history_result,
+                    status=execution.PromptQueue.ExecutionStatus(
+                        status_str="success" if e.success else "error",
+                        completed=e.success,
+                        messages=e.status_messages,
+                    ),
+                )
+                if server.client_id is not None:
+                    server.send_sync(
+                        "executing",
+                        {"node": None, "prompt_id": prompt_id},
+                        server.client_id,
+                    )
+
+                current_time = time.perf_counter()
+                execution_time = current_time - execution_start_time
+                logging.info("Prompt executed in {:.2f} seconds".format(execution_time))
+
+            flags = q.get_flags()
+            free_memory = flags.get("free_memory", False)
+
+            if flags.get("unload_models", free_memory):
+                comfy.model_management.unload_all_models()
+                need_gc = True
+                last_gc_collect = 0
+
+            if free_memory:
+                e.reset()
+                need_gc = True
+                last_gc_collect = 0
+
+            if need_gc:
+                current_time = time.perf_counter()
+                if (current_time - last_gc_collect) > gc_collect_interval:
+                    comfy.model_management.cleanup_models()
+                    gc.collect()
+                    comfy.model_management.soft_empty_cache()
+                    last_gc_collect = current_time
+                    need_gc = False
+
+    async def run_server(
+        self, server, address="", port=8188, verbose=True, call_on_start=None
+    ):
+        addresses = []
+        for addr in address.split(","):
+            addresses.append((addr, port))
+        await asyncio.gather(
+            server.start_multi_address(addresses, call_on_start), server.publish_loop()
+        )
+
+    async def start_native_comfy_server(self):
+        self.log_handler = self.setup_native_logging()
+        # with cProfile.Profile() as pr:
+        import sys
+        from pathlib import Path
+
+        # Add the ComfyUI directory to the Python path
+        comfy_path = Path("/comfyui")
+        sys.path.append(str(comfy_path))
+
+        # Add the ComfyUI/utils directory to the Python path
+        utils_path = comfy_path / "utils"
+        sys.path.append(str(utils_path))
+
+        t = time.time()
+        import nodes
+
+        self.loading_time["import_nodes"] = time.time() - t
+        t = time.time()
+        import server
+
+        self.loading_time["import_server"] = time.time() - t
+        t = time.time()
+        import execution
+
+        self.loading_time["import_execution"] = time.time() - t
+        t = time.time()
+        import comfy
+
+        self.loading_time["import_comfy"] = time.time() - t
+
+        # original_load_checkpoint_guess_config = comfy.sd.load_checkpoint_guess_config
+
+        # # Override the load_checkpoint_guess_config function
+        # def custom_load_checkpoint_guess_config(ckpt_path, *args, **kwargs):
+        #     if ckpt_path in self.models_cache:
+        #         print(f"Loading checkpoint from cache: {ckpt_path}")
+        #         return self.models_cache[ckpt_path]
+        #     else:
+        #         print(f"Loading checkpoint from: {ckpt_path}")
+        #     return original_load_checkpoint_guess_config(ckpt_path, *args, **kwargs)
+
+        # # Replace the original function with our custom one
+        # comfy.sd.load_checkpoint_guess_config = custom_load_checkpoint_guess_config
+
+        original_load_torch_file = comfy.utils.load_torch_file
+
+        def custom_load_torch_file(ckpt, *args, **kwargs):
+            if ckpt in self.models_cache:
+                print(f"Loading torch file from cache: {ckpt}")
+                return self.models_cache[ckpt]
+            else:
+                print(f"Loading torch file from: {ckpt}")
+                return original_load_torch_file(ckpt, *args, **kwargs)
+
+        comfy.utils.load_torch_file = custom_load_torch_file
+
+        original_validate_prompt = execution.validate_prompt
+
+        def custom_validate_prompt(prompt):
+            if self.skip_workflow_api_validation:
+                outputs = set()
+                for x in prompt:
+                    if "class_type" not in prompt[x]:
+                        error = {
+                            "type": "invalid_prompt",
+                            "message": f"Cannot execute because a node is missing the class_type property.",
+                            "details": f"Node ID '#{x}'",
+                            "extra_info": {},
+                        }
+                        return (False, error, [], [])
+
+                    class_type = prompt[x]["class_type"]
+                    class_ = nodes.NODE_CLASS_MAPPINGS.get(class_type, None)
+                    if class_ is None:
+                        error = {
+                            "type": "invalid_prompt",
+                            "message": f"Cannot execute because node {class_type} does not exist.",
+                            "details": f"Node ID '#{x}'",
+                            "extra_info": {},
+                        }
+                        return (False, error, [], [])
+
+                    if hasattr(class_, "OUTPUT_NODE") and class_.OUTPUT_NODE is True:
+                        outputs.add(x)
+
+                if len(outputs) == 0:
+                    error = {
+                        "type": "prompt_no_outputs",
+                        "message": "Prompt has no outputs",
+                        "details": "",
+                        "extra_info": {},
+                    }
+                    return (False, error, [], [])
+
+                good_outputs = set()
+                errors = []
+                node_errors = {}
+                validated = {}
+                for o in outputs:
+                    valid = True
+
+                    if valid is True:
+                        good_outputs.add(o)
+
+                return (True, None, list(good_outputs), node_errors)
+            return original_validate_prompt(prompt)
+
+        execution.validate_prompt = custom_validate_prompt
+
+        # loop = asyncio.new_event_loop()
+        # asyncio.set_event_loop(loop)
+        loop = asyncio.get_running_loop()
+        server = server.PromptServer(loop)
+        q = execution.PromptQueue(server)
+
+        print("Initializing extra nodes")
+        t = time.time()
+        nodes.init_extra_nodes()
+        self.loading_time["init_extra_nodes"] = time.time() - t
+        print("Adding routes")
+        server.add_routes()
+
+        threading.Thread(
+            target=self.prompt_worker,
+            daemon=True,
+            args=(
+                q,
+                server,
+            ),
+        ).start()
+
+        await server.setup()
+        # loop.run_until_complete()
+        asyncio.create_task(self.run_server(server, verbose=True, port=8188))
+        # loop.run_until_complete()
+
+        # pr.print_stats()
+
+    @modal.enter(snap=False)
+    async def launch_comfy_background(self):
+        self.load_args()
+        await self.handle_container_enter_before_comfy()
+        await self.handle_container_enter()
+
+        t = time.time()
+        import torch
+
+        self.loading_time["import_torch"] = time.time() - t
+
+        # if self.load_workflow_path is not None and self.workflow_api_raw is None:
+        #     self.workflow_api_raw = (Path(self.load_workflow_path)).read_text()
+
+        # print(f"Time to import torch: {time.time() - t:.2f} seconds")
+        print(f"GPUs available: {torch.cuda.is_available()}")
+
+        self.start_time = time.time()
+        print("Launching ComfyUI")
+
+      
+        await self.start_native_comfy_server()
+      
+
+        async for event in wait_for_server():
+            # print(event)
+            pass
+
+        from comfy_execution.graph import (
+            get_input_info,
+            ExecutionList,
+            DynamicPrompt,
+            ExecutionBlocker,
+        )
+        from execution import IsChangedCache
+
+        t = time.time()
+        # prompt = json.loads(self.workflow_api_raw)
+        # dynamic_prompt = DynamicPrompt(prompt)
+        # is_changed_cache = IsChangedCache(
+        #     dynamic_prompt, self.prompt_executor.caches.outputs
+        # )
+        # for cache in self.prompt_executor.caches.all:
+        #     cache.set_prompt(dynamic_prompt, prompt.keys(), is_changed_cache)
+        #     cache.clean_unused()
+        # for node in self.config.nodes_to_preload:
+        #     await preload_node(node, self.workflow_api_raw, self.prompt_executor)
+        self.loading_time["preload_nodes"] = time.time() - t
+
+        # workflow_start_time = time.perf_counter()
+        # if self.config.warmup_workflow:
+        #     input = Input(
+        #         inputs={},
+        #         workflow_api_raw=self.workflow_api_raw,
+        #         prompt_id=str(uuid.uuid4()),
+        #     )
+        #     await queue_workflow(input)
+        #     await wait_for_completion(input.prompt_id)
+        #     workflow_end_time = time.perf_counter()
+        # self.loading_time["warmup_workflow_runtime"] = (
+        #     workflow_end_time - workflow_start_time
+        # )
+
+    def load_args(self):
+        from comfy.cli_args import args
+
+        args.disable_metadata = True
+        args.port = 8188
+        args.enable_cors_header = "*"
+
+        args.input_directory = input_directory
+        args.preview_method = "auto"
+
+        # args.output_directory = output_directory
+        # args.temp_directory = temp_directory
+
+        if self.gpu == "CPU":
+            args.cpu = True
+        else:
+            args.cpu = False
+        
+
+    @modal.exit()
+    async def exit(self):
+        print("Exiting ComfyUI")
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(self.log_handler)
+        await self.handle_container_exit()
+
+
+class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
+    
+    @contextmanager
+    def force_cpu_during_snapshot(self):
+        import torch
+
+        """Monkeypatch Torch CUDA checks during model loading/snapshotting"""
+        original_is_available = torch.cuda.is_available
+        original_current_device = torch.cuda.current_device
+
+        # Force Torch to report no CUDA devices
+        torch.cuda.is_available = lambda: False
+        torch.cuda.current_device = lambda: torch.device("cpu")
+
+        try:
+            yield
+        finally:
+            # Restore original implementations
+            torch.cuda.is_available = original_is_available
+            torch.cuda.current_device = original_current_device
+        
+    @modal.enter(snap=True)
+    async def load(self):
+        with self.force_cpu_during_snapshot():
+            import torch
+            import sys
+            from pathlib import Path
+            import os
+            import importlib
+
+            # Add the ComfyUI directory to the Python path
+            comfy_path = Path("/comfyui")
+            
+            print("\n=== Debug Information ===")
+            print(f"Current working directory: {os.getcwd()}")
+            print(f"Initial sys.path: {sys.path}")
+            
+            # Check utils directory structure
+            utils_path = comfy_path / "utils"
+            print(f"\n=== Utils Directory Check ===")
+            print(f"Utils path: {utils_path}")
+            print(f"Utils path exists: {utils_path.exists()}")
+            if utils_path.exists():
+                print(f"Utils contents: {os.listdir(utils_path)}")
+                init_file = utils_path / "__init__.py"
+                json_util_file = utils_path / "json_util.py"
+                print(f"__init__.py exists: {init_file.exists()}")
+                print(f"json_util.py exists: {json_util_file.exists()}")
+                if init_file.exists():
+                    with open(init_file, 'r') as f:
+                        print(f"__init__.py contents:\n{f.read()}")
+            
+            # Clear and rebuild sys.path
+            sys.path = [p for p in sys.path if 'utils' not in p]
+            sys.path.insert(0, str(comfy_path))
+            sys.path.insert(1, str(utils_path))
+            
+            print("\n=== Final Python Path ===")
+            print(f"Updated sys.path: {sys.path}")
+
+            self.load_args()
+            
+            print("\n=== Import Attempt ===")
+            try:
+                print("Attempting direct import of utils package...")
+                import utils
+                print(f"Utils package: {utils}")
+                print(f"Utils package location: {utils.__file__}")
+                
+                print("\nAttempting import of json_util...")
+                from utils import json_util
+                print("Successfully imported json_util")
+                
+            except ImportError as e:
+                print(f"Import failed: {e}")
+                print(f"Error type: {type(e)}")
+                print(f"Error args: {e.args}")
+                
+            print("\n=== Starting Main Imports ===")
+            try:
+                import nodes
+                import comfy
+                import server
+                import execution
+                import xformers
+            except ImportError as e:
+                print(f"Main import error: {e}")
+                print(f"Error type: {type(e)}")
+                print(f"Error args: {e.args}")
+                raise
+
+            print(f"\nGPUs available: {torch.cuda.is_available()}")
+
+
+@app.cls(
+    image=target_image,
+    # will be overridden by the run function
+    gpu=None,
+    volumes=volumes,
+    timeout=(config["run_timeout"] + 20),
+    container_idle_timeout=config["idle_timeout"],
+    allow_concurrent_inputs=config["allow_concurrent_inputs"],
+    concurrency_limit=config["concurrency_limit"],
+    enable_memory_snapshot=True
+)
+class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunnerOptimizedImports):
+    pass
+
+@app.function(
+    image=target_image,
+    gpu=None,
+)
+async def get_image_id():
+    return target_image.object_id
+
+@app.cls(
+    image=target_image,
+    # will be overridden by the run function
+    gpu=None,
+    volumes=volumes,
+    timeout=(config["run_timeout"] + 20),
+    container_idle_timeout=config["idle_timeout"],
+    allow_concurrent_inputs=config["allow_concurrent_inputs"],
+    concurrency_limit=config["concurrency_limit"],
+)
+class ComfyDeployRunner(BaseComfyDeployRunner):
+    @enter()
+    async def setup(self):
+        await self.handle_container_enter_before_comfy()
+
+        self.server_process = await asyncio.subprocess.create_subprocess_shell(
+            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU")
+            + " --disable-metadata",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd="/comfyui",
+        )
+
+        self.stdout_task = asyncio.create_task(
+            self.read_stream(self.server_process.stdout, False)
+        )
+        self.stderr_task = asyncio.create_task(
+            self.read_stream(self.server_process.stderr, True)
+        )
+
+        print("setting up log queue 2")
+
+        await self.handle_container_enter()
+
+    @exit()
+    async def cleanup(self):
+        self.stdout_task.cancel()
+        self.stderr_task.cancel()
+        await self.handle_container_exit()
 
 
 HOST = "127.0.0.1"

@@ -286,7 +286,8 @@ async def get_machine(
         m.python_version,
         m.extra_args,
         m.prestart_command,
-        m.install_custom_node_with_gpu
+        m.install_custom_node_with_gpu,
+        m.optimized_runner
     FROM "comfyui_deploy"."machines" m
     WHERE m.id = :machine_id
     AND m.deleted = FALSE
@@ -407,6 +408,7 @@ class UpdateServerlessMachineModel(BaseModel):
     prestart_command: Optional[str] = None
     keep_warm: Optional[int] = None
     is_trigger_rebuild: Optional[bool] = False
+    optimized_runner: Optional[bool] = None
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
