@@ -1308,9 +1308,9 @@ class BaseComfyDeployRunner:
     async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
         if self.current_tunnel_url == "exhausted":
             update_endpoint = status_endpoint.split("/api")[0]
-            send_log_entry(update_endpoint, session_id, config["machine_id"], "Tunnel exhausted, please wait for the session to end, and start a new one.")
+            send_log_entry(update_endpoint, session_id, config["machine_id"], "Previous session exhausted, please start a new one.")
             await delete_session(update_endpoint, session_id)
-            raise Exception("Tunnel exhausted, please wait for the session to end, and start a new one.")
+            raise Exception("Previous session exhausted, please start a new one.")
 
         if self.is_workspace and not self.gpu_event_id and session_id:
             print("creating gpu event id")
@@ -1334,14 +1334,19 @@ class BaseComfyDeployRunner:
         self.session_timeout = timeout * 60
         # print("status_endpoint", status_endpoint)
 
-        async for event in check_server_with_log(
-            f"http://{COMFY_HOST}",
-            COMFY_API_AVAILABLE_MAX_RETRIES,
-            COMFY_API_AVAILABLE_INTERVAL_MS,
-            self.machine_logs,
-            self.last_sent_log_index,
-        ):
-            pass
+        try:
+            async for event in check_server_with_log(
+                f"http://{COMFY_HOST}",
+                COMFY_API_AVAILABLE_MAX_RETRIES,
+                COMFY_API_AVAILABLE_INTERVAL_MS,
+                self.machine_logs,
+                self.last_sent_log_index,
+            ):
+                pass
+        except asyncio.CancelledError:
+            self.current_tunnel_url = "exhausted"
+            print("cancelled")
+        
             # asyncio.create_task(q.put.aio(event))
 
         if self.current_tunnel_url != "":

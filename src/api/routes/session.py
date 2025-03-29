@@ -271,7 +271,8 @@ async def create_session_background_task(
 
     if optimized_runner:
         send_log_entry(session_id, machine_id, "Using optimized runner...", "info")
-        send_log_entry(session_id, machine_id, "Waiting for container snapshot to be ready... First time after new machine configuration might take a while", "info")
+        send_log_entry(session_id, machine_id, "Waiting for container snapshot to be ready...", "info")
+        send_log_entry(session_id, machine_id, "Note: First time after new machine configuration might take a while", "info")
 
     runner = await get_comfy_runner_for_workspace(machine_id, session_id, 60 * 24, gpu, optimized_runner)
 
