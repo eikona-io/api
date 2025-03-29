@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 from datetime import datetime, timedelta
+import inspect
 import os
 from pprint import pprint
 from api.modal.builder import insert_to_clickhouse
@@ -282,6 +283,12 @@ async def create_session_background_task(
     except (AttributeError, modal.exception.Error):
         has_increase_timeout = False
 
+    try:
+        runner.new_tunnel_params
+        has_new_tunnel_params = True
+    except (AttributeError, modal.exception.Error):
+        has_new_tunnel_params = False
+
     if not has_increase_timeout:
         runner = await get_comfy_runner_for_workspace(machine_id, session_id, timeout, gpu, optimized_runner)
 
@@ -289,7 +296,10 @@ async def create_session_background_task(
         print("async_creation", status_queue)
         async with modal.Queue.ephemeral() as q:
             if has_increase_timeout:
-                result = await runner.create_tunnel.spawn.aio(q, status_endpoint, timeout, str(session_id))
+                if has_new_tunnel_params:
+                    result = await runner.create_tunnel.spawn.aio(q=q, status_endpoint=status_endpoint, timeout=timeout, session_id=str(session_id))
+                else:
+                    result = await runner.create_tunnel.spawn.aio(q=q, status_endpoint=status_endpoint, timeout=timeout)
             else:
                 result = await runner.create_tunnel.spawn.aio(q, status_endpoint)
 

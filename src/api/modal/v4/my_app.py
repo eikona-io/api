@@ -1305,6 +1305,10 @@ class BaseComfyDeployRunner:
     current_tunnel_url = ""
 
     @modal.method()
+    async def new_tunnel_params(self):
+        pass
+
+    @modal.method()
     async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
         if self.current_tunnel_url == "exhausted":
             update_endpoint = status_endpoint.split("/api")[0]
