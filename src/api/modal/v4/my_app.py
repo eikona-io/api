@@ -1960,6 +1960,26 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
                 logging.info("{:6.1f} seconds{}: {}".format(n[0], import_message, n[1]))
             logging.info("")
 
+    def hijack_progress(self, server_instance):
+        import comfy
+        from server import BinaryEventTypes
+
+        def hook(value, total, preview_image):
+            comfy.model_management.throw_exception_if_processing_interrupted()
+            progress = {
+                "value": value,
+                "max": total,
+                "prompt_id": server_instance.last_prompt_id,
+                "node": server_instance.last_node_id,
+            }
+
+            server_instance.send_sync("progress", progress, server_instance.client_id)
+            if preview_image is not None:
+                server_instance.send_sync(BinaryEventTypes.UNENCODED_PREVIEW_IMAGE, preview_image, server_instance.client_id)
+
+        comfy.utils.set_progress_bar_global_hook(hook)
+
+
     async def start_native_comfy_server(self):
         self.log_handler = self.setup_native_logging()
         # with cProfile.Profile() as pr:
@@ -2088,6 +2108,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         self.loading_time["init_extra_nodes"] = time.time() - t
         print("Adding routes")
         server.add_routes()
+        self.hijack_progress(server)
 
         threading.Thread(
             target=self.prompt_worker,
