@@ -333,3 +333,49 @@ async def stream_progress(
     except Exception as e:
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
         raise
+
+@router.get("/clickhouse-run-logs/{run_id}")
+async def get_clickhouse_run_logs(
+    run_id: UUID,
+    request: Request,
+    client=Depends(get_clickhouse_client),
+):
+    org_id = request.state.current_user.get("org_id", None)
+    user_id = request.state.current_user.get("user_id")
+
+    query = """
+        SELECT run_id, timestamp, log, user_id, org_id, log_type
+        FROM workflow_events
+        WHERE run_id = %(run_id)s
+        AND log_type != 'input'
+        AND log != ''
+        AND (
+            (%(org_id)s IS NOT NULL AND org_id = %(org_id)s)
+            OR (%(org_id)s IS NULL AND org_id IS NULL AND user_id = %(user_id)s)
+        )
+        ORDER BY timestamp ASC
+    """
+
+    result = await client.query(
+        query,
+        parameters={
+            "run_id": str(run_id),
+            "org_id": str(org_id) if org_id else None,
+            "user_id": str(user_id)
+        }
+    )
+
+    # Convert rows to list of dicts with properly formatted timestamps
+    formatted_rows = [
+        {
+            "run_id": str(row[0]),
+            "timestamp": row[1].isoformat(),
+            "log": row[2],
+            "user_id": str(row[3]) if row[3] else None,
+            "org_id": str(row[4]) if row[4] else None,
+            "log_type": row[5]
+        }
+        for row in result.result_rows
+    ]
+
+    return formatted_rows
