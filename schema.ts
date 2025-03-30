@@ -471,6 +471,7 @@ export const machinesTable = dbSchema.table(
         import_failed_logs: text("import_failed_logs"),
         machine_version_id: uuid("machine_version_id"),
         is_workspace: boolean("is_workspace").default(false).notNull(),
+        optimized_runner: boolean("optimized_runner").default(false).notNull(),
         ...machineColumns(),
     },
     (table) => {
@@ -539,10 +540,10 @@ export const snapshotType = z.object({
 });
 
 export const insertMachineSchema = createInsertSchema(machinesTable, {
-    name: (schema) => schema.name.default("My Machine"),
-    endpoint: (schema) => schema.endpoint.default("http://127.0.0.1:8188"),
-    type: (schema) => schema.type.default("classic"),
-    auth_token: (schema) => schema.auth_token.default("").describe("Auth token"),
+    // name: (schema) => schema.name.default("My Machine"),
+    // endpoint: (schema) => schema.endpoint.default("http://127.0.0.1:8188"),
+    // type: (schema) => schema.type.default("classic"),
+    // auth_token: (schema) => schema.auth_token.default("").describe("Auth token"),
 });
 
 export const showcaseMedia = z.array(
