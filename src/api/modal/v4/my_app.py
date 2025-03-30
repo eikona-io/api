@@ -1991,6 +1991,9 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         self.loading_time["import_comfy"] = time.time() - t
 
+        from app.logger import setup_logger
+        setup_logger()
+
         self.apply_custom_paths()
         self.execute_prestartup_script()
 
