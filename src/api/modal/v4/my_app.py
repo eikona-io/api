@@ -2074,7 +2074,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         args.input_directory = input_directory
         args.preview_method = "auto"
-        args.extra_model_path_config = extra_model_path_config
+        args.extra_model_paths_config = extra_model_path_config
 
         # args.output_directory = output_directory
         # args.temp_directory = temp_directory
