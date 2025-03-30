@@ -351,6 +351,7 @@ input_directory = "/private_models/input"
 output_directory = "/private_models/output"
 temp_directory = "/private_models"
 
+extra_model_path_config = "/comfyui/extra_model_paths.yaml"
 
 def comfyui_cmd(
     cpu: bool = False,
@@ -2073,6 +2074,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         args.input_directory = input_directory
         args.preview_method = "auto"
+        args.extra_model_path_config = extra_model_path_config
 
         # args.output_directory = output_directory
         # args.temp_directory = temp_directory
