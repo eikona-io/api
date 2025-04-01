@@ -1246,13 +1246,17 @@ async def _create_run(
 
                         async with httpx.AsyncClient() as _client:
                             try:
-                                # Proxy the update run back to v1 endpoints
-                                params["file_upload_endpoint"] = (
-                                    os.environ.get("LEGACY_API_URL") + "/api/file-upload"
-                                )
-                                params["status_endpoint"] = (
-                                    os.environ.get("LEGACY_API_URL") + "/api/update-run"
-                                )
+                                if data.flags and "runpod_v2" in data.flags:
+                                    pass
+                                else:
+                                    # Proxy the update run back to v1 endpoints
+                                    params["file_upload_endpoint"] = (
+                                        os.environ.get("LEGACY_API_URL") + "/api/file-upload"
+                                    )
+                                    params["status_endpoint"] = (
+                                        os.environ.get("LEGACY_API_URL") + "/api/update-run"
+                                    )
+
                                 params["cd_token"] = token
                                 payload = {"input": params}
 

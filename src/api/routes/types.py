@@ -340,6 +340,12 @@ class WorkflowRequestShare(BaseModel):
         description="The GPU to override the machine's default GPU",
     )
 
+    flags: Optional[List[str]] = Field(
+        default=None,
+        description="Array of flag strings",
+        example=["runpod_v2"]
+    )
+
     # model_config = {
     #     "json_schema_extra": {
     #         "examples": [
