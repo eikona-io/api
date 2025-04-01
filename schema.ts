@@ -472,6 +472,9 @@ export const machinesTable = dbSchema.table(
         machine_version_id: uuid("machine_version_id"),
         is_workspace: boolean("is_workspace").default(false).notNull(),
         optimized_runner: boolean("optimized_runner").default(false).notNull(),
+        secret_id: uuid("secret_id")
+        .notNull()
+        .references(() => machineSecretsTable.id),
         ...machineColumns(),
     },
     (table) => {
@@ -509,6 +512,24 @@ export const machineVersionsTable = dbSchema.table("machine_versions", {
         ),
     };
 });
+
+export const machineSecretsTable =  dbSchema.table("machine_secrets", {
+    id: uuid("id").primaryKey().defaultRandom().notNull(),
+    user_id: text("user_id")
+        .references(() => usersTable.id, {
+            onDelete: "cascade",
+        })
+        .notNull(),
+    org_id: text("org_id"),
+    key_names: jsonb("key_names").$type<string[]>(),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+    machine_id: uuid("machine_id")  
+    .notNull()
+    .references(() => machinesTable.id, {
+        onDelete: "cascade",
+    }),
+})
 
 export const machinesRelations = relations(machinesTable, ({ one }) => ({
     target_workflow: one(workflowTable, {
