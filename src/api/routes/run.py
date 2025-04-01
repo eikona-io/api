@@ -1253,6 +1253,7 @@ async def _create_run(
                                 params["status_endpoint"] = (
                                     os.environ.get("LEGACY_API_URL") + "/api/update-run"
                                 )
+                                params["cd_token"] = token
                                 payload = {"input": params}
 
                                 # Use the retry function instead of direct post
