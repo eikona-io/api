@@ -39,6 +39,9 @@ import shutil
 from contextlib import contextmanager
 from io import StringIO
 
+import logging
+logger = logging.getLogger(__name__)
+
 current_directory = os.path.dirname(os.path.realpath(__file__))
 
 deploy_test = config["deploy_test"] == "True"
@@ -1310,9 +1313,13 @@ class BaseComfyDeployRunner:
         pass
 
     @modal.method()
+    async def increase_timeout_v2(self):
+        pass
+
+    @modal.method()
     async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
+        update_endpoint = status_endpoint.split("/api")[0]
         if self.current_tunnel_url == "exhausted":
-            update_endpoint = status_endpoint.split("/api")[0]
             send_log_entry(update_endpoint, session_id, config["machine_id"], "Previous session exhausted, please start a new one.")
             await delete_session(update_endpoint, session_id)
             raise Exception("Previous session exhausted, please start a new one.")
@@ -1338,6 +1345,8 @@ class BaseComfyDeployRunner:
         # timeout input is in minutes, so we need to convert it to seconds
         self.session_timeout = timeout * 60
         # print("status_endpoint", status_endpoint)
+
+        task = asyncio.create_task(check_for_timeout(update_endpoint, self.session_id))
 
         try:
             async for event in check_server_with_log(
@@ -1372,8 +1381,8 @@ class BaseComfyDeployRunner:
                     # if self.kill_session_asap:
                     #     ok = await interrupt_comfyui()
                     #     break
-                    if self.start_time + self.session_timeout < time.time():
-                        await self.timeout_and_exit(0, True)
+                    # if self.start_time + self.session_timeout < time.time():
+                    #     await self.timeout_and_exit(0, True)
                     await asyncio.sleep(1)  # Che  ck every 1 seconds
             except asyncio.CancelledError:
                 print("cancelled")
@@ -1385,6 +1394,8 @@ class BaseComfyDeployRunner:
         # Ended
         self.current_tunnel_url = "exhausted"
         self.container_start_time = None
+
+        await task
 
     @modal.method()
     async def close_container(self):
