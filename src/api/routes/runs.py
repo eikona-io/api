@@ -280,17 +280,21 @@ async def get_runs(
             return list(chart_data.values())
 
     # Run all four queries in parallel
-    total_count, filter_count, runs_data, chart_data = await asyncio.gather(
-        fetch_total_count(), fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
+    # total_count, filter_count, runs_data, chart_data = await asyncio.gather(
+    #     fetch_total_count(), fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
+    # )
+
+    # dont run total count first
+    filter_count, runs_data, chart_data = await asyncio.gather(
+        fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
     )
 
     return JSONResponse(
         content={
             "data": runs_data,
             "meta": {
-                "totalRowCount": total_count,
-                "filterRowCount": filter_count
-                or total_count,  # Use total_count as fallback
+                "totalRowCount": 0,
+                "filterRowCount": filter_count or 0,  # Use total_count as fallback
                 "chartData": chart_data,
             },
         }
