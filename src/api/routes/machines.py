@@ -49,7 +49,8 @@ from api.models import (
     Workflow,
     MachineVersion,
     get_machine_columns,
-    Secret
+    Secret,
+    MachineSecret
 )
 
 # from sqlalchemy import select
@@ -657,7 +658,6 @@ async def create_secret(
                 user_id=user_id,
                 org_id=org_id,
                 environment_variables=encrypted_secrets,
-                machine_id=None,
                 created_at=func.now(),
                 updated_at=func.now(),
             )
@@ -686,7 +686,7 @@ async def update_machine_with_secret(
     try:
         machine_id = request_body.machine_id
         secret_id = request_body.secret_id
-
+        new_machine_secret_id = uuid.uuid4()
         machine_query = await db.execute(
             select(Machine).where(Machine.id == machine_id)
         )
@@ -707,10 +707,16 @@ async def update_machine_with_secret(
                 detail="Secret doesn't exist!"
             )
         
-        secret.machine_id = machine_id
         secret.updated_at = func.now()
-        machine.secret_id = secret_id
         
+        machine_secret = MachineSecret(
+           id=new_machine_secret_id,
+           machine_id=machine_id,
+           secret_id=secret_id,
+           created_at=func.now(),
+        )
+        
+        db.add(machine_secret)
         await db.commit()
         
         return JSONResponse(content={"message": "Secret added to machine successfully"})
@@ -765,7 +771,6 @@ async def get_all_secrets(
             user_id = current_user["user_id"]
             org_id = current_user["org_id"] if "org_id" in current_user else None
             
-            # Query secrets based on user_id or org_id
             if org_id:
                 query = select(Secret).where(Secret.org_id == org_id)
             else:
@@ -774,10 +779,8 @@ async def get_all_secrets(
             result = await db.execute(query)
             secrets = result.scalars().all()
             
-            # Create a secret manager for decryption
             secret_manager = SecretManager()
             
-            # Prepare the response with decrypted values
             secrets_response = []
             for secret in secrets:
                 secret_dict = secret.to_dict() if hasattr(secret, 'to_dict') else {
@@ -802,6 +805,13 @@ async def get_all_secrets(
                     secret_dict["environment_variables"] = decrypted_env_vars
                 else:
                     secret_dict["environment_variables"] = []
+                
+                # Get associated machines through machine_secrets table
+                machine_secrets_query = await db.execute(
+                    select(MachineSecret).where(MachineSecret.secret_id == secret.id)
+                )
+                machine_secrets = machine_secrets_query.scalars().all()
+                secret_dict["machines"] = [str(ms.machine_id) for ms in machine_secrets]
                     
                 secrets_response.append(secret_dict)
             
@@ -816,7 +826,7 @@ async def get_all_secrets(
 
 
 @router.delete("/machine/secret/{secret_id}")
-async def update_secret_envs(
+async def delete_secret(
     request: Request,
     secret_id: UUID,
     db: AsyncSession = Depends(get_db)
@@ -832,22 +842,22 @@ async def update_secret_envs(
                 detail="Secret doesn't exist!"
             )
         
-        if secret.machine_id:
-            machine_query = await db.execute(
-                select(Machine).where(Machine.id == secret.machine_id)
-            )
-            machine = machine_query.scalars().first()
-            if machine:
-                machine.secret_id = None
-                await db.flush()
+        # Delete associated machine_secrets entries
+        machine_secrets_query = await db.execute(
+            select(MachineSecret).where(MachineSecret.secret_id == secret_id)
+        )
+        machine_secrets = machine_secrets_query.scalars().all()
         
+        for machine_secret in machine_secrets:
+            await db.delete(machine_secret)
+        
+        # Delete the secret itself
         await db.delete(secret)
         await db.commit()
         
         return JSONResponse(content={"message": "Secret deleted successfully"})
     except Exception as e:
-        raise e
- 
+        raise e 
 
 @router.patch("/machine/serverless/{machine_id}")
 async def update_serverless_machine(
