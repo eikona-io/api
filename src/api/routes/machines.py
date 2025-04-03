@@ -716,7 +716,43 @@ async def update_machine_with_secret(
         return JSONResponse(content={"message": "Secret added to machine successfully"})
     except Exception as e:
         raise e
-    
+
+
+@router.patch("/machine/secret/{secret_id}/envs")
+async def update_secret_envs(
+    request: Request,
+    request_body: SecretInput,
+    secret_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        secret_query = await db.execute(
+            select(Secret).where(Secret.id == secret_id).apply_org_check(request)
+        )
+        secret = secret_query.scalars().first()
+        if not secret:
+            raise HTTPException(
+                status_code=404,
+                detail="Secret doesn't exist!"
+            )
+        
+        secret_data = request_body.secret
+        secret_manager = SecretManager()
+        encrypted_secrets = []
+        for item in secret_data:
+            encrypted_item = {
+                "key": item.key,
+                "encrypted_value": secret_manager.encrypt_value(item.value)
+                }
+            encrypted_secrets.append(encrypted_item)
+        
+        secret.environment_variables = encrypted_secrets
+        await db.commit()
+        
+        return secret
+    except Exception as e:
+        raise e
+ 
 
 @router.get("/machine/secrets/all")
 async def get_all_secrets(
