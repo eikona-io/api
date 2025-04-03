@@ -472,8 +472,6 @@ export const machinesTable = dbSchema.table(
         machine_version_id: uuid("machine_version_id"),
         is_workspace: boolean("is_workspace").default(false).notNull(),
         optimized_runner: boolean("optimized_runner").default(false).notNull(),
-        secret_id: uuid("secret_id")
-        .references(() => secretsTable.id),
         ...machineColumns(),
     },
     (table) => {
@@ -512,7 +510,7 @@ export const machineVersionsTable = dbSchema.table("machine_versions", {
     };
 });
 
-export const secretsTable =  dbSchema.table("secrets", {
+export const secretsTable = dbSchema.table("secrets", {
     id: uuid("id").primaryKey().defaultRandom().notNull(),
     user_id: text("user_id")
         .references(() => usersTable.id, {
@@ -524,11 +522,35 @@ export const secretsTable =  dbSchema.table("secrets", {
         jsonb("environment_variables").$type<z.infer<typeof environmentVariables>>(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const machineSecretsTable = dbSchema.table("machine_secrets", {
+    id: uuid("id").primaryKey().defaultRandom().notNull(),
     machine_id: uuid("machine_id")
-    .references(() => machinesTable.id, {
-        onDelete: "cascade",
-    }),
-})
+        .notNull()
+        .references(() => machinesTable.id, {
+            onDelete: "cascade",
+        }),
+    secret_id: uuid("secret_id")
+        .notNull()
+        .references(() => secretsTable.id, {
+            onDelete: "cascade", 
+        }),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+}, (table) => {
+    return {
+        idx_machine_secrets_machine_id: index("idx_machine_secrets_machine_id").on(
+            table.machine_id,
+        ),
+        idx_machine_secrets_secret_id: index("idx_machine_secrets_secret_id").on(
+            table.secret_id,
+        ),
+        unq_machine_secret: unique("unq_machine_secret").on(
+            table.machine_id,
+            table.secret_id,
+        ),
+    };
+});
 
 export const machinesRelations = relations(machinesTable, ({ one }) => ({
     target_workflow: one(workflowTable, {
