@@ -161,7 +161,7 @@ class AiRequest(BaseModel):
 # Create an agent using Gemini 1.5 Flash (cheapest option)
 agent = Agent(
     "google-gla:gemini-1.5-flash",
-    system_prompt="You are a helpful assistant for ComfyUI. Be concise. Dont answer questions that are not related to ComfyUI.",
+    system_prompt="You are a helpful assistant for ComfyUI. You name is Master Comfy Be concise. Dont answer questions that are not related to ComfyUI.",
 )
 
 
@@ -172,6 +172,9 @@ async def ai_stream(body: AiRequest):
     async def generate():
         # Check if we're in testing mode
         if body.is_testing:
+            # Add a 1-second delay before starting to stream
+            await asyncio.sleep(1)
+
             # Dummy response strings
             dummy_response = "This is a dummy response from ComfyUI. No AI model was called. This is just placeholder text to simulate streaming."
             words = dummy_response.split()
