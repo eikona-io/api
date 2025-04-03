@@ -1318,7 +1318,7 @@ class BaseComfyDeployRunner:
 
     @modal.method()
     async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
-        update_endpoint = status_endpoint.split("/api")[0]
+        update_endpoint = status_endpoint.split("/api/")[0]
         if self.current_tunnel_url == "exhausted":
             send_log_entry(update_endpoint, session_id, config["machine_id"], "Previous session exhausted, please start a new one.")
             await delete_session(update_endpoint, session_id)
