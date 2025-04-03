@@ -521,7 +521,7 @@ export const machineSecretsTable =  dbSchema.table("machine_secrets", {
         })
         .notNull(),
     org_id: text("org_id"),
-    key_names: jsonb("key_names").$type<string[]>(),
+    environment_variables: jsonb("key_names").$type<string[]>(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
     machine_id: uuid("machine_id")  
