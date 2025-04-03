@@ -6,24 +6,20 @@ from .types import (
     WorkflowRunOrigin,
     WorkflowRunStatus,
 )
-from fastapi import APIRouter, Depends, Request, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from api.database import get_db, AsyncSessionLocal
+from fastapi import APIRouter, Request, Query
+from api.database import AsyncSessionLocal
 from .utils import select
-from api.models import WorkflowRun, Workflow, WorkflowVersion, Machine
+from api.models import WorkflowRun
 from fastapi.responses import JSONResponse
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, case
 from collections import defaultdict
 import asyncio
-import json
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Runs"])
-
-MAX_DAYS = 30
 
 # Define valid filters that can be used in the count endpoint
 VALID_FILTERS = {
@@ -84,7 +80,6 @@ async def get_runs(
         select(func.count(WorkflowRun.id))
         .select_from(WorkflowRun)
         .filter(WorkflowRun.workflow_id.isnot(None))
-        .filter(WorkflowRun.created_at >= datetime.now() - timedelta(days=MAX_DAYS))
         .apply_org_check(request)
     )
 
@@ -115,7 +110,6 @@ async def get_runs(
         )
         .select_from(WorkflowRun)
         .filter(WorkflowRun.workflow_id.isnot(None))
-        .filter(WorkflowRun.created_at >= datetime.now() - timedelta(days=MAX_DAYS))
         .apply_org_check(request)
     )
 
@@ -233,7 +227,6 @@ async def get_runs(
                     func.count().label("count"),
                 )
                 .select_from(WorkflowRun)
-                .filter(WorkflowRun.created_at >= datetime.now() - timedelta(days=MAX_DAYS))
                 .apply_org_check(request)
             )
 
@@ -287,17 +280,21 @@ async def get_runs(
             return list(chart_data.values())
 
     # Run all four queries in parallel
-    total_count, filter_count, runs_data, chart_data = await asyncio.gather(
-        fetch_total_count(), fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
+    # total_count, filter_count, runs_data, chart_data = await asyncio.gather(
+    #     fetch_total_count(), fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
+    # )
+
+    # dont run total count first
+    filter_count, runs_data, chart_data = await asyncio.gather(
+        fetch_filter_count(), fetch_runs_data(), fetch_chart_data()
     )
 
     return JSONResponse(
         content={
             "data": runs_data,
             "meta": {
-                "totalRowCount": total_count,
-                "filterRowCount": filter_count
-                or total_count,  # Use total_count as fallback
+                "totalRowCount": 0,
+                "filterRowCount": filter_count or 0,  # Use total_count as fallback
                 "chartData": chart_data,
             },
         }

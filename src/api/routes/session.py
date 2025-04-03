@@ -187,7 +187,7 @@ async def get_session(
         .limit(1)
     )
 
-    # timeout_end = await redis.get(f"session:{session_id}:timeout_end")
+    timeout_end = await redis.get(f"session:{session_id}:timeout_end")
     gpuEvent = result.first()
 
     if gpuEvent is None:
@@ -205,7 +205,7 @@ async def get_session(
         timeout=gpuEvent.session_timeout,
         machine_id=str(gpuEvent.machine_id) if gpuEvent.machine_id else None,
         machine_version_id=str(gpuEvent.machine_version_id) if gpuEvent.machine_version_id else None,
-        # timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
+        timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
     )
 
 
@@ -242,7 +242,7 @@ async def get_machine_sessions(
     sessions = []
     for event in gpu_events:
         # Skipping this for now to save performance
-        # timeout_end = await redis.get(f"session:{event.session_id}:timeout_end")
+        timeout_end = await redis.get(f"session:{event.session_id}:timeout_end")
         sessions.append(
             SessionResponse(
                 session_id=str(event.session_id),
@@ -256,7 +256,7 @@ async def get_machine_sessions(
                 timeout=event.session_timeout,
                 machine_id=str(event.machine_id) if event.machine_id else None,
                 machine_version_id=str(event.machine_version_id) if event.machine_version_id else None,
-                # timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
+                timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
             )
         )
     return sessions
@@ -306,6 +306,25 @@ async def create_session_background_task(
         has_new_tunnel_params = True
     except (AttributeError, modal.exception.Error):
         has_new_tunnel_params = False
+
+    try:
+        runner.increase_timeout_v2
+        has_increase_timeout_v2 = True
+    except (AttributeError, modal.exception.Error):
+        has_increase_timeout_v2 = False
+
+    async def set_timeout_redis():
+        timeout_duration = timeout or 15
+        timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
+        await redis.set(
+            f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
+        )
+
+    if has_increase_timeout_v2:
+        try:
+            await set_timeout_redis()
+        except Exception as e:
+            logfire.error(f"Error setting timeout redis: {str(e)}")
 
     if not has_increase_timeout:
         runner = await get_comfy_runner_for_workspace(machine_id, session_id, timeout, gpu, optimized_runner)
@@ -1421,33 +1440,35 @@ async def delete_session(
     if modal_function_id is None and not is_modal:
         raise HTTPException(status_code=400, detail="Modal function id not found")
 
+    is_sandbox = modal_function_id.startswith("sb-")
+
     try:
-        if modal_function_id.startswith("sb-"):
+        if is_sandbox:
             await modal.Sandbox.from_id(modal_function_id).terminate.aio()
         else:
             await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
     except Exception as e:
         logger.error(f"Error cancelling modal function {modal_function_id}: {str(e)}")
 
-    # Update GPU event end time
-    if gpuEvent.end_time is None and gpuEvent.start_time is not None:
-        gpuEvent.end_time = datetime.now()
-        await db.commit()
-        await db.refresh(gpuEvent)
+    # Update GPU event end time if is sandbox
+    if is_sandbox:
+        if gpuEvent.end_time is None and gpuEvent.start_time is not None:
+            gpuEvent.end_time = datetime.now()
+            await db.commit()
+            await db.refresh(gpuEvent)
 
-    # Send usage data to Autumn
-
-    if gpuEvent.end_time is not None and gpuEvent.start_time is not None:
-        await send_autumn_usage_event(
-            customer_id=gpuEvent.org_id or gpuEvent.user_id,
-            gpu_type=gpuEvent.gpu,
-            start_time=gpuEvent.start_time,
-            end_time=gpuEvent.end_time,
-            environment=gpuEvent.environment,
-            idempotency_key=str(gpuEvent.id),
-        )
-    else:
-        logfire.error(f"Session {session_id} has no start or end time when closing")
+        # Send usage data to Autumn if its a sandbox, else will be handled in the lifecycle callback
+        if gpuEvent.end_time is not None and gpuEvent.start_time is not None:
+            await send_autumn_usage_event(
+                customer_id=gpuEvent.org_id or gpuEvent.user_id,
+                gpu_type=gpuEvent.gpu,
+                start_time=gpuEvent.start_time,
+                end_time=gpuEvent.end_time,
+                environment=gpuEvent.environment,
+                idempotency_key=str(gpuEvent.id),
+            )
+        else:
+            logfire.error(f"Session {session_id} has no start or end time when closing")
         
     # Update GPU event end time
     # This cause probably they are closing the session before the build is complete
