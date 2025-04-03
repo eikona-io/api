@@ -509,6 +509,19 @@ class Machine(SerializableMixin, Base):
     # Add shared columns
     locals().update(get_machine_columns())
 
+class MachineSecret(SerializableMixin, Base):
+    __tablename__ = "machine_secrets"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
+    org_id = Column(String)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+    machine_id = Column(
+        UUID(as_uuid=True), ForeignKey("machines.id", ondelete="cascade"), nullable=True
+    )
+    environment_variables = Column(JSON)
 
 class UserSettings(SerializableMixin, Base):
     __tablename__ = "user_settings"

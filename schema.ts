@@ -521,11 +521,11 @@ export const machineSecretsTable =  dbSchema.table("machine_secrets", {
         })
         .notNull(),
     org_id: text("org_id"),
-    environment_variables: jsonb("key_names").$type<string[]>(),
+    environment_variables:
+        jsonb("environment_variables").$type<z.infer<typeof environmentVariables>>(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
-    machine_id: uuid("machine_id")  
-    .notNull()
+    machine_id: uuid("machine_id")
     .references(() => machinesTable.id, {
         onDelete: "cascade",
     }),
@@ -612,6 +612,14 @@ export const showcaseMediaNullable = z
         }),
     )
     .nullable();
+
+export const environmentVariables = z
+    .array(
+        z.object({
+            key: z.string(),
+            encryptedValue: z.string(),
+        }),
+    )
 
 export const deploymentsTable = dbSchema.table("deployments", {
     id: uuid("id").primaryKey().defaultRandom().notNull(),

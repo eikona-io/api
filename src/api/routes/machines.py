@@ -38,7 +38,7 @@ from .types import (
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .utils import generate_persistent_token, select, is_valid_uuid
+from .utils import generate_persistent_token, select, SecretManager
 from sqlalchemy import func, text
 from fastapi.responses import JSONResponse
 
@@ -49,6 +49,7 @@ from api.models import (
     Workflow,
     MachineVersion,
     get_machine_columns,
+    MachineSecret
 )
 
 # from sqlalchemy import select
@@ -620,6 +621,52 @@ async def create_serverless_machine(
         background_tasks.add_task(build_logic, params)
 
     return JSONResponse(content=machine.to_dict())
+
+
+class SecretKeyValue(BaseModel):
+    key: str
+    value: str
+
+class SecretInput(BaseModel):
+    secret: List[SecretKeyValue]
+
+@router.post("/machine/secret")
+async def create_machine_secret(
+    request: Request,
+    request_body: SecretInput,
+    db: AsyncSession = Depends(get_db)
+    ):
+        try:
+            current_user = request.state.current_user
+            user_id = current_user["user_id"]
+            org_id = current_user["org_id"] if "org_id" in current_user else None
+            secret = request_body.secret
+        
+            secret_manager = SecretManager()
+            encrypted_secrets = []
+            for item in secret:
+                encrypted_item = {
+                    "key": item.key,
+                    "encrypted_value": secret_manager.encrypt_value(item.value)
+                }
+                encrypted_secrets.append(encrypted_item)
+
+            machine_secret = MachineSecret(
+                user_id=user_id,
+                org_id=org_id,
+                environment_variables=encrypted_secrets,
+                machine_id=None
+            )
+
+            db.add(machine_secret)
+            await db.commit()
+            
+            return machine_secret
+        except ValueError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=str(e)
+                )
 
 
 @router.patch("/machine/serverless/{machine_id}")
