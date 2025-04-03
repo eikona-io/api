@@ -718,6 +718,66 @@ async def update_machine_with_secret(
         raise e
     
 
+@router.get("/machine/secrets/all")
+async def get_all_secrets(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+    ):
+        try:
+            current_user = request.state.current_user
+            user_id = current_user["user_id"]
+            org_id = current_user["org_id"] if "org_id" in current_user else None
+            
+            # Query secrets based on user_id or org_id
+            if org_id:
+                query = select(Secret).where(Secret.org_id == org_id)
+            else:
+                query = select(Secret).where(Secret.user_id == user_id)
+                
+            result = await db.execute(query)
+            secrets = result.scalars().all()
+            
+            # Create a secret manager for decryption
+            secret_manager = SecretManager()
+            
+            # Prepare the response with decrypted values
+            secrets_response = []
+            for secret in secrets:
+                secret_dict = secret.to_dict() if hasattr(secret, 'to_dict') else {
+                    "id": str(secret.id),
+                    "user_id": str(secret.user_id),
+                    "org_id": str(secret.org_id) if secret.org_id else None,
+                    "machine_id": str(secret.machine_id) if secret.machine_id else None,
+                    "created_at": secret.created_at.isoformat() if hasattr(secret.created_at, 'isoformat') else str(secret.created_at),
+                    "updated_at": secret.updated_at.isoformat() if hasattr(secret.updated_at, 'isoformat') else str(secret.updated_at)
+                }
+                
+                # Decrypt environment variables
+                if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                    decrypted_env_vars = []
+                    for env_var in secret.environment_variables:
+                        decrypted_env_var = {
+                            "key": env_var["key"],
+                            "value": secret_manager.decrypt_value(env_var["encrypted_value"])
+                        }
+                        decrypted_env_vars.append(decrypted_env_var)
+                    
+                    secret_dict["environment_variables"] = decrypted_env_vars
+                else:
+                    secret_dict["environment_variables"] = []
+                    
+                secrets_response.append(secret_dict)
+            
+            return JSONResponse(content=secrets_response)
+            
+        except Exception as e:
+            logger.error(f"Error getting secrets: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=str(e)
+            )
+
+
 @router.patch("/machine/serverless/{machine_id}")
 async def update_serverless_machine(
     request: Request,
