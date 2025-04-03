@@ -1,3 +1,4 @@
+import random
 from fastapi import HTTPException, APIRouter, Request
 from typing import Any, Dict
 import logging
@@ -7,9 +8,11 @@ from .utils import async_lru_cache
 from datetime import timedelta
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 import json
 from typing import Optional
+from dataclasses import dataclass
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Comfy Node"])
@@ -192,6 +195,85 @@ async def ai_stream(body: AiRequest):
                 # Stream text as it's generated - just get the single message parameter
                 async for message in result.stream_text(delta=True):
                     # Send each chunk as a server-sent event
+                    yield f"data: {json.dumps({'text': message})}\n\n"
+
+                # Signal completion at the end
+                yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# Define your dependencies data class
+@dataclass
+class ComfyDependencies:
+    workflow_json: Optional[str] = None
+
+
+# Create your agent with the dependencies type
+agent = Agent(
+    "google-gla:gemini-1.5-flash",
+    deps_type=ComfyDependencies,
+    system_prompt="You are a helpful assistant for ComfyUI. Your name is Master Comfy. Don't answer questions that are not related to ComfyUI. If user has problem, explain it step by step how to fix it. Keep it concise."
+)
+
+# Add a system prompt function to include workflow context when available
+@agent.system_prompt
+async def add_workflow_context(ctx: RunContext[ComfyDependencies]) -> str:
+    if ctx.deps.workflow_json:
+        return f"The user has provided the following workflow JSON:\n{ctx.deps.workflow_json}\n\nPlease refer to this when answering questions about the workflow."
+    return ""
+
+
+async def test_ai_stream():
+    # Add a 1-second delay before starting to stream
+    await asyncio.sleep(1)
+
+    # Dummy response strings
+    dummy_response = "This is a dummy response from ComfyUI. No AI model was called. This is just placeholder text to simulate streaming."
+    words = dummy_response.split()
+
+    # Stream each word individually with small delay
+    for word in words:
+        yield f"data: {json.dumps({'text': word + ' '})}\n\n"
+        # make it random from 0 to 0.2 seconds
+        await asyncio.sleep(random.uniform(0, 0.2))
+
+    # Signal completion at the end
+    yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
+
+
+# Update your AiRequest model as before
+class AiRequest(BaseModel):
+    message: str
+    is_testing: Optional[bool] = False
+    workflow_json: Optional[str] = None
+
+
+# Update your endpoint
+@router.post("/ai")
+async def ai_stream(body: AiRequest):
+    """Stream AI responses word by word"""
+
+    async def generate():
+        if body.is_testing:
+            print(f"Testing mode: {body.workflow_json}")
+            async for chunk in test_ai_stream():
+                yield chunk
+        else:
+            # Create dependencies instance with the workflow JSON
+            deps = ComfyDependencies(workflow_json=body.workflow_json)
+
+            # Use an async context manager for run_stream with deps
+            async with agent.run_stream(body.message, deps=deps) as result:
+                # Stream text as it's generated
+                async for message in result.stream_text(delta=True):
                     yield f"data: {json.dumps({'text': message})}\n\n"
 
                 # Signal completion at the end
