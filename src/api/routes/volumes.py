@@ -417,15 +417,14 @@ async def remove_file_old(request: Request, body: RemovePath, db: AsyncSession =
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    is_valid, error_message = await validate_file_path_aio(body.path, volume)
+    is_valid, error_message = await validate_path_aio(body.path, volume)
     if not is_valid:
         if "not found" in error_message:
             raise HTTPException(status_code=404, detail=error_message)
         else:
             raise HTTPException(status_code=400, detail=error_message)
 
-    # TODO: when handling folders, can use 'recursive option'
-    volume.remove_file(body.path)
+    volume.remove_file(body.path, recursive=True)
     return {"deleted_path": body.path}
 
 
@@ -745,6 +744,17 @@ async def does_file_exist(path: str, volume: Volume) -> bool:
         else:
             raise e
 
+async def validate_path_aio(path: str, volume: Volume):
+    try:
+        contents = await volume.listdir.aio(path)
+        if not contents:
+            return False, "No file or directory found at the specified path."
+        return True, None
+    except grpclib.exceptions.GRPCError as e:
+        if e.status == grpclib.Status.NOT_FOUND:
+            return False, f"path: {path} not found."
+        else:
+            return False, str(e)
 
 async def validate_file_path_aio(path: str, volume: Volume):
     try:
