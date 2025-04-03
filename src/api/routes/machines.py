@@ -747,6 +747,7 @@ async def update_secret_envs(
             encrypted_secrets.append(encrypted_item)
         
         secret.environment_variables = encrypted_secrets
+        secret.updated_at = func.now()
         await db.commit()
         
         return secret
@@ -813,6 +814,40 @@ async def get_all_secrets(
                 detail=str(e)
             )
 
+
+@router.delete("/machine/secret/{secret_id}")
+async def update_secret_envs(
+    request: Request,
+    secret_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        secret_query = await db.execute(
+            select(Secret).where(Secret.id == secret_id).apply_org_check(request)
+        )
+        secret = secret_query.scalars().first()
+        if not secret:
+            raise HTTPException(
+                status_code=404,
+                detail="Secret doesn't exist!"
+            )
+        
+        if secret.machine_id:
+            machine_query = await db.execute(
+                select(Machine).where(Machine.id == secret.machine_id)
+            )
+            machine = machine_query.scalars().first()
+            if machine:
+                machine.secret_id = None
+                await db.flush()
+        
+        await db.delete(secret)
+        await db.commit()
+        
+        return JSONResponse(content={"message": "Secret deleted successfully"})
+    except Exception as e:
+        raise e
+ 
 
 @router.patch("/machine/serverless/{machine_id}")
 async def update_serverless_machine(
