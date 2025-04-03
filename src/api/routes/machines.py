@@ -687,8 +687,6 @@ async def update_machine_with_secret(
         machine_id = request_body.machine_id
         secret_id = request_body.secret_id
 
-        print(request.state.current_user)
-
         machine_query = await db.execute(
             select(Machine).where(Machine.id == machine_id)
         )
@@ -706,7 +704,7 @@ async def update_machine_with_secret(
         if not secret:
             raise HTTPException(
                 status_code=404,
-                detail="Machine Secret doesn't exist!"
+                detail="Secret doesn't exist!"
             )
         
         secret.machine_id = machine_id
@@ -717,11 +715,7 @@ async def update_machine_with_secret(
         
         return JSONResponse(content={"message": "Secret added to machine successfully"})
     except Exception as e:
-        print(e)
-        raise HTTPException(
-            status_code=500,
-            detail="Something went wrong, please try again"
-        )
+        raise e
     
 
 @router.patch("/machine/serverless/{machine_id}")
