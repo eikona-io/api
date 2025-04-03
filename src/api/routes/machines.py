@@ -76,6 +76,7 @@ async def get_machines(
     is_docker: bool = False,
     is_workspace: bool = False,
     is_self_hosted: bool = False,
+    include_docker_command_steps: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     # Build the SQL query
@@ -99,6 +100,11 @@ async def get_machines(
         m.machine_version_id,
         m.is_workspace,
     """
+
+    if include_docker_command_steps:
+        sql += """
+        m.docker_command_steps,
+        """
 
     # Add workflow check if needed
     if include_has_workflows:
