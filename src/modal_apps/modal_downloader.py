@@ -219,7 +219,7 @@ async def modal_download_repo_task(
         with tempfile.TemporaryDirectory() as temp_dir:
             print(f"Created temp directory at {temp_dir}")
             # Report initial progress
-            yield await report_progress(0, model_id)
+            yield await report_progress(10, model_id)
             
             try:
                 # Download the repository
@@ -251,19 +251,15 @@ async def modal_download_repo_task(
                 dest_dir = os.path.join(folder_path, repo_id.split("/")[-1])
                 print(f"Will upload to destination directory: {dest_dir}")
                 
-                # Report progress at 10%
-                yield await report_progress(10, model_id)
+                yield await report_progress(50, model_id)
                 
-                # Use batch_upload to transfer the entire directory at once
                 print("Starting batch upload to volume")
                 with volume.batch_upload() as batch:
                     batch.put_directory(local_dir, dest_dir)
                 print("Batch upload completed")
                 
-                # Report progress at 90% after batch upload starts
                 yield await report_progress(90, model_id)
-                
-                # Report success
+
                 print("Download and upload successful")
                 yield await report_progress(100, model_id, status="success")
                 
