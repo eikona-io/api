@@ -5,9 +5,11 @@ import os
 import httpx
 from .utils import async_lru_cache
 from datetime import timedelta
-from fastapi.responses import JSONResponse
-
-
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+from pydantic_ai import Agent
+import json
+from typing import Optional
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Comfy Node"])
@@ -150,3 +152,53 @@ async def get_comfyui_versions(request: Request):
     }
     
     return JSONResponse(content=response)
+
+class AiRequest(BaseModel):
+    message: str
+    is_testing: Optional[bool] = False
+
+
+# Create an agent using Gemini 1.5 Flash (cheapest option)
+agent = Agent(
+    "google-gla:gemini-1.5-flash",
+    system_prompt="You are a helpful assistant for ComfyUI. Be concise. Dont answer questions that are not related to ComfyUI.",
+)
+
+
+@router.post("/ai")
+async def ai_stream(body: AiRequest):
+    """Stream AI responses word by word"""
+
+    async def generate():
+        # Check if we're in testing mode
+        if body.is_testing:
+            # Dummy response strings
+            dummy_response = "This is a dummy response from ComfyUI. No AI model was called. This is just placeholder text to simulate streaming."
+            words = dummy_response.split()
+
+            # Stream each word individually with small delay
+            for word in words:
+                yield f"data: {json.dumps({'text': word + ' '})}\n\n"
+                await asyncio.sleep(0.1)  # Small delay between words
+
+            # Signal completion at the end
+            yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
+        else:
+            # Use an async context manager for run_stream
+            async with agent.run_stream(body.message) as result:
+                # Stream text as it's generated - just get the single message parameter
+                async for message in result.stream_text(delta=True):
+                    # Send each chunk as a server-sent event
+                    yield f"data: {json.dumps({'text': message})}\n\n"
+
+                # Signal completion at the end
+                yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
