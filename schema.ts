@@ -473,8 +473,7 @@ export const machinesTable = dbSchema.table(
         is_workspace: boolean("is_workspace").default(false).notNull(),
         optimized_runner: boolean("optimized_runner").default(false).notNull(),
         secret_id: uuid("secret_id")
-        .notNull()
-        .references(() => machineSecretsTable.id),
+        .references(() => secretsTable.id),
         ...machineColumns(),
     },
     (table) => {
@@ -513,7 +512,7 @@ export const machineVersionsTable = dbSchema.table("machine_versions", {
     };
 });
 
-export const machineSecretsTable =  dbSchema.table("machine_secrets", {
+export const secretsTable =  dbSchema.table("secrets", {
     id: uuid("id").primaryKey().defaultRandom().notNull(),
     user_id: text("user_id")
         .references(() => usersTable.id, {

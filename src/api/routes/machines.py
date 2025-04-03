@@ -49,7 +49,7 @@ from api.models import (
     Workflow,
     MachineVersion,
     get_machine_columns,
-    MachineSecret
+    Secret
 )
 
 # from sqlalchemy import select
@@ -631,7 +631,7 @@ class SecretInput(BaseModel):
     secret: List[SecretKeyValue]
 
 @router.post("/machine/secret")
-async def create_machine_secret(
+async def create_secret(
     request: Request,
     request_body: SecretInput,
     db: AsyncSession = Depends(get_db)
@@ -640,7 +640,7 @@ async def create_machine_secret(
             current_user = request.state.current_user
             user_id = current_user["user_id"]
             org_id = current_user["org_id"] if "org_id" in current_user else None
-            new_machine_secret_id = uuid.uuid4()
+            new_secret_id = uuid.uuid4()
             secret = request_body.secret
         
             secret_manager = SecretManager()
@@ -652,8 +652,8 @@ async def create_machine_secret(
                 }
                 encrypted_secrets.append(encrypted_item)
 
-            machine_secret = MachineSecret(
-                id=new_machine_secret_id,
+            secret = Secret(
+                id=new_secret_id,
                 user_id=user_id,
                 org_id=org_id,
                 environment_variables=encrypted_secrets,
@@ -662,16 +662,67 @@ async def create_machine_secret(
                 updated_at=func.now(),
             )
 
-            db.add(machine_secret)
+            db.add(secret)
             await db.commit()
             
-            return machine_secret
+            return secret
         except ValueError as e:
             raise HTTPException(
                 status_code=500,
                 detail=str(e)
                 )
 
+
+class UpdateMachineWithSecretInput(BaseModel):
+    machine_id: UUID
+    secret_id: UUID
+
+@router.patch("/machine/secret")
+async def update_machine_with_secret(
+    request: Request,
+    request_body: UpdateMachineWithSecretInput,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        machine_id = request_body.machine_id
+        secret_id = request_body.secret_id
+
+        print(request.state.current_user)
+
+        machine_query = await db.execute(
+            select(Machine).where(Machine.id == machine_id)
+        )
+        machine = machine_query.scalars().first()
+        if not machine:
+            raise HTTPException(
+                status_code=404,
+                detail="Machine doesn't exist"
+            )
+        
+        secret_query = await db.execute(
+            select(Secret).where(Secret.id == secret_id).apply_org_check(request)
+        )
+        secret = secret_query.scalars().first()
+        if not secret:
+            raise HTTPException(
+                status_code=404,
+                detail="Machine Secret doesn't exist!"
+            )
+        
+        secret.machine_id = machine_id
+        secret.updated_at = func.now()
+        machine.secret_id = secret_id
+        
+        await db.commit()
+        
+        return JSONResponse(content={"message": "Secret added to machine successfully"})
+    except Exception as e:
+        print(e)
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong, please try again"
+        )
+    
 
 @router.patch("/machine/serverless/{machine_id}")
 async def update_serverless_machine(

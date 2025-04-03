@@ -505,12 +505,14 @@ class Machine(SerializableMixin, Base):
     )
     is_workspace = Column(Boolean, nullable=False, default=False)
     optimized_runner = Column(Boolean, nullable=False, default=False)
-
+    secret_id = Column(
+        UUID(as_uuid=True), ForeignKey("secrets.id", ondelete="set null"), nullable=True
+    )
     # Add shared columns
     locals().update(get_machine_columns())
 
-class MachineSecret(SerializableMixin, Base):
-    __tablename__ = "machine_secrets"
+class Secret(SerializableMixin, Base):
+    __tablename__ = "secrets"
     metadata = metadata
 
     id = Column(UUID(as_uuid=True), primary_key=True)
