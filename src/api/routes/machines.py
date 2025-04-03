@@ -640,6 +640,7 @@ async def create_machine_secret(
             current_user = request.state.current_user
             user_id = current_user["user_id"]
             org_id = current_user["org_id"] if "org_id" in current_user else None
+            new_machine_secret_id = uuid.uuid4()
             secret = request_body.secret
         
             secret_manager = SecretManager()
@@ -652,10 +653,13 @@ async def create_machine_secret(
                 encrypted_secrets.append(encrypted_item)
 
             machine_secret = MachineSecret(
+                id=new_machine_secret_id,
                 user_id=user_id,
                 org_id=org_id,
                 environment_variables=encrypted_secrets,
-                machine_id=None
+                machine_id=None,
+                created_at=func.now(),
+                updated_at=func.now(),
             )
 
             db.add(machine_secret)
