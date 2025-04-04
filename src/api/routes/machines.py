@@ -630,6 +630,7 @@ class SecretKeyValue(BaseModel):
 
 class SecretInput(BaseModel):
     secret: List[SecretKeyValue]
+    secret_name: str
 
 @router.post("/machine/secret")
 async def create_secret(
@@ -655,6 +656,7 @@ async def create_secret(
 
             secret = Secret(
                 id=new_secret_id,
+                name=request_body.secret_name,
                 user_id=user_id,
                 org_id=org_id,
                 environment_variables=encrypted_secrets,
@@ -724,10 +726,13 @@ async def update_machine_with_secret(
         raise e
 
 
+class SecretUpdateInput(BaseModel):
+    secret: List[SecretKeyValue]
+
 @router.patch("/machine/secret/{secret_id}/envs")
 async def update_secret_envs(
     request: Request,
-    request_body: SecretInput,
+    request_body: SecretUpdateInput,
     secret_id: UUID,
     db: AsyncSession = Depends(get_db)
 ):

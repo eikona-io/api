@@ -518,6 +518,7 @@ export const secretsTable = dbSchema.table("secrets", {
         })
         .notNull(),
     org_id: text("org_id"),
+    name: text("name").notNull(),
     environment_variables:
         jsonb("environment_variables").$type<z.infer<typeof environmentVariables>>(),
     created_at: timestamp("created_at").defaultNow().notNull(),

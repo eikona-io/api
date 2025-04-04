@@ -514,6 +514,7 @@ class Secret(SerializableMixin, Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
+    name=Column(String, nullable=False)
     org_id = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)

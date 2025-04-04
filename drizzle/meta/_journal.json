@@ -1324,6 +1324,13 @@
       "when": 1743695049967,
       "tag": "0188_wealthy_network",
       "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1743755303180,
+      "tag": "0189_high_vision",
+      "breakpoints": true
     }
   ]
 }

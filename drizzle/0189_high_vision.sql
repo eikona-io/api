@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."secrets" ADD COLUMN "name" text NOT NULL;
