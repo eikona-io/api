@@ -153,61 +153,8 @@ async def get_comfyui_versions(request: Request):
             for release, sha in zip(recent_releases, commit_shas) if sha
         ]
     }
-    
+
     return JSONResponse(content=response)
-
-class AiRequest(BaseModel):
-    message: str
-    is_testing: Optional[bool] = False
-
-
-# Create an agent using Gemini 1.5 Flash (cheapest option)
-agent = Agent(
-    "google-gla:gemini-1.5-flash",
-    system_prompt="You are a helpful assistant for ComfyUI. You name is Master Comfy Be concise. Dont answer questions that are not related to ComfyUI.",
-)
-
-
-@router.post("/ai")
-async def ai_stream(body: AiRequest):
-    """Stream AI responses word by word"""
-
-    async def generate():
-        # Check if we're in testing mode
-        if body.is_testing:
-            # Add a 1-second delay before starting to stream
-            await asyncio.sleep(1)
-
-            # Dummy response strings
-            dummy_response = "This is a dummy response from ComfyUI. No AI model was called. This is just placeholder text to simulate streaming."
-            words = dummy_response.split()
-
-            # Stream each word individually with small delay
-            for word in words:
-                yield f"data: {json.dumps({'text': word + ' '})}\n\n"
-                await asyncio.sleep(0.1)  # Small delay between words
-
-            # Signal completion at the end
-            yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
-        else:
-            # Use an async context manager for run_stream
-            async with agent.run_stream(body.message) as result:
-                # Stream text as it's generated - just get the single message parameter
-                async for message in result.stream_text(delta=True):
-                    # Send each chunk as a server-sent event
-                    yield f"data: {json.dumps({'text': message})}\n\n"
-
-                # Signal completion at the end
-                yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-        },
-    )
 
 
 # Define your dependencies data class
@@ -218,15 +165,31 @@ class ComfyDependencies:
 
 # Create your agent with the dependencies type
 agent = Agent(
-    "google-gla:gemini-1.5-flash",
+    "google-gla:gemini-2.0-flash",
     deps_type=ComfyDependencies,
-    system_prompt="You are a helpful assistant for ComfyUI. Your name is Master Comfy. Don't answer questions that are not related to ComfyUI. If user has problem, explain it step by step how to fix it. Keep it concise."
+    system_prompt="""You are Master Comfy, a specialized assistant for ComfyUI.
+Focus exclusively on ComfyUI-related topics.
+When troubleshooting:
+- Identify specific nodes causing issues
+- Provide clear, actionable solutions
+- Reference relevant documentation when helpful
+
+For workflow analysis:
+- Suggest optimizations for efficiency
+- Explain unusual node combinations or configurations
+- Point out common mistakes in setups
+
+Keep responses concise and practical.
+Format all responses in Markdown for better readability.
+Use code blocks for workflow JSON or node configurations.""",
 )
+
 
 # Add a system prompt function to include workflow context when available
 @agent.system_prompt
 async def add_workflow_context(ctx: RunContext[ComfyDependencies]) -> str:
-    if ctx.deps.workflow_json:
+    print(f"ctx: {ctx.deps}")
+    if ctx.deps and ctx.deps.workflow_json:
         return f"The user has provided the following workflow JSON:\n{ctx.deps.workflow_json}\n\nPlease refer to this when answering questions about the workflow."
     return ""
 
@@ -236,14 +199,30 @@ async def test_ai_stream():
     await asyncio.sleep(1)
 
     # Dummy response strings
-    dummy_response = "This is a dummy response from ComfyUI. No AI model was called. This is just placeholder text to simulate streaming."
-    words = dummy_response.split()
+    dummy_response = """OK, I can help you with that. The error message indicates that the `EmptyLatentImage` node has an invalid `batch_size` value. The minimum value allowed for `batch_size` is 1, but you\'ve set it to -1.
 
-    # Stream each word individually with small delay
-    for word in words:
-        yield f"data: {json.dumps({'text': word + ' '})}\n\n"
-        # make it random from 0 to 0.2 seconds
-        await asyncio.sleep(random.uniform(0, 0.2))
+Here\'s how to fix it step-by-step:
+
+1.  **Locate the `EmptyLatentImage` node:** In your ComfyUI workflow, find the node labeled "EmptyLatentImage". Its node ID is 5.
+2.  **Access the `batch_size` Widget:** Double-click the `EmptyLatentImage` node to open its properties, or simply look at the widgets displayed below the node. You should see widgets for `width`, `height`, and `batch_size`.
+3.  **Change the `batch_size` value:**  The `batch_size` widget currently has the value "-1". Change this value to "1" or any positive integer greater than 1, depending on how many images you want to generate in a batch. A `batch_size` of 1 will generate images one at a time.
+
+After making this change, try running your workflow again. The error should be resolved.
+"""
+    # Instead of splitting by words only, we'll first split by lines to preserve newlines
+    lines = dummy_response.splitlines(True)  # Keep the newline characters
+
+    # Process each line separately
+    for line in lines:
+        words = line.split()
+        for word in words:
+            yield f"data: {json.dumps({'text': word + ' '})}\n\n"
+            await asyncio.sleep(random.uniform(0, 0.2))
+
+        # Add a newline after each line (if it wasn't the last line)
+        if line.strip():  # Only send newline if the line wasn't empty
+            yield f"data: {json.dumps({'text': '\n', 'newline': True})}\n\n"
+            await asyncio.sleep(random.uniform(0, 0.1))
 
     # Signal completion at the end
     yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
@@ -267,6 +246,7 @@ async def ai_stream(body: AiRequest):
             async for chunk in test_ai_stream():
                 yield chunk
         else:
+            print(f"workflow_json: {body.workflow_json}")
             # Create dependencies instance with the workflow JSON
             deps = ComfyDependencies(workflow_json=body.workflow_json)
 
@@ -274,7 +254,11 @@ async def ai_stream(body: AiRequest):
             async with agent.run_stream(body.message, deps=deps) as result:
                 # Stream text as it's generated
                 async for message in result.stream_text(delta=True):
-                    yield f"data: {json.dumps({'text': message})}\n\n"
+                    # Check if the message contains a newline and handle it specially
+                    if "\n" in message:
+                        yield f"data: {json.dumps({'text': message, 'newline': True})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'text': message})}\n\n"
 
                 # Signal completion at the end
                 yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
