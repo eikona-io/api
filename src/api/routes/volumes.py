@@ -408,8 +408,8 @@ async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Dep
     }
 
 
-@router.post("/volume/rm", include_in_schema=False)
-async def remove_file_old(request: Request, body: RemovePath, db: AsyncSession = Depends(get_db)):
+@router.post("/volume/rm")
+async def remove_file(request: Request, body: RemovePath, db: AsyncSession = Depends(get_db)):
     volume_name = await get_volume_name(request, db)
     try:
         volume = Volume.from_name(volume_name)
