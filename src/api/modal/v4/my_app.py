@@ -72,6 +72,9 @@ python_version = (
 prestart_command = config["prestart_command"]
 global_extra_args = config["extra_args"]
 modal_image_id = config["modal_image_id"]
+disable_metadata = config["disable_metadata"] == "True"
+
+print("disable_metadata: ", disable_metadata)
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +145,7 @@ folder_paths.get_filename_list = get_filename_list
     # print(main_py_contents)
 
     server_process = await asyncio.subprocess.create_subprocess_shell(
-        comfyui_cmd(cpu=True if gpu_param is None else False) + " --disable-metadata",
+        comfyui_cmd(cpu=True if gpu_param is None else False),
         cwd="/comfyui",
     )
 
@@ -385,6 +388,8 @@ def comfyui_cmd(
 
     if prestart_command is not None and prestart_command != "":
         cmd = f"{prestart_command} && {cmd}"
+
+    cmd += " --disable-metadata" if disable_metadata else ""
 
     print("Actual file command: ", cmd)
 
@@ -2201,7 +2206,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     def load_args(self):
         from comfy.cli_args import args
 
-        args.disable_metadata = True
+        args.disable_metadata = disable_metadata
         args.port = 8188
         args.enable_cors_header = "*"
 
@@ -2357,8 +2362,7 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
         await self.handle_container_enter_before_comfy()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU")
-            + " --disable-metadata",
+            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
