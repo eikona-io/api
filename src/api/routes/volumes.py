@@ -1464,7 +1464,7 @@ async def move_file(
         raise HTTPException(status_code=400, detail=str(e))
 
     # Check source_path exists
-    is_valid, error_message = await validate_path_aio(source_path, volume)
+    is_valid, error_message = await validate_file_path_aio(source_path, volume)
     if not is_valid:
         if "not found" in error_message:
             raise HTTPException(status_code=404, detail=error_message)
@@ -1498,4 +1498,3 @@ async def move_file(
             status_code=500, 
             detail=f"Error moving file: {str(e)}"
         )
-
