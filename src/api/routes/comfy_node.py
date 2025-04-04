@@ -179,6 +179,11 @@ For workflow analysis:
 - Explain unusual node combinations or configurations
 - Point out common mistakes in setups
 
+When referring to specific nodes in a workflow:
+- Use the special syntax `[[node:NODE_ID:NODE_POSITION]]` to reference them. Get it from the workflow_json sent by the user.
+- Example: "`[[node:5:342.1,-443.2]]`"
+- Always include both the node ID and node position when available
+
 Keep responses concise and practical.
 Format all responses in Markdown for better readability.
 Use code blocks for workflow JSON or node configurations.""",
@@ -203,7 +208,7 @@ async def test_ai_stream():
 
 Here\'s how to fix it step-by-step:
 
-1.  **Locate the `EmptyLatentImage` node:** In your ComfyUI workflow, find the node labeled "EmptyLatentImage". Its node ID is 5.
+1.  **Locate the `EmptyLatentImage` node:** In your ComfyUI workflow, find the node `[[node:5:342.1,-443.2]]` labeled "EmptyLatentImage".
 2.  **Access the `batch_size` Widget:** Double-click the `EmptyLatentImage` node to open its properties, or simply look at the widgets displayed below the node. You should see widgets for `width`, `height`, and `batch_size`.
 3.  **Change the `batch_size` value:**  The `batch_size` widget currently has the value "-1". Change this value to "1" or any positive integer greater than 1, depending on how many images you want to generate in a batch. A `batch_size` of 1 will generate images one at a time.
 
@@ -217,12 +222,12 @@ After making this change, try running your workflow again. The error should be r
         words = line.split()
         for word in words:
             yield f"data: {json.dumps({'text': word + ' '})}\n\n"
-            await asyncio.sleep(random.uniform(0, 0.2))
+            # await asyncio.sleep(random.uniform(0, 0.2))
 
         # Add a newline after each line (if it wasn't the last line)
         if line.strip():  # Only send newline if the line wasn't empty
             yield f"data: {json.dumps({'text': '\n', 'newline': True})}\n\n"
-            await asyncio.sleep(random.uniform(0, 0.1))
+            # await asyncio.sleep(random.uniform(0, 0.1))
 
     # Signal completion at the end
     yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
@@ -254,11 +259,7 @@ async def ai_stream(body: AiRequest):
             async with agent.run_stream(body.message, deps=deps) as result:
                 # Stream text as it's generated
                 async for message in result.stream_text(delta=True):
-                    # Check if the message contains a newline and handle it specially
-                    if "\n" in message:
-                        yield f"data: {json.dumps({'text': message, 'newline': True})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'text': message})}\n\n"
+                    yield f"data: {json.dumps({'text': message})}\n\n"
 
                 # Signal completion at the end
                 yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
