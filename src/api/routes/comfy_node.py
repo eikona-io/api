@@ -1,4 +1,5 @@
 import random
+from uuid import UUID
 from fastapi import HTTPException, APIRouter, Request
 from typing import Any, Dict
 import logging
@@ -9,8 +10,11 @@ from datetime import timedelta
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.tools import Tool
+from pydantic_ai.messages import ModelMessage
+
 import json
-from typing import Optional
+from typing import Optional, Dict
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -157,7 +161,7 @@ async def get_comfyui_versions(request: Request):
     return JSONResponse(content=response)
 
 
-# Define your dependencies data class
+# Define your dependencies data class - now we store workflow_json but don't automatically include it
 @dataclass
 class ComfyDependencies:
     workflow_json: Optional[str] = None
@@ -166,9 +170,17 @@ class ComfyDependencies:
 # Create your agent with the dependencies type
 agent = Agent(
     "google-gla:gemini-2.0-flash",
+    # "o3-mini",
     deps_type=ComfyDependencies,
     system_prompt="""You are Master Comfy, a specialized assistant for ComfyUI.
 Focus exclusively on ComfyUI-related topics.
+
+IMPORTANT: Never ask for user's workflow json, always run the `get_workflow_json` tool to get the workflow json, if user ask for bug fixes or troubleshooting.
+
+**Workflow JSON Handling:**
+- Always check and search for the workflow JSON when addressing issues, bug fixes, or optimization inquiries.
+
+
 When troubleshooting:
 - Identify specific nodes causing issues
 - Provide clear, actionable solutions
@@ -180,7 +192,7 @@ For workflow analysis:
 - Point out common mistakes in setups
 
 When referring to specific nodes in a workflow:
-- Use the special syntax `[[node:NODE_ID:NODE_POSITION]]` to reference them. Get it from the workflow_json sent by the user.
+- Use the special syntax `[[node:NODE_ID:NODE_POSITION]]` to reference them
 - Example: "`[[node:5:342.1,-443.2]]`"
 - Always include both the node ID and node position when available
 
@@ -190,13 +202,17 @@ Use code blocks for workflow JSON or node configurations.""",
 )
 
 
-# Add a system prompt function to include workflow context when available
-@agent.system_prompt
-async def add_workflow_context(ctx: RunContext[ComfyDependencies]) -> str:
+# Replace the system prompt function with a function tool
+@agent.tool
+async def get_workflow_json(ctx: RunContext[ComfyDependencies]) -> str:
+    """
+    Get the workflow JSON.
+    """
+    print("TOOL CALLED: get_workflow_json")
     print(f"ctx: {ctx.deps}")
     if ctx.deps and ctx.deps.workflow_json:
-        return f"The user has provided the following workflow JSON:\n{ctx.deps.workflow_json}\n\nPlease refer to this when answering questions about the workflow."
-    return ""
+        return ctx.deps.workflow_json
+    return "No workflow JSON available. "
 
 
 async def test_ai_stream():
@@ -233,9 +249,13 @@ After making this change, try running your workflow again. The error should be r
     yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
 
 
+# Add a dictionary to store message histories by session ID
+chat_sessions: Dict[UUID, list[ModelMessage]] = {}
+
 # Update your AiRequest model as before
 class AiRequest(BaseModel):
     message: str
+    chat_session_id: UUID
     is_testing: Optional[bool] = False
     workflow_json: Optional[str] = None
 
@@ -247,19 +267,28 @@ async def ai_stream(body: AiRequest):
 
     async def generate():
         if body.is_testing:
-            print(f"Testing mode: {body.workflow_json}")
             async for chunk in test_ai_stream():
                 yield chunk
         else:
-            print(f"workflow_json: {body.workflow_json}")
             # Create dependencies instance with the workflow JSON
             deps = ComfyDependencies(workflow_json=body.workflow_json)
 
-            # Use an async context manager for run_stream with deps
-            async with agent.run_stream(body.message, deps=deps) as result:
+            # Get existing message history or default to empty list
+            message_history = chat_sessions.get(body.chat_session_id, [])
+
+            # Use an async context manager for run_stream with deps and message history
+            async with agent.run_stream(
+                body.message,
+                deps=deps,
+                message_history=message_history
+            ) as result:
                 # Stream text as it's generated
                 async for message in result.stream_text(delta=True):
                     yield f"data: {json.dumps({'text': message})}\n\n"
+
+                # After streaming is complete, save the updated message history
+                # This includes both previous messages and new messages from this run
+                chat_sessions[body.chat_session_id] = result.all_messages()
 
                 # Signal completion at the end
                 yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
