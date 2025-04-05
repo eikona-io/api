@@ -631,7 +631,7 @@ class SecretKeyValue(BaseModel):
 class SecretInput(BaseModel):
     secret: List[SecretKeyValue]
     secret_name: str
-    machine_id: Optional[UUID] = None
+    machine_id: UUID
 
 @router.post("/machine/secret")
 async def create_secret(
@@ -646,6 +646,16 @@ async def create_secret(
             new_secret_id = uuid.uuid4()
             secret = request_body.secret
             machine_id = request_body.machine_id
+            
+            machine_query = await db.execute(
+                select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+            )
+            machine = machine_query.scalars().first()
+            if not machine:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Machine not found"
+                )
         
             secret_manager = SecretManager()
             encrypted_secrets = []
@@ -666,17 +676,16 @@ async def create_secret(
                 updated_at=func.now(),
             )
 
-            if machine_id:
-                machine_secret_id = uuid.uuid4()
-                machine_secret = MachineSecret(
-                    id=machine_secret_id,
-                    machine_id=machine_id,
-                    secret_id=new_secret_id,
-                    created_at=func.now(),
-                )
-                db.add(machine_secret)
-
             db.add(secret)
+            await db.flush()
+            
+            machine_secret = MachineSecret(
+                id=uuid.uuid4(),
+                machine_id=machine_id,
+                secret_id=new_secret_id,
+                created_at=func.now(),
+            )
+            db.add(machine_secret)
             await db.commit()
             
             return secret
