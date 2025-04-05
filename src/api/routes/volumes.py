@@ -745,9 +745,7 @@ async def does_file_exist(path: str, volume: Volume) -> bool:
 
 async def validate_path_aio(path: str, volume: Volume):
     try:
-        contents = await volume.listdir.aio(path)
-        if not contents:
-            return False, "No file or directory found at the specified path."
+        await volume.listdir.aio(path)
         return True, None
     except grpclib.exceptions.GRPCError as e:
         if e.status == grpclib.Status.NOT_FOUND:
