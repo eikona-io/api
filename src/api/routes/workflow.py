@@ -981,3 +981,101 @@ async def create_workflow_version(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/workflow/{workflow_id}/export")
+async def get_workflow_export(
+    request: Request,
+    workflow_id: str,
+    version: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    # First get the workflow version
+    version_query = select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow_id)
+    
+    if version is not None:
+        version_query = version_query.where(WorkflowVersion.version == version)
+    else:
+        version_query = version_query.order_by(WorkflowVersion.created_at.desc()).limit(1)
+    
+    version_query = version_query.join(Workflow).where(
+        Workflow.deleted == False,
+        Workflow.id == workflow_id
+    ).apply_org_check_by_type(Workflow, request)
+
+    result = await db.execute(version_query)
+    workflow_version = result.scalar_one_or_none()
+    
+    if not workflow_version:
+        raise HTTPException(
+            status_code=404,
+            detail="Workflow not found or you don't have access to it"
+        )
+
+    # Get machine data
+    machine_data = None
+    if workflow_version.machine_id:
+        # First try to get the specific machine version if specified
+        if workflow_version.machine_version_id:
+            machine_query = (
+                select(MachineVersion)
+                .where(MachineVersion.id == workflow_version.machine_version_id)
+                .where(MachineVersion.machine_id == workflow_version.machine_id)
+            )
+        else:
+            # Get the latest machine version
+            machine_query = (
+                select(MachineVersion)
+                .where(MachineVersion.machine_id == workflow_version.machine_id)
+                .order_by(MachineVersion.created_at.desc())
+                .limit(1)
+            )
+        
+        result = await db.execute(machine_query)
+        machine_data = result.scalar_one_or_none()
+
+    if workflow_version.machine_id:
+        default_machine_query = select(Machine).where(Machine.id == workflow_version.machine_id)
+        result = await db.execute(default_machine_query)
+        default_machine_data = result.scalar_one_or_none()
+
+    # If no machine version found, get the base machine data
+    if not machine_data and workflow_version.machine_id:
+        machine_data = default_machine_data.to_dict()
+
+    # Get the base workflow data
+    base_workflow = workflow_version.workflow or {}
+
+    # Create the environment object from machine data
+    environment = {}
+    if machine_data:
+        environment = {
+            "comfyui_version": machine_data.comfyui_version,
+            "gpu": default_machine_data.gpu,
+            "docker_command_steps": machine_data.docker_command_steps,
+            # "allow_concurrent_inputs": machine_data.allow_concurrent_inputs,
+            "max_containers": machine_data.concurrency_limit,
+            "install_custom_node_with_gpu": machine_data.install_custom_node_with_gpu,
+            "run_timeout": machine_data.run_timeout,
+            "scaledown_window": machine_data.idle_timeout,
+            "extra_docker_commands": machine_data.extra_docker_commands,
+            "base_docker_image": machine_data.base_docker_image,
+            "python_version": machine_data.python_version,
+            "extra_args": machine_data.extra_args,
+            "prestart_command": machine_data.prestart_command,
+            "min_containers": machine_data.keep_warm,
+            "machine_hash": machine_data.machine_hash,
+            "disable_metadata": machine_data.disable_metadata,
+        }
+
+    # Add the new fields to the base workflow
+    base_workflow["workflow_api"] = workflow_version.workflow_api
+    base_workflow["environment"] = environment
+
+    # Convert any remaining UUIDs to strings
+    for key, value in base_workflow.items():
+        if isinstance(value, uuid.UUID):
+            base_workflow[key] = str(value)
+
+    return JSONResponse(content=serialize_row(base_workflow))
+
