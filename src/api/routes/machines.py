@@ -631,6 +631,7 @@ class SecretKeyValue(BaseModel):
 class SecretInput(BaseModel):
     secret: List[SecretKeyValue]
     secret_name: str
+    machine_id: Optional[UUID] = None
 
 @router.post("/machine/secret")
 async def create_secret(
@@ -644,6 +645,7 @@ async def create_secret(
             org_id = current_user["org_id"] if "org_id" in current_user else None
             new_secret_id = uuid.uuid4()
             secret = request_body.secret
+            machine_id = request_body.machine_id
         
             secret_manager = SecretManager()
             encrypted_secrets = []
@@ -663,6 +665,16 @@ async def create_secret(
                 created_at=func.now(),
                 updated_at=func.now(),
             )
+
+            if machine_id:
+                machine_secret_id = uuid.uuid4()
+                machine_secret = MachineSecret(
+                    id=machine_secret_id,
+                    machine_id=machine_id,
+                    secret_id=new_secret_id,
+                    created_at=func.now(),
+                )
+                db.add(machine_secret)
 
             db.add(secret)
             await db.commit()
@@ -724,7 +736,6 @@ async def update_machine_with_secret(
         return JSONResponse(content={"message": "Secret added to machine successfully"})
     except Exception as e:
         raise e
-
 
 class SecretUpdateInput(BaseModel):
     secret: List[SecretKeyValue]
