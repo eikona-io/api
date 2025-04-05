@@ -7,6 +7,7 @@ from .utils import async_lru_cache
 from datetime import timedelta
 from fastapi.responses import JSONResponse
 
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -148,5 +149,6 @@ async def get_comfyui_versions(request: Request):
             for release, sha in zip(recent_releases, commit_shas) if sha
         ]
     }
-    
+
     return JSONResponse(content=response)
+
