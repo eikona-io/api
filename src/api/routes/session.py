@@ -697,6 +697,7 @@ async def create_session(
         user_id=user_id,
         org_id=org_id,
         machine_id=machine_id,
+        machine_version_id=machine.machine_version_id,
         gpu=body.gpu.value if body.gpu is not None else machine.gpu,
         gpu_provider="modal",
         session_id=str(session_id),
