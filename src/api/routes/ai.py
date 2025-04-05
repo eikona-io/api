@@ -34,7 +34,8 @@ class ComfyDependencies:
 # Create your agent with the dependencies type
 agent = Agent(
     # "google-gla:gemini-2.5-pro-exp-03-25",
-    "o3-mini",
+    # "o3-mini",
+    "claude-3-7-sonnet-latest",
     deps_type=ComfyDependencies,
     system_prompt="""You are Master Comfy, a specialized assistant for ComfyUI.
 Focus exclusively on ComfyUI-related topics.
