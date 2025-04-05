@@ -1,0 +1,345 @@
+import asyncio
+from uuid import UUID
+from api.routes.search import search
+from api.routes.machines import get_machine
+from api.database import get_db
+from fastapi import APIRouter, Request, Depends, HTTPException
+from typing import Dict
+import logging
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import ModelMessage
+import json
+import os
+from typing import Optional, Dict
+from dataclasses import dataclass
+from sqlalchemy.ext.asyncio import AsyncSession
+from upstash_vector import Index
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["AI"])
+
+
+# Define your dependencies data class - now we store workflow_json but don't automatically include it
+@dataclass
+class ComfyDependencies:
+    request: Request
+    db: AsyncSession
+    workflow_json: Optional[str] = None
+    machine_id: Optional[UUID] = None
+
+
+# Create your agent with the dependencies type
+agent = Agent(
+    # "google-gla:gemini-2.5-pro-exp-03-25",
+    # "o3-mini",
+    "claude-3-7-sonnet-latest",
+    deps_type=ComfyDependencies,
+    system_prompt="""You are Master Comfy, a specialized assistant for ComfyUI.
+Focus exclusively on ComfyUI-related topics.
+
+IMPORTANT: Never ask for user's workflow json, always run the `get_workflow_json` tool to get the workflow json, if user ask for bug fixes or troubleshooting.
+If the problem is related to missing models, use the `get_public_models` tool to search for related public models.
+If the question is related to custom nodes, use the `get_custom_node_info` tool to search for information.
+
+**Workflow JSON Handling:**
+- Always check and search for the workflow JSON when addressing issues, bug fixes, or optimization inquiries.
+
+For machine-related queries:
+- If the user asks about cold start time, GPU issues, custom node installation, ComfyUI version, auto-scaling (GPU parallel), warm time, or keeping always on, that the question is related to the machine / GPU
+- Always run the `get_machine_data` tool to retrieve current machine information
+- Use this data to provide accurate information about the machine configuration
+- For custom node installation issues, check the Docker command steps inside the machine data
+- Provide specific solutions based on the actual machine configuration
+
+For custom node or node(s) related queries:
+- When users ask about specific custom nodes, their installation, usage, or troubleshooting, use the `get_custom_node_info` tool
+- Search for information about the custom node's features, compatibility, requirements, or configuration
+- Provide clear instructions for installation or usage based on the retrieved information
+- If the user is experiencing issues with a custom node, search for known solutions or workarounds
+- Examples of queries that should trigger the custom node search:
+  * "What's the best node for removing backgrounds in ComfyUI?"
+  * "How do I use face swap nodes in ComfyUI?"
+  * "Which upscaling nodes give the best quality?"
+  * "What custom nodes do I need for video processing in ComfyUI?"
+  * "Is there a node for inpainting in ComfyUI?"
+  * "How to install ComfyUI-Impact-Pack?"
+  * "What does the ControlNet node do?"
+  * "Are there any good custom nodes for creating animations?"
+  * "Which nodes can help with color correction?"
+  * "What's the difference between ReActor and InsightFace nodes for face swapping?"
+
+For model search requests:
+1. When a user asks for model recommendations (e.g., "Find me a good stable diffusion model" or "I need a model for portraits"), identify the key search terms.
+2. If the user mentions a missing model or error related to missing models, extract the model name and search for it
+3. For model filenames:
+   - If the query includes a full filename (e.g., "wan2.1_i2v_480p_14B_fp16.safetensors"), extract only the base model name
+   - Remove file extensions (.safetensors, .ckpt, etc.)
+   - Remove any directory paths
+4. Call the get_public_models tool with the cleaned search terms as the query parameter
+5. Present the top model recommendations from the search results
+
+When getting public models:
+- Select best 3 models from the search results
+- provide the link to the model
+
+When troubleshooting:
+- Don't try to guess users' errors - always ask them to provide the exact error message for better debugging
+- Identify specific nodes causing issues
+- Provide clear, actionable solutions
+- Reference relevant documentation when helpful
+
+For workflow analysis:
+- Suggest optimizations for efficiency
+- Explain unusual node combinations or configurations
+- Point out common mistakes in setups
+
+When referring to specific nodes in a workflow:
+- Use the special syntax `[[node:NODE_ID:NODE_POSITION]]` to reference them
+- Example: "`[[node:5:342.1,-443.2]]`"
+- Always include both the node ID and node position when available
+
+Keep responses concise and practical.
+Format all responses in Markdown for better readability.
+Use code blocks for workflow JSON or node configurations.""",
+)
+
+
+# Replace the system prompt function with a function tool
+@agent.tool
+async def get_workflow_json(ctx: RunContext[ComfyDependencies]) -> str:
+    """
+    Get the workflow JSON.
+    """
+    print("TOOL CALLED: get_workflow_json")
+    print(f"ctx: {ctx.deps}")
+    if ctx.deps and ctx.deps.workflow_json:
+        return ctx.deps.workflow_json
+    return "No workflow JSON available. "
+
+
+@agent.tool
+async def get_public_models(
+    ctx: RunContext[ComfyDependencies], query: Optional[str] = None
+) -> str:
+    """
+    Get the public models using the provided query or from dependencies.
+    If query is provided, use it; otherwise use model_query from dependencies.
+
+    Args:
+        query: Optional query string extracted from the user message
+    """
+    print("TOOL CALLED: get_public_models")
+    print(f"query: {query}")
+
+    # Use the explicitly provided query parameter first, fall back to deps
+    search_query = query or (ctx.deps.model_query if ctx.deps else None)
+
+    if search_query:
+        models = await search(search_query)
+        return models
+    return "No search query provided. Please specify what model you're looking for."
+
+
+@agent.tool
+async def get_machine_data(ctx: RunContext[ComfyDependencies]) -> str:
+    """
+    Get the machine data.
+    """
+    print("TOOL CALLED: get_machine_data")
+    print(f"ctx: {ctx.deps}")
+    if ctx.deps and ctx.deps.machine_id:
+        machine_response = await get_machine(
+            request=ctx.deps.request,
+            machine_id=ctx.deps.machine_id,
+            db=ctx.deps.db,
+        )
+        # Extract the content from JSONResponse and convert to JSON string
+        machine_data = machine_response.body.decode()
+        return machine_data
+    return "No machine data available. "
+
+
+@agent.tool
+async def get_custom_node_info(
+    ctx: RunContext[ComfyDependencies], query: Optional[str] = None
+) -> str:
+    """
+    Get information about custom ComfyUI nodes from the vector database.
+    
+    Args:
+        query: Query string to search for custom nodes
+    """
+    print("TOOL CALLED: get_custom_node_info")
+    print(f"query: {query}")
+    
+    if not query:
+        return "No query provided. Please specify what custom node you're looking for."
+    
+    # Get Upstash credentials from environment variables
+    upstash_url = os.environ.get("UPSTASH_VECTOR_REST_URL")
+    upstash_token = os.environ.get("UPSTASH_VECTOR_REST_TOKEN")
+    
+    if not upstash_url or not upstash_token:
+        return "Upstash Vector credentials not configured correctly."
+    
+    try:
+        # Initialize the Upstash Vector Index
+        index = Index(url=upstash_url, token=upstash_token)
+        
+        # Query the index asynchronously
+        results = await asyncio.to_thread(
+            index.query,
+            data=query,  # Using data for text-based search
+            top_k=3,  # Get top 3 results
+            include_metadata=True,
+        )
+        
+        print(f"Results type: {type(results)}")
+        print(f"Results content: {results}")
+        
+        if not results:
+            return f"No custom node information found for '{query}'."
+        
+        # Format the results
+        formatted_results = "### Custom Node Information:\n\n"
+        
+        # Process results - each result is a QueryResult object with attributes
+        for i, result in enumerate(results, 1):
+            formatted_results += f"**Result {i}**\n"
+            
+            # Access id
+            if hasattr(result, "id"):
+                formatted_results += f"- **ID**: {result.id}\n"
+            
+            # Access metadata
+            if hasattr(result, "metadata") and result.metadata:
+                for key, value in result.metadata.items():
+                    # Skip empty values
+                    if not value:
+                        continue
+                    
+                    # Format links
+                    if key.lower() in ["github", "repository", "repo", "link", "url"] and isinstance(value, str):
+                        formatted_results += f"- **{key}**: [{value}]({value})\n"
+                    else:
+                        formatted_results += f"- **{key}**: {value}\n"
+            
+            # Access data if available
+            if hasattr(result, "data") and result.data:
+                formatted_results += f"- **Description**: {result.data}\n"
+                
+            formatted_results += "\n"
+        
+        print(f"formatted_results: {formatted_results}")
+        
+        return formatted_results
+    except Exception as e:
+        error_message = f"Error querying custom node information: {str(e)}"
+        print(error_message)
+        return error_message
+
+
+async def test_ai_stream():
+    # Add a 1-second delay before starting to stream
+    await asyncio.sleep(1)
+
+    # Dummy response strings
+    dummy_response = """OK, I can help you with that. The error message indicates that the `EmptyLatentImage` node has an invalid `batch_size` value. The minimum value allowed for `batch_size` is 1, but you\'ve set it to -1.
+
+Here\'s how to fix it step-by-step:
+
+1.  **Locate the `EmptyLatentImage` node:** In your ComfyUI workflow, find the node `[[node:5:342.1,-443.2]]` labeled "EmptyLatentImage".
+2.  **Access the `batch_size` Widget:** Double-click the `EmptyLatentImage` node to open its properties, or simply look at the widgets displayed below the node. You should see widgets for `width`, `height`, and `batch_size`.
+3.  **Change the `batch_size` value:**  The `batch_size` widget currently has the value "-1". Change this value to "1" or any positive integer greater than 1, depending on how many images you want to generate in a batch. A `batch_size` of 1 will generate images one at a time.
+
+After making this change, try running your workflow again. The error should be resolved.
+"""
+    # Instead of splitting by words only, we'll first split by lines to preserve newlines
+    lines = dummy_response.splitlines(True)  # Keep the newline characters
+
+    # Process each line separately
+    for line in lines:
+        words = line.split()
+        for word in words:
+            yield f"data: {json.dumps({'text': word + ' '})}\n\n"
+            # await asyncio.sleep(random.uniform(0, 0.2))
+
+        # Add a newline after each line (if it wasn't the last line)
+        if line.strip():  # Only send newline if the line wasn't empty
+            yield f"data: {json.dumps({'text': '\n', 'newline': True})}\n\n"
+            # await asyncio.sleep(random.uniform(0, 0.1))
+
+    # Signal completion at the end
+    yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
+
+
+# Add a dictionary to store message histories by session ID
+chat_sessions: Dict[UUID, list[ModelMessage]] = {}
+
+
+# Update your AiRequest model as before
+class AiRequest(BaseModel):
+    message: str
+    chat_session_id: UUID
+    is_testing: Optional[bool] = False
+    workflow_json: Optional[str] = None
+    machine_id: Optional[UUID] = None
+
+
+# Update your endpoint
+@router.post("/ai")
+async def ai_stream(
+    request: Request,
+    body: AiRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream AI responses word by word"""
+    # reject free plan users
+    plan = request.state.current_user.get("plan")
+    if plan == "free":
+        raise HTTPException(
+            status_code=403, detail="Free plan users are not allowed to use AI"
+        )
+
+    async def generate():
+        if body.is_testing:
+            async for chunk in test_ai_stream():
+                yield chunk
+        else:
+            # Create dependencies instance with the workflow JSON
+            deps = ComfyDependencies(
+                request=request,
+                db=db,
+                workflow_json=body.workflow_json,
+                machine_id=body.machine_id,
+            )
+
+            # Get existing message history or default to empty list
+            message_history = chat_sessions.get(body.chat_session_id, [])
+
+            # Use an async context manager for run_stream with deps and message history
+            async with agent.run_stream(
+                body.message, deps=deps, message_history=message_history
+            ) as result:
+                # Stream text as it's generated
+                async for message in result.stream_text(delta=True):
+                    yield f"data: {json.dumps({'text': message})}\n\n"
+
+                # After streaming is complete, save the updated message history
+                # This includes both previous messages and new messages from this run
+                chat_sessions[body.chat_session_id] = result.all_messages()
+
+                # Signal completion at the end
+                yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
