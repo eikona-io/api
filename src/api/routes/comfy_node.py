@@ -1,5 +1,6 @@
 import random
 from uuid import UUID
+from api.routes.search import search
 from fastapi import HTTPException, APIRouter, Request
 from typing import Any, Dict
 import logging
@@ -169,19 +170,34 @@ class ComfyDependencies:
 
 # Create your agent with the dependencies type
 agent = Agent(
-    "google-gla:gemini-2.0-flash",
+    "google-gla:gemini-2.5-pro-exp-03-25",
     # "o3-mini",
     deps_type=ComfyDependencies,
     system_prompt="""You are Master Comfy, a specialized assistant for ComfyUI.
 Focus exclusively on ComfyUI-related topics.
 
 IMPORTANT: Never ask for user's workflow json, always run the `get_workflow_json` tool to get the workflow json, if user ask for bug fixes or troubleshooting.
+If the problem is related to missing models, use the `get_public_models` tool to search for related public models.
 
 **Workflow JSON Handling:**
 - Always check and search for the workflow JSON when addressing issues, bug fixes, or optimization inquiries.
 
+For model search requests:
+1. When a user asks for model recommendations (e.g., "Find me a good stable diffusion model" or "I need a model for portraits"), identify the key search terms.
+2. If the user mentions a missing model or error related to missing models, extract the model name and search for it
+3. For model filenames:
+   - If the query includes a full filename (e.g., "wan2.1_i2v_480p_14B_fp16.safetensors"), extract only the base model name
+   - Remove file extensions (.safetensors, .ckpt, etc.)
+   - Remove any directory paths
+4. Call the get_public_models tool with the cleaned search terms as the query parameter
+5. Present the top model recommendations from the search results
+
+When getting public models:
+- Select best 3 models from the search results
+- provide the link to the model
 
 When troubleshooting:
+- Don't try to guess users' errors - always ask them to provide the exact error message for better debugging
 - Identify specific nodes causing issues
 - Provide clear, actionable solutions
 - Reference relevant documentation when helpful
@@ -213,6 +229,29 @@ async def get_workflow_json(ctx: RunContext[ComfyDependencies]) -> str:
     if ctx.deps and ctx.deps.workflow_json:
         return ctx.deps.workflow_json
     return "No workflow JSON available. "
+
+
+@agent.tool
+async def get_public_models(
+    ctx: RunContext[ComfyDependencies], query: Optional[str] = None
+) -> str:
+    """
+    Get the public models using the provided query or from dependencies.
+    If query is provided, use it; otherwise use model_query from dependencies.
+
+    Args:
+        query: Optional query string extracted from the user message
+    """
+    print("TOOL CALLED: get_public_models")
+    print(f"query: {query}")
+
+    # Use the explicitly provided query parameter first, fall back to deps
+    search_query = query or (ctx.deps.model_query if ctx.deps else None)
+
+    if search_query:
+        models = await search(search_query)
+        return models
+    return "No search query provided. Please specify what model you're looking for."
 
 
 async def test_ai_stream():
@@ -252,6 +291,7 @@ After making this change, try running your workflow again. The error should be r
 # Add a dictionary to store message histories by session ID
 chat_sessions: Dict[UUID, list[ModelMessage]] = {}
 
+
 # Update your AiRequest model as before
 class AiRequest(BaseModel):
     message: str
@@ -278,9 +318,7 @@ async def ai_stream(body: AiRequest):
 
             # Use an async context manager for run_stream with deps and message history
             async with agent.run_stream(
-                body.message,
-                deps=deps,
-                message_history=message_history
+                body.message, deps=deps, message_history=message_history
             ) as result:
                 # Stream text as it's generated
                 async for message in result.stream_text(delta=True):
