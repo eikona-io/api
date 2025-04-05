@@ -11,9 +11,11 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage
 import json
+import os
 from typing import Optional, Dict
 from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
+from upstash_vector import Index
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +33,15 @@ class ComfyDependencies:
 
 # Create your agent with the dependencies type
 agent = Agent(
-    "google-gla:gemini-2.5-pro-exp-03-25",
-    # "o3-mini",
+    # "google-gla:gemini-2.5-pro-exp-03-25",
+    "o3-mini",
     deps_type=ComfyDependencies,
     system_prompt="""You are Master Comfy, a specialized assistant for ComfyUI.
 Focus exclusively on ComfyUI-related topics.
 
 IMPORTANT: Never ask for user's workflow json, always run the `get_workflow_json` tool to get the workflow json, if user ask for bug fixes or troubleshooting.
 If the problem is related to missing models, use the `get_public_models` tool to search for related public models.
+If the question is related to custom nodes, use the `get_custom_node_info` tool to search for information.
 
 **Workflow JSON Handling:**
 - Always check and search for the workflow JSON when addressing issues, bug fixes, or optimization inquiries.
@@ -49,6 +52,23 @@ For machine-related queries:
 - Use this data to provide accurate information about the machine configuration
 - For custom node installation issues, check the Docker command steps inside the machine data
 - Provide specific solutions based on the actual machine configuration
+
+For custom node or node(s) related queries:
+- When users ask about specific custom nodes, their installation, usage, or troubleshooting, use the `get_custom_node_info` tool
+- Search for information about the custom node's features, compatibility, requirements, or configuration
+- Provide clear instructions for installation or usage based on the retrieved information
+- If the user is experiencing issues with a custom node, search for known solutions or workarounds
+- Examples of queries that should trigger the custom node search:
+  * "What's the best node for removing backgrounds in ComfyUI?"
+  * "How do I use face swap nodes in ComfyUI?"
+  * "Which upscaling nodes give the best quality?"
+  * "What custom nodes do I need for video processing in ComfyUI?"
+  * "Is there a node for inpainting in ComfyUI?"
+  * "How to install ComfyUI-Impact-Pack?"
+  * "What does the ControlNet node do?"
+  * "Are there any good custom nodes for creating animations?"
+  * "Which nodes can help with color correction?"
+  * "What's the difference between ReActor and InsightFace nodes for face swapping?"
 
 For model search requests:
 1. When a user asks for model recommendations (e.g., "Find me a good stable diffusion model" or "I need a model for portraits"), identify the key search terms.
@@ -139,6 +159,86 @@ async def get_machine_data(ctx: RunContext[ComfyDependencies]) -> str:
         machine_data = machine_response.body.decode()
         return machine_data
     return "No machine data available. "
+
+
+@agent.tool
+async def get_custom_node_info(
+    ctx: RunContext[ComfyDependencies], query: Optional[str] = None
+) -> str:
+    """
+    Get information about custom ComfyUI nodes from the vector database.
+    
+    Args:
+        query: Query string to search for custom nodes
+    """
+    print("TOOL CALLED: get_custom_node_info")
+    print(f"query: {query}")
+    
+    if not query:
+        return "No query provided. Please specify what custom node you're looking for."
+    
+    # Get Upstash credentials from environment variables
+    upstash_url = os.environ.get("UPSTASH_VECTOR_REST_URL")
+    upstash_token = os.environ.get("UPSTASH_VECTOR_REST_TOKEN")
+    
+    if not upstash_url or not upstash_token:
+        return "Upstash Vector credentials not configured correctly."
+    
+    try:
+        # Initialize the Upstash Vector Index
+        index = Index(url=upstash_url, token=upstash_token)
+        
+        # Query the index asynchronously
+        results = await asyncio.to_thread(
+            index.query,
+            data=query,  # Using data for text-based search
+            top_k=3,  # Get top 3 results
+            include_metadata=True,
+        )
+        
+        print(f"Results type: {type(results)}")
+        print(f"Results content: {results}")
+        
+        if not results:
+            return f"No custom node information found for '{query}'."
+        
+        # Format the results
+        formatted_results = "### Custom Node Information:\n\n"
+        
+        # Process results - each result is a QueryResult object with attributes
+        for i, result in enumerate(results, 1):
+            formatted_results += f"**Result {i}**\n"
+            
+            # Access id
+            if hasattr(result, "id"):
+                formatted_results += f"- **ID**: {result.id}\n"
+            
+            # Access metadata
+            if hasattr(result, "metadata") and result.metadata:
+                for key, value in result.metadata.items():
+                    # Skip empty values
+                    if not value:
+                        continue
+                    
+                    # Format links
+                    if key.lower() in ["github", "repository", "repo", "link", "url"] and isinstance(value, str):
+                        formatted_results += f"- **{key}**: [{value}]({value})\n"
+                    else:
+                        formatted_results += f"- **{key}**: {value}\n"
+            
+            # Access data if available
+            if hasattr(result, "data") and result.data:
+                formatted_results += f"- **Description**: {result.data}\n"
+                
+            formatted_results += "\n"
+        
+        print(f"formatted_results: {formatted_results}")
+        
+        return formatted_results
+    except Exception as e:
+        error_message = f"Error querying custom node information: {str(e)}"
+        print(error_message)
+        return error_message
 
 
 async def test_ai_stream():
