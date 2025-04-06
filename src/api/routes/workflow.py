@@ -235,6 +235,21 @@ async def get_all_runs(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
+    # Check if workflow exists and user has access
+    workflow = await db.execute(
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .where(~Workflow.deleted)
+        .apply_org_check(request)
+    )
+    workflow = workflow.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(
+            status_code=404,
+            detail="Workflow not found or you don't have access to it"
+        )
+
     params = {
         "workflow_id": workflow_id,
         "org_id": request.state.current_user.get("org_id", None),
@@ -255,13 +270,8 @@ async def get_all_runs(
         EXTRACT(EPOCH FROM (r.started_at - r.created_at)) as cold_start_duration_total,
         EXTRACT(EPOCH FROM (r.ended_at - r.started_at)) as run_duration
     FROM comfyui_deploy.workflow_runs r
-    INNER JOIN comfyui_deploy.workflows w ON w.id = r.workflow_id
     WHERE r.workflow_id = :workflow_id
-    AND w.deleted = false
-    AND (
-        (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
-        OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
-    )"""
+    """
 
     if status:
         query += " AND r.status = :status"

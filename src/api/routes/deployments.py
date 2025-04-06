@@ -654,7 +654,7 @@ async def _deactivate_deployment_internal(
                 )
                 return None
         
-        return None
+        return True
 
     except Exception as e:
         logger.error(f"Error in internal deactivation for deployment {deployment.id}: {e}")
@@ -753,7 +753,7 @@ async def delete_deployment(
                 detail="Share deployment not found or you can only delete share deployments"
             )
         
-        await deactivate_deployment(request, deployment, db)
+        await deactivate_deployment(request, deployment_id, db)
 
         # Delete the deployment
         await db.delete(deployment)
