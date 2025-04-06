@@ -291,32 +291,33 @@ async def create_deployment(
         await db.commit()
         await db.refresh(deployment)
 
-        if isPublicShare and share_link and generated_slug:
-            if isUpdate:
-                # This is an existing deployment being updated
-                if previous_share_slug is None:
-                    # Case 1: Deployment wasn't previously public, create new dub link
-                    await create_dub_link(share_link, generated_slug)
-                elif previous_share_slug != generated_slug:
-                    # Case 2: Share slug changed, need to update existing dub link
-                    current_dub_link = await get_dub_link(previous_share_slug)
-                    if current_dub_link:
-                        # Update existing dub link
-                        await update_dub_link(
-                            current_dub_link.id, share_link, generated_slug
-                        )
-                    else:
-                        # Dub link doesn't exist (edge case), create new one
-                        await create_dub_link(share_link, generated_slug)
-                else:
-                    # Case 3: Share slug hasn't changed, verify dub link exists
-                    current_dub_link = await get_dub_link(previous_share_slug)
-                    if not current_dub_link:
-                        # Dub link missing but should exist, create it
-                        await create_dub_link(share_link, generated_slug)
-            else:
-                # Case 4: New deployment, create new dub link
-                await create_dub_link(share_link, generated_slug)
+        # Skip dub link creation for now
+        # if isPublicShare and share_link and generated_slug:
+        #     if isUpdate:
+        #         # This is an existing deployment being updated
+        #         if previous_share_slug is None:
+        #             # Case 1: Deployment wasn't previously public, create new dub link
+        #             await create_dub_link(share_link, generated_slug)
+        #         elif previous_share_slug != generated_slug:
+        #             # Case 2: Share slug changed, need to update existing dub link
+        #             current_dub_link = await get_dub_link(previous_share_slug)
+        #             if current_dub_link:
+        #                 # Update existing dub link
+        #                 await update_dub_link(
+        #                     current_dub_link.id, share_link, generated_slug
+        #                 )
+        #             else:
+        #                 # Dub link doesn't exist (edge case), create new one
+        #                 await create_dub_link(share_link, generated_slug)
+        #         else:
+        #             # Case 3: Share slug hasn't changed, verify dub link exists
+        #             current_dub_link = await get_dub_link(previous_share_slug)
+        #             if not current_dub_link:
+        #                 # Dub link missing but should exist, create it
+        #                 await create_dub_link(share_link, generated_slug)
+        #     else:
+        #         # Case 4: New deployment, create new dub link
+        #         await create_dub_link(share_link, generated_slug)
 
         # Convert to dict
         deployment_dict = deployment.to_dict()

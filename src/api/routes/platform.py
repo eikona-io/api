@@ -1485,12 +1485,12 @@ async def get_usage_details(
         )
         
     # Filter out public share workflows
-    conditions.append(
-        or_(
-            GPUEvent.environment != "public-share",
-            GPUEvent.environment == None
-        )
-    )
+    # conditions.append(
+    #     or_(
+    #         GPUEvent.environment != "public-share",
+    #         GPUEvent.environment == None
+    #     )
+    # )
 
     # Create the query
     query = (
