@@ -31,6 +31,7 @@ from .platform import slugify
 from .share import create_dub_link, get_dub_link, update_dub_link
 from sqlalchemy import func
 import asyncio
+from nanoid import generate
 
 logger = logging.getLogger(__name__)
 
@@ -291,32 +292,33 @@ async def create_deployment(
         await db.commit()
         await db.refresh(deployment)
 
-        if isPublicShare and share_link and generated_slug:
-            if isUpdate:
-                # This is an existing deployment being updated
-                if previous_share_slug is None:
-                    # Case 1: Deployment wasn't previously public, create new dub link
-                    await create_dub_link(share_link, generated_slug)
-                elif previous_share_slug != generated_slug:
-                    # Case 2: Share slug changed, need to update existing dub link
-                    current_dub_link = await get_dub_link(previous_share_slug)
-                    if current_dub_link:
-                        # Update existing dub link
-                        await update_dub_link(
-                            current_dub_link.id, share_link, generated_slug
-                        )
-                    else:
-                        # Dub link doesn't exist (edge case), create new one
-                        await create_dub_link(share_link, generated_slug)
-                else:
-                    # Case 3: Share slug hasn't changed, verify dub link exists
-                    current_dub_link = await get_dub_link(previous_share_slug)
-                    if not current_dub_link:
-                        # Dub link missing but should exist, create it
-                        await create_dub_link(share_link, generated_slug)
-            else:
-                # Case 4: New deployment, create new dub link
-                await create_dub_link(share_link, generated_slug)
+        # Skip dub link creation for now
+        # if isPublicShare and share_link and generated_slug:
+        #     if isUpdate:
+        #         # This is an existing deployment being updated
+        #         if previous_share_slug is None:
+        #             # Case 1: Deployment wasn't previously public, create new dub link
+        #             await create_dub_link(share_link, generated_slug)
+        #         elif previous_share_slug != generated_slug:
+        #             # Case 2: Share slug changed, need to update existing dub link
+        #             current_dub_link = await get_dub_link(previous_share_slug)
+        #             if current_dub_link:
+        #                 # Update existing dub link
+        #                 await update_dub_link(
+        #                     current_dub_link.id, share_link, generated_slug
+        #                 )
+        #             else:
+        #                 # Dub link doesn't exist (edge case), create new one
+        #                 await create_dub_link(share_link, generated_slug)
+        #         else:
+        #             # Case 3: Share slug hasn't changed, verify dub link exists
+        #             current_dub_link = await get_dub_link(previous_share_slug)
+        #             if not current_dub_link:
+        #                 # Dub link missing but should exist, create it
+        #                 await create_dub_link(share_link, generated_slug)
+        #     else:
+        #         # Case 4: New deployment, create new dub link
+        #         await create_dub_link(share_link, generated_slug)
 
         # Convert to dict
         deployment_dict = deployment.to_dict()
@@ -488,7 +490,7 @@ async def get_share_deployment(
     slug: str,
     db: AsyncSession = Depends(get_db),
 ) -> DeploymentShareModel:
-    slug = f"{username}_{slug}".lower()
+    slug = f"{username}_{slug}"
 
     deployment_query = (
         select(Deployment)
@@ -717,4 +719,48 @@ async def get_deployment(
 
     except Exception as e:
         logger.error(f"Error getting deployment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.delete(
+    "/deployment/{deployment_id}",
+    openapi_extra={
+        "x-speakeasy-name-override": "delete",
+    },
+)
+async def delete_deployment(
+    request: Request,
+    deployment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        # Query deployment with environment check
+        deployment_query = (
+            select(Deployment)
+            .where(
+                Deployment.id == deployment_id,
+                Deployment.environment.in_(["public-share", "private-share"]) 
+            )
+            .apply_org_check(request)
+        )
+
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+
+        if not deployment:
+            raise HTTPException(
+                status_code=404, 
+                detail="Share deployment not found or you can only delete share deployments"
+            )
+        
+        await deactivate_deployment(request, deployment, db)
+
+        # Delete the deployment
+        await db.delete(deployment)
+        await db.commit()
+
+        return {"message": "Share deployment deleted successfully"}
+
+    except Exception as e:
+        logger.error(f"Error deleting deployment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")

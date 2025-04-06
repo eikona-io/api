@@ -33,7 +33,6 @@ from api.routes import (
     search,
     form,
     admin,
-    ai
 )
 from api.modal import builder
 from api.models import APIKey
@@ -128,7 +127,6 @@ api_router.include_router(platform.router)
 api_router.include_router(search.router)
 api_router.include_router(form.router)
 api_router.include_router(admin.router)  # Add the admin router to internal API
-api_router.include_router(ai.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)

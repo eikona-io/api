@@ -3,6 +3,7 @@ from api.utils.autumn import get_autumn_customer
 # from api.middleware.subscriptionMiddleware import get_customer_plan_cached, get_customer_plan_cached_5_seconds
 from api.utils.multi_level_cache import multi_level_cached
 import logfire
+from nanoid import generate
 from pydantic import BaseModel
 from api.database import get_db
 from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent, UserSettings
@@ -997,18 +998,21 @@ async def get_clerk_org(org_id: str) -> dict:
                 detail=f"Failed to fetch org data from Clerk: {await response.text()}",
             )
 
-async def slugify(workflow_name: str, current_user_id: str) -> str:
-    slug_part = re.sub(
-        r'[-\s]+',                                # Replace spaces or multiple dashes with single dash
-        '-',
-        re.sub(
-            r'[^\w\s-]',                          # Remove special chars
-            '',
-            unicodedata.normalize('NFKD', workflow_name)    # Normalize Unicode
-            .encode('ascii', 'ignore')             # Remove non-ascii
-            .decode('ascii')                       # Convert back to string
-        ).strip().lower()
-    ).strip('-')                                  # Remove leading/trailing dashes
+async def slugify(workflow_name: str, current_user_id: str, from_nanoid: bool = True) -> str:
+    if from_nanoid:
+        slug_part = generate(size=16)
+    else:
+        slug_part = re.sub(
+                r'[-\s]+',                                # Replace spaces or multiple dashes with single dash
+                '-',
+                re.sub(
+                r'[^\w\s-]',                          # Remove special chars
+                '',
+                unicodedata.normalize('NFKD', workflow_name)    # Normalize Unicode
+                .encode('ascii', 'ignore')             # Remove non-ascii
+                .decode('ascii')                       # Convert back to string
+            ).strip().lower()
+        ).strip('-')                                  # Remove leading/trailing dashes
 
     user_part = None
     prefix, _, _ = current_user_id.partition("_")
@@ -1485,12 +1489,12 @@ async def get_usage_details(
         )
         
     # Filter out public share workflows
-    conditions.append(
-        or_(
-            GPUEvent.environment != "public-share",
-            GPUEvent.environment == None
-        )
-    )
+    # conditions.append(
+    #     or_(
+    #         GPUEvent.environment != "public-share",
+    #         GPUEvent.environment == None
+    #     )
+    # )
 
     # Create the query
     query = (

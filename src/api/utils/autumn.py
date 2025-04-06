@@ -30,9 +30,9 @@ async def send_autumn_usage_event(
     if not autumn_api_key:
         return False
     
-    if (environment == "public-share"):
-        # Ignoring public-share events
-        return True
+    # if (environment == "public-share"):
+    #     # Ignoring public-share events
+    #     return True
            
     try:
         # Calculate duration in seconds
