@@ -40,8 +40,6 @@ dependencies = [
     "discord-py>=2.4.0",
     "dub==0.18.2",
     "logtail-python>=0.3.3",
-    "pydantic-ai[logfire]>=0.0.30",
-    "upstash-vector>=0.8.0",
 ]
 
 [build-system]
