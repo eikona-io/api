@@ -1000,7 +1000,8 @@ async def get_clerk_org(org_id: str) -> dict:
 
 async def slugify(workflow_name: str, current_user_id: str, from_nanoid: bool = True) -> str:
     if from_nanoid:
-        slug_part = generate(size=16)
+        # Use only alphanumeric characters (no underscores)
+        slug_part = generate(size=16, alphabet='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz')
     else:
         slug_part = re.sub(
                 r'[-\s]+',                                # Replace spaces or multiple dashes with single dash
