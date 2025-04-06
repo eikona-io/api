@@ -31,6 +31,7 @@ from .platform import slugify
 from .share import create_dub_link, get_dub_link, update_dub_link
 from sqlalchemy import func
 import asyncio
+from nanoid import generate
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +490,7 @@ async def get_share_deployment(
     slug: str,
     db: AsyncSession = Depends(get_db),
 ) -> DeploymentShareModel:
-    slug = f"{username}_{slug}".lower()
+    slug = f"{username}_{slug}"
 
     deployment_query = (
         select(Deployment)
@@ -752,7 +753,7 @@ async def delete_deployment(
                 detail="Share deployment not found or you can only delete share deployments"
             )
         
-        deactivate_deployment(request, deployment, db)
+        await deactivate_deployment(request, deployment, db)
 
         # Delete the deployment
         await db.delete(deployment)
