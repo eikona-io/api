@@ -719,3 +719,47 @@ async def get_deployment(
     except Exception as e:
         logger.error(f"Error getting deployment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.delete(
+    "/deployment/{deployment_id}",
+    openapi_extra={
+        "x-speakeasy-name-override": "delete",
+    },
+)
+async def delete_deployment(
+    request: Request,
+    deployment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        # Query deployment with environment check
+        deployment_query = (
+            select(Deployment)
+            .where(
+                Deployment.id == deployment_id,
+                Deployment.environment.in_(["public-share", "private-share"]) 
+            )
+            .apply_org_check(request)
+        )
+
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+
+        if not deployment:
+            raise HTTPException(
+                status_code=404, 
+                detail="Share deployment not found or you can only delete share deployments"
+            )
+        
+        deactivate_deployment(request, deployment, db)
+
+        # Delete the deployment
+        await db.delete(deployment)
+        await db.commit()
+
+        return {"message": "Share deployment deleted successfully"}
+
+    except Exception as e:
+        logger.error(f"Error deleting deployment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
