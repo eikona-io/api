@@ -262,7 +262,7 @@ async def create_deployment(
         if existing_deployment:
             # Update existing deployment
             if deployment_data.environment == "public-share":
-                existing_deployment.share_slug = generated_slug
+                existing_deployment.share_slug = previous_share_slug
             else:
                 existing_deployment.share_slug = None
             existing_deployment.workflow_version_id = (
