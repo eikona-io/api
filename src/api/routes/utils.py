@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from http.client import HTTPException
 from upstash_redis.asyncio import Redis
 import logging
 from typing import Any, Literal, Self, TypeVar, Tuple, Union
@@ -23,7 +22,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from urllib.parse import urlparse, unquote
 import asyncio
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.responses import JSONResponse
 import httpx
 from functools import lru_cache, wraps
