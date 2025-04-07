@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from http.client import HTTPException
 from upstash_redis.asyncio import Redis
 import logging
 from typing import Any, Literal, Self, TypeVar, Tuple, Union
@@ -23,7 +22,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from urllib.parse import urlparse, unquote
 import asyncio
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 from fastapi.responses import JSONResponse
 import httpx
 from functools import lru_cache, wraps
@@ -221,6 +220,22 @@ class OrgAwareSelect(Select[Tuple[T]]):
 
     def paginate(self, limit: int, offset: int) -> Self:
         return self.limit(limit).offset(offset)
+    
+
+def apply_org_check_direct(object, request: Request):
+    user_id = request.state.current_user["user_id"]
+    org_id = request.state.current_user.get("org_id", None)
+
+    if org_id is not None:
+        if object.org_id == org_id:
+            pass
+        else:
+            raise HTTPException(status_code=403, detail="You are not authorized to access this resource")
+    else:
+        if object.user_id == user_id:
+            pass
+        else:
+            raise HTTPException(status_code=403, detail="You are not authorized to access this resource")
 
 
 def select(__ent0: _ColumnsClauseArgument[T], /, *entities: Any) -> OrgAwareSelect[T]:
