@@ -221,6 +221,22 @@ class OrgAwareSelect(Select[Tuple[T]]):
 
     def paginate(self, limit: int, offset: int) -> Self:
         return self.limit(limit).offset(offset)
+    
+
+def apply_org_check_direct(object, request: Request):
+    user_id = request.state.current_user["user_id"]
+    org_id = request.state.current_user.get("org_id", None)
+
+    if org_id is not None:
+        if object.org_id == org_id:
+            pass
+        else:
+            raise HTTPException(status_code=403, detail="You are not authorized to access this resource")
+    else:
+        if object.user_id == user_id:
+            pass
+        else:
+            raise HTTPException(status_code=403, detail="You are not authorized to access this resource")
 
 
 def select(__ent0: _ColumnsClauseArgument[T], /, *entities: Any) -> OrgAwareSelect[T]:

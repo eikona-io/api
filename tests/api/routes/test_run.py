@@ -140,6 +140,39 @@ async def paid_user():
         db.add(user)
     yield user
 
+@pytest_asyncio.fixture(scope="session")
+async def paid_user_2():
+    user_id = str(uuid4())
+
+    redis = Redis(url=redis_url, token=redis_token)
+    data = {
+        "data": {
+            "plans": ["business_monthly"],
+            "names": [],
+            "prices": [],
+            "amount": [],
+            "charges": [],
+            "cancel_at_period_end": False,
+            "canceled_at": None,
+            "payment_issue": False,
+            "payment_issue_reason": "",
+        },
+        "version": "1.0",
+        "timestamp": int(datetime.now().timestamp()),
+    }
+    redis.set(f"plan:{user_id}", json.dumps(data))
+    print("redis set", redis.get(f"plan:{user_id}"))
+
+    async with get_db_context() as db:
+        user = User(
+            id=user_id,
+            username="business_user",
+            name="Business User",
+        )
+        db.add(user)
+    yield user
+
+
 
 @pytest_asyncio.fixture(scope="session")
 async def free_user():
@@ -680,6 +713,44 @@ async def test_create_workflow_deployment(app, paid_user, test_serverless_machin
 
         yield deployment_id
 
+@pytest_asyncio.fixture(scope="session")
+async def test_create_workflow_deployment_public(app, paid_user, test_serverless_machine):
+    """Test creating a workflow and deployment"""
+    async with get_test_client(app, paid_user) as client:
+        workflow_data = {
+            "name": "test-workflow-public",
+            "workflow_json": basic_workflow_json,
+            "workflow_api": basic_workflow_api_json,
+            "machine_id": test_serverless_machine,
+        }
+        response = await client.post("/workflow", json=workflow_data)
+        assert response.status_code == 200, (
+            f"Workflow creation failed with response: {response.text}"
+        )
+        workflow_id = response.json()["workflow_id"]
+
+        response = await client.get(f"/workflow/{workflow_id}/versions")
+        assert response.status_code == 200, (
+            f"Getting workflow versions failed with response: {response.text}"
+        )
+        workflow_version_id = response.json()[0]["id"]
+
+        deployment_data = {
+            "workflow_id": workflow_id,
+            "workflow_version_id": workflow_version_id,
+            "machine_id": test_serverless_machine,
+            "environment": "public-share",
+        }
+        print(f"Deployment data: {deployment_data}")
+        response = await client.post("/deployment", json=deployment_data)
+        if response.status_code != 200:
+            print(f"Deployment creation failed with status {response.status_code}")
+            print(f"Response body: {response.text}")
+            raise AssertionError(f"Deployment creation failed: {response.text}")
+        deployment_id = response.json()["id"]
+
+        yield deployment_id
+
 
 @pytest.mark.asyncio
 async def test_run_deployment_sync(app, paid_user, test_create_workflow_deployment):
@@ -693,6 +764,49 @@ async def test_run_deployment_sync(app, paid_user, test_create_workflow_deployme
         run_id = response.json()[0]["run_id"]
         assert run_id is not None
 
+# Running a shared run as a different free user
+@pytest_asyncio.fixture(scope="session")
+async def test_run_deployment_sync_public(app, test_free_user, test_create_workflow_deployment_public):
+    """Test running a deployment"""
+    async with get_test_client(app, test_free_user) as client:
+        deployment_id = test_create_workflow_deployment_public
+        response = await client.post(
+            "/run/deployment/sync", json={"deployment_id": deployment_id}
+        )
+        assert response.status_code == 200
+        run_id = response.json()[0]["run_id"]
+        assert run_id is not None
+        yield run_id
+
+@pytest.mark.asyncio
+async def test_get_shared_public_run_free_user(app, test_free_user, test_run_deployment_sync_public):
+    """Test running a deployment"""
+    async with get_test_client(app, test_free_user) as client:
+        run_id = test_run_deployment_sync_public
+        response = await client.get(
+            "/run/" + run_id
+        )
+        assert response.status_code == 200
+
+@pytest.mark.asyncio
+async def test_get_shared_public_run_paid_user(app, paid_user, test_run_deployment_sync_public):
+    """Test running a deployment"""
+    async with get_test_client(app, paid_user) as client:
+        run_id = test_run_deployment_sync_public
+        response = await client.get(
+            "/run/" + run_id
+        )
+        assert response.status_code == 200
+
+@pytest.mark.asyncio
+async def test_get_shared_public_run_paid_user_2(app, paid_user_2, test_run_deployment_sync_public):
+    """Test running a deployment"""
+    async with get_test_client(app, paid_user_2) as client:
+        run_id = test_run_deployment_sync_public
+        response = await client.get(
+            "/run/" + run_id
+        )
+        assert response.status_code == 403
 
 @asynccontextmanager
 async def create_webhook_server():
