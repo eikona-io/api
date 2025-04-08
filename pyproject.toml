@@ -40,6 +40,7 @@ dependencies = [
     "discord-py>=2.4.0",
     "dub==0.18.2",
     "logtail-python>=0.3.3",
+    "nanoid>=2.0.0",
 ]
 
 [build-system]

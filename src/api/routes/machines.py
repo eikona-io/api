@@ -78,6 +78,7 @@ async def get_machines(
     is_docker: bool = False,
     is_workspace: bool = False,
     is_self_hosted: bool = False,
+    include_docker_command_steps: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
     # Build the SQL query
@@ -101,6 +102,11 @@ async def get_machines(
         m.machine_version_id,
         m.is_workspace,
     """
+
+    if include_docker_command_steps:
+        sql += """
+        m.docker_command_steps,
+        """
 
     # Add workflow check if needed
     if include_has_workflows:
@@ -289,7 +295,8 @@ async def get_machine(
         m.extra_args,
         m.prestart_command,
         m.install_custom_node_with_gpu,
-        m.optimized_runner
+        m.optimized_runner,
+        m.disable_metadata
     FROM "comfyui_deploy"."machines" m
     WHERE m.id = :machine_id
     AND m.deleted = FALSE
@@ -390,6 +397,8 @@ class ServerlessMachineModel(BaseModel):
     prestart_command: Optional[str] = None
     keep_warm: Optional[int] = 0
     wait_for_build: Optional[bool] = False
+    optimized_runner: Optional[bool] = None
+    disable_metadata: Optional[bool] = None
 
 
 class UpdateServerlessMachineModel(BaseModel):
@@ -411,6 +420,7 @@ class UpdateServerlessMachineModel(BaseModel):
     keep_warm: Optional[int] = None
     is_trigger_rebuild: Optional[bool] = False
     optimized_runner: Optional[bool] = None
+    disable_metadata: Optional[bool] = None
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
@@ -614,6 +624,7 @@ async def create_serverless_machine(
         extra_args=machine.extra_args,
         machine_version_id=str(machine.machine_version_id),
         machine_hash=docker_commands_hash,
+        disable_metadata=machine.disable_metadata,
     )
 
     if wait_for_build:
@@ -1072,6 +1083,7 @@ async def update_serverless_machine(
                 modal_image_id=machine_version.modal_image_id
                 if machine_version
                 else None,
+                disable_metadata=machine.disable_metadata,
             )
             background_tasks.add_task(build_logic, params)
 
@@ -1132,6 +1144,7 @@ async def redeploy_machine(
         extra_args=machine.extra_args,
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
+        disable_metadata=machine.disable_metadata,
     )
     print("params", params)
     if background_tasks:
@@ -1187,6 +1200,7 @@ async def redeploy_machine_internal(
         extra_args=machine.extra_args,
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
+        disable_metadata=machine.disable_metadata,
     )
     await build_logic(params)
 
@@ -1239,6 +1253,7 @@ async def redeploy_machine_deployment_internal(
         machine_hash=machine_version.machine_hash,
         is_deployment=True,
         environment=deployment.environment,
+        disable_metadata=deployment.disable_metadata,
     )
     await build_logic(params)
 

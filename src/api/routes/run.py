@@ -34,6 +34,7 @@ from fastapi import BackgroundTasks
 import fal_client
 from .internal import insert_to_clickhouse
 from .utils import (
+    apply_org_check_direct,
     clean_up_outputs,
     ensure_run_timeout,
     execute_with_org_check,
@@ -104,11 +105,15 @@ async def run_update(
 )
 @router.get("/run", response_model=WorkflowRunModel, include_in_schema=False)
 async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get_db)):
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user.get("org_id", None)
+
     query = (
         select(WorkflowRunWithExtra)
         .options(joinedload(WorkflowRun.outputs))
         .where(WorkflowRun.id == run_id)
-        .apply_org_check(request)
+        # .apply_org_check(request)
     )
 
     result = await db.execute(query)
@@ -116,6 +121,23 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
 
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    
+    deployment = None
+    if run.deployment_id is not None:
+        deployment = await db.execute(select(Deployment).where(Deployment.id == run.deployment_id))
+        deployment = deployment.unique().scalar_one_or_none()
+
+    # Permission check
+    if deployment is not None and deployment.environment == "public-share":
+        # Public share, no permission check
+        if run.user_id == user_id:
+            pass
+        elif org_id is not None and run.org_id == org_id:
+            pass
+        else:
+            apply_org_check_direct(deployment, request)
+    else:
+        apply_org_check_direct(run, request)
 
     run = cast(WorkflowRun, run)
 

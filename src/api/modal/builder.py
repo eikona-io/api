@@ -169,6 +169,7 @@ class BuildMachineItem(BaseModel):
     modal_image_id: Optional[str] = None
     is_deployment: Optional[bool] = False
     environment: Optional[str] = None
+    disable_metadata: Optional[bool] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -615,6 +616,7 @@ async def build_logic(item: BuildMachineItem):
             "machine_hash": item.machine_hash,
             "modal_image_id": item.modal_image_id,
             "environment": item.environment,
+            "disable_metadata": "True" if item.disable_metadata else "False",
         }
 
         # print("config: ", config)

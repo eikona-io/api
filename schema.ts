@@ -418,6 +418,7 @@ const machineColumns = () => ({
     base_docker_image: text("base_docker_image"),
     python_version: text("python_version"),
     extra_args: text("extra_args"),
+    disable_metadata: boolean("disable_metadata").default(true),
     prestart_command: text("prestart_command"),
     keep_warm: integer("keep_warm").default(0).notNull(),
 

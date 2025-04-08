@@ -1,0 +1,2 @@
+ALTER TABLE "comfyui_deploy"."machine_versions" ADD COLUMN "disable_metadata" boolean DEFAULT true;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "disable_metadata" boolean DEFAULT true;

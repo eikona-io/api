@@ -408,24 +408,22 @@ async def move_file(request: Request, body: MoveFileBody, db: AsyncSession = Dep
     }
 
 
-# TODO: currently only removes files, not folders
-@router.post("/volume/rm", include_in_schema=False)
-async def remove_file_old(request: Request, body: RemovePath, db: AsyncSession = Depends(get_db)):
+@router.post("/volume/rm")
+async def remove_file(request: Request, body: RemovePath, db: AsyncSession = Depends(get_db)):
     volume_name = await get_volume_name(request, db)
     try:
         volume = Volume.from_name(volume_name)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    is_valid, error_message = await validate_file_path_aio(body.path, volume)
+    is_valid, error_message = await validate_path_aio(body.path, volume)
     if not is_valid:
         if "not found" in error_message:
             raise HTTPException(status_code=404, detail=error_message)
         else:
             raise HTTPException(status_code=400, detail=error_message)
 
-    # TODO: when handling folders, can use 'recursive option'
-    volume.remove_file(body.path)
+    volume.remove_file(body.path, recursive=True)
     return {"deleted_path": body.path}
 
 
@@ -745,6 +743,15 @@ async def does_file_exist(path: str, volume: Volume) -> bool:
         else:
             raise e
 
+async def validate_path_aio(path: str, volume: Volume):
+    try:
+        await volume.listdir.aio(path)
+        return True, None
+    except grpclib.exceptions.GRPCError as e:
+        if e.status == grpclib.Status.NOT_FOUND:
+            return False, f"path: {path} not found."
+        else:
+            return False, str(e)
 
 async def validate_file_path_aio(path: str, volume: Volume):
     try:
@@ -1423,3 +1430,69 @@ async def get_volume_name_route(request: Request, db: AsyncSession = Depends(get
         logger.error(f"Error getting volume name: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class MoveFileRequest(BaseModel):
+    source_path: str
+    destination_path: str
+    overwrite: bool = False
+
+@router.post("/volume/move", response_model=Dict[str, str])
+async def move_file(
+    request: Request, 
+    body: MoveFileRequest, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Move a file or directory from one location to another within a volume.
+    
+    Args:
+        source_path: The path to the file or directory to be moved
+        destination_path: The destination path where the file or directory will be moved to
+        overwrite: Whether to overwrite existing files at the destination (default: False)
+    
+    Returns:
+        A dictionary containing the old and new paths
+    """
+    source_path = body.source_path
+    destination_path = body.destination_path
+    volume_name = await get_volume_name(request, db)
+
+    try:
+        volume = await lookup_volume(volume_name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Check source_path exists
+    is_valid, error_message = await validate_file_path_aio(source_path, volume)
+    if not is_valid:
+        if "not found" in error_message:
+            raise HTTPException(status_code=404, detail=error_message)
+        else:
+            raise HTTPException(status_code=400, detail=error_message)
+
+    # Check if destination path exists and if we can overwrite it
+    try:
+        dst_contents = await volume.listdir.aio(destination_path)
+        if dst_contents and not body.overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail="Destination already exists and overwrite is not enabled.",
+            )
+    except grpclib.exceptions.GRPCError as e:
+        # NOT_FOUND is expected and means we can proceed
+        if e.status != grpclib.Status.NOT_FOUND:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # Perform the move operation (copy + delete)
+    try:
+        await volume.copy_files.aio([source_path], destination_path)
+        await volume.remove_file.aio(source_path, recursive=True)
+
+        return {
+            "old_path": source_path,
+            "new_path": destination_path,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error moving file: {str(e)}"
+        )

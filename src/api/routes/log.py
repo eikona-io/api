@@ -275,7 +275,7 @@ async def stream_progress(
                             select(WorkflowRunWithExtra)
                             .options(joinedload(WorkflowRun.outputs))
                             .where(WorkflowRun.id == run_id)
-                            .apply_org_check(request)
+                            # .apply_org_check(request)
                         )
 
                         if status:
