@@ -778,9 +778,9 @@ async def execute_with_org_check(
 class SecretManager:
     def __init__(self, master_key=None):
         if master_key is None:
-            master_key = os.environ.get('ENCRYPTION_KEY')
+            master_key = os.environ.get('SECRET_ENCRYPTION_KEY')
             if not master_key:
-                raise ValueError("ENCRYPTION_KEY environment variable is not set")
+                raise ValueError("SECRET_ENCRYPTION_KEY environment variable is not set")
         
         if isinstance(master_key, str):
             master_key = master_key.encode('utf-8')
