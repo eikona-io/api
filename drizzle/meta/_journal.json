@@ -1324,6 +1324,13 @@
       "when": 1743764547586,
       "tag": "0188_redundant_black_crow",
       "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1744098632735,
+      "tag": "0189_wet_red_ghost",
+      "breakpoints": true
     }
   ]
 }
