@@ -690,6 +690,15 @@ async def create_secret(
             db.add(secret)
             await db.flush()
             
+            existing_machine_secrets_query = await db.execute(
+                select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+            )
+            existing_machine_secrets = existing_machine_secrets_query.scalars().all()
+
+            
+            for existing_secret in existing_machine_secrets:
+                await db.delete(existing_secret)
+            
             machine_secret = MachineSecret(
                 id=uuid.uuid4(),
                 machine_id=machine_id,
@@ -701,6 +710,7 @@ async def create_secret(
             
             return secret
         except ValueError as e:
+            await db.rollback()
             raise HTTPException(
                 status_code=500,
                 detail=str(e)
@@ -720,7 +730,7 @@ async def update_machine_with_secret(
     try:
         machine_id = request_body.machine_id
         secret_id = request_body.secret_id
-        new_machine_secret_id = uuid.uuid4()
+
         machine_query = await db.execute(
             select(Machine).where(Machine.id == machine_id)
         )
@@ -741,8 +751,33 @@ async def update_machine_with_secret(
                 detail="Secret doesn't exist!"
             )
         
+        existing_query = await db.execute(
+            select(MachineSecret).where(
+                MachineSecret.machine_id == machine_id,
+                MachineSecret.secret_id == secret_id
+            )
+        )
+        existing = existing_query.scalars().first()
+        
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+            return JSONResponse(
+                status_code=200, 
+                content={"message": "Secret removed from the machine successfully", "status": 200, "is_selected": False}
+            )
+        
+        all_machine_secrets_query = await db.execute(
+            select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+        )
+        all_machine_secrets = all_machine_secrets_query.scalars().all()
+        
+        for machine_secret in all_machine_secrets:
+            await db.delete(machine_secret)
+        
         secret.updated_at = func.now()
         
+        new_machine_secret_id = uuid.uuid4()
         machine_secret = MachineSecret(
            id=new_machine_secret_id,
            machine_id=machine_id,
@@ -753,9 +788,14 @@ async def update_machine_with_secret(
         db.add(machine_secret)
         await db.commit()
         
-        return JSONResponse(content={"message": "Secret added to machine successfully"})
+        return JSONResponse(
+            status_code=200, 
+            content={"message": "Secret added to machine successfully", "status": 200, "is_selected": True}
+        )
     except Exception as e:
+        await db.rollback()
         raise e
+
 
 class SecretUpdateInput(BaseModel):
     secret: List[SecretKeyValue]
@@ -859,6 +899,83 @@ async def get_all_secrets(
                 status_code=500,
                 detail=str(e)
             )
+
+
+@router.get("/machine/{machine_id}/secrets")
+async def get_all_machine_secrets(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        machine_query = await db.execute(
+            # select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+            select(Machine).where(Machine.id == machine_id)
+        )
+        machine = machine_query.scalars().first()
+        if not machine:
+            raise HTTPException(
+                status_code=404,
+                detail="Machine not found"
+            )
+        
+        machine_secrets_query = await db.execute(
+            select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+        )
+        machine_secrets = machine_secrets_query.scalars().all()
+        
+        secret_ids = [ms.secret_id for ms in machine_secrets]
+        
+        if not secret_ids:
+            return JSONResponse(content=[])
+        
+        query = select(Secret).where(Secret.id.in_(secret_ids))
+        # query = select(Secret).where(Secret.id.in_(secret_ids)).apply_org_check(request)
+        result = await db.execute(query)
+        secrets = result.scalars().all()
+        
+        secret_manager = SecretManager()
+        
+        secrets_response = []
+        for secret in secrets:
+            secret_dict = secret.to_dict() if hasattr(secret, 'to_dict') else {
+                "id": str(secret.id),
+                "name": secret.name,
+                "user_id": str(secret.user_id),
+                "org_id": str(secret.org_id) if secret.org_id else None,
+                "created_at": secret.created_at.isoformat() if hasattr(secret.created_at, 'isoformat') else str(secret.created_at),
+                "updated_at": secret.updated_at.isoformat() if hasattr(secret.updated_at, 'isoformat') else str(secret.updated_at)
+            }
+            
+            if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                decrypted_env_vars = []
+                for env_var in secret.environment_variables:
+                    decrypted_env_var = {
+                        "key": env_var["key"],
+                        "value": secret_manager.decrypt_value(env_var["encrypted_value"])
+                    }
+                    decrypted_env_vars.append(decrypted_env_var)
+                
+                secret_dict["environment_variables"] = decrypted_env_vars
+            else:
+                secret_dict["environment_variables"] = []
+            
+            associated_machines_query = await db.execute(
+                select(MachineSecret).where(MachineSecret.secret_id == secret.id)
+            )
+            associated_machines = associated_machines_query.scalars().all()
+            secret_dict["machines"] = [str(ms.machine_id) for ms in associated_machines]
+                
+            secrets_response.append(secret_dict)
+        
+        return JSONResponse(content=secrets_response)
+        
+    except Exception as e:
+        logger.error(f"Error getting machine secrets: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 @router.delete("/machine/secret/{secret_id}")
