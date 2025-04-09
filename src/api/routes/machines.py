@@ -581,6 +581,8 @@ async def create_serverless_machine(
     # docker_commands = generate_all_docker_commands(machine)
     machine_token = generate_persistent_token(user_id, org_id)
 
+    secrets = await get_machine_secrets(db=db, machine_id=machine.id)
+
     if machine.machine_hash is not None:
         existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
         try:
@@ -625,6 +627,7 @@ async def create_serverless_machine(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=docker_commands_hash,
         disable_metadata=machine.disable_metadata,
+        secrets=secrets,  # Add the decrypted secrets to the build parameters
     )
 
     if wait_for_build:
@@ -633,7 +636,6 @@ async def create_serverless_machine(
         background_tasks.add_task(build_logic, params)
 
     return JSONResponse(content=machine.to_dict())
-
 
 class SecretKeyValue(BaseModel):
     key: str
@@ -1227,6 +1229,8 @@ async def update_serverless_machine(
             volumes = await retrieve_model_volumes(request, db)
             docker_commands = generate_all_docker_commands(machine)
             machine_token = generate_persistent_token(user_id, org_id)
+            secrets = await get_machine_secrets(db=db, machine_id=machine.id)
+
             params = BuildMachineItem(
                 machine_id=str(machine.id),
                 name=str(machine.id),
@@ -1256,6 +1260,7 @@ async def update_serverless_machine(
                 extra_args=machine.extra_args,
                 machine_version_id=str(machine.machine_version_id),
                 machine_hash=docker_commands_hash,
+                secrets=secrets,
                 modal_image_id=machine_version.modal_image_id
                 if machine_version
                 else None,
@@ -1295,6 +1300,8 @@ async def redeploy_machine(
 
     volumes = await retrieve_model_volumes(request, db)
     machine_token = generate_persistent_token(user_id, org_id)
+    secrets = await get_machine_secrets(db=db, machine_id=machine.id)
+    
     params = BuildMachineItem(
         machine_id=str(machine.id),
         name=str(machine.id),
@@ -1321,6 +1328,7 @@ async def redeploy_machine(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
+        secrets=secrets
     )
     print("params", params)
     if background_tasks:
@@ -1338,6 +1346,7 @@ async def redeploy_machine_internal(
         # volumes = await retrieve_model_volumes(request, db)
         volume_name = "models_" + machine.org_id if machine.org_id else machine.user_id
         machine_token = generate_persistent_token(machine.user_id, machine.org_id)
+        secrets = await get_machine_secrets(db=db, machine_id=machine.id)
         machine_version = await db.execute(
             select(MachineVersion).where(
                 MachineVersion.id == machine.machine_version_id
@@ -1377,6 +1386,7 @@ async def redeploy_machine_internal(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
+        secrets=secrets
     )
     await build_logic(params)
 
@@ -1389,6 +1399,7 @@ async def redeploy_machine_deployment_internal(
             "models_" + deployment.org_id if deployment.org_id else deployment.user_id
         )
         machine_token = generate_persistent_token(deployment.user_id, deployment.org_id)
+        secrets = await get_machine_secrets(db=db, machine_id=deployment.machine_id)
         machine_version = await db.execute(
             select(MachineVersion).where(
                 MachineVersion.id == deployment.machine_version_id
@@ -1430,6 +1441,7 @@ async def redeploy_machine_deployment_internal(
         is_deployment=True,
         environment=deployment.environment,
         disable_metadata=deployment.disable_metadata,
+        secrets=secrets
     )
     await build_logic(params)
 
@@ -2115,3 +2127,38 @@ async def update_machine_custom_nodes(
         raise HTTPException(
             status_code=500, detail=f"Failed to update custom nodes: {str(e)}"
         )
+
+async def get_machine_secrets(
+    db: AsyncSession = Depends(get_db),
+    machine_id = UUID,
+):
+        
+    # Get all secrets linked to this machine
+    machine_secrets_query = await db.execute(
+        select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+    )
+    machine_secrets = machine_secrets_query.scalars().all()
+    
+    # Get all secret IDs linked to this machine
+    secret_ids = [ms.secret_id for ms in machine_secrets]
+    
+    # Initialize an empty dictionary to store all decrypted environment variables
+    secrets = {}
+    
+    if secret_ids:
+        # Get all secrets linked to this machine
+        secrets_query = await db.execute(
+            select(Secret).where(Secret.id.in_(secret_ids))
+        )
+        all_secrets = secrets_query.scalars().all()
+        
+        # Decrypt all environment variables and merge them into a single dictionary
+        secret_manager = SecretManager()
+        for secret in all_secrets:
+            if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                for env_var in secret.environment_variables:
+                    key = env_var["key"]
+                    decrypted_value = secret_manager.decrypt_value(env_var["encrypted_value"])
+                    secrets[key] = decrypted_value
+
+    return secrets
