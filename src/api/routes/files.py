@@ -296,21 +296,17 @@ async def list_assets(
     assets = result.scalars().all()
     
     # Get user settings for S3 configuration
-    user_settings = await get_user_settings(request, db)
+    s3_config = await get_s3_config(request, db)
     
     # Generate temporary URLs for private files
-    if user_settings and user_settings.output_visibility == "private":
+    if s3_config and not s3_config.public:
         for asset in assets:
             if asset.url:  # Only for files, not folders
-                region = user_settings.s3_region if user_settings.custom_output_bucket else os.getenv("SPACES_REGION_V2")
-                access_key = user_settings.s3_access_key_id if user_settings.custom_output_bucket else os.getenv("SPACES_KEY_V2")
-                secret_key = user_settings.s3_secret_access_key if user_settings.custom_output_bucket else os.getenv("SPACES_SECRET_V2")
-                
                 asset.url = get_temporary_download_url(
                     asset.url,
-                    region,
-                    access_key,
-                    secret_key,
+                    region=s3_config.region,
+                    access_key=s3_config.access_key,
+                    secret_key=s3_config.secret_key,
                     expiration=3600,
                 )
     
@@ -486,19 +482,15 @@ async def get_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
     
     # Get user settings for S3 configuration
-    user_settings = await get_user_settings(request, db)
-    
+    s3_config = await get_s3_config(request, db)
+
     # Generate temporary URL for private files
-    if user_settings and user_settings.output_visibility == "private" and asset.url:
-        region = user_settings.s3_region if user_settings.custom_output_bucket else os.getenv("SPACES_REGION_V2")
-        access_key = user_settings.s3_access_key_id if user_settings.custom_output_bucket else os.getenv("SPACES_KEY_V2")
-        secret_key = user_settings.s3_secret_access_key if user_settings.custom_output_bucket else os.getenv("SPACES_SECRET_V2")
-        
+    if s3_config and not s3_config.public and asset.url:
         asset.url = get_temporary_download_url(
             asset.url,
-            region,
-            access_key,
-            secret_key,
+            region=s3_config.region,
+            access_key=s3_config.access_key,
+            secret_key=s3_config.secret_key,
             expiration=3600,
         )
     

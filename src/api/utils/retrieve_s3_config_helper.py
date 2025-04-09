@@ -14,6 +14,7 @@ class S3Config(BaseModel):
     region: str
     access_key: str
     secret_key: str
+    is_custom: bool
 
 
 def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
@@ -22,7 +23,8 @@ def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
     region = global_region
     access_key = global_access_key
     secret_key = global_secret_key
-
+    is_custom = False
+    
     if user_settings is not None:
         if user_settings.output_visibility == "private":
             public = False
@@ -32,6 +34,7 @@ def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
             region = user_settings.s3_region
             access_key = user_settings.s3_access_key_id
             secret_key = user_settings.s3_secret_access_key
+            is_custom = True
 
     return S3Config(
         public=public,
@@ -39,4 +42,5 @@ def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
         region=region,
         access_key=access_key,
         secret_key=secret_key,
+        is_custom=is_custom,
     )
