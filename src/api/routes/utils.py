@@ -331,9 +331,8 @@ def guess_output_id(output):
             # Collect all output IDs for this upload type
             output_ids = []
             for output_item in output.data[upload_type]:
-                if output_item.get("is_public") is False:
-                    if "output_id" in output_item:
-                        output_ids.append(output_item["output_id"])
+                if "output_id" in output_item:
+                    output_ids.append(output_item["output_id"])
             
             # If we found output IDs, store them by type
             if output_ids:
