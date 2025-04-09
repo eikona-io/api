@@ -809,7 +809,7 @@ async def test_run_deployment_sync_ensure_output_id(app, paid_user, test_create_
         assert response.status_code == 200
         run_id = response.json()[0]["run_id"]
         assert run_id is not None
-        assert response.json()[0]["outputs"][0]["output_id"] == "my_image"
+        assert response.json()[0]["output_id"] == "my_image"
 
 @pytest.mark.asyncio
 async def test_run_deployment_sync(app, paid_user, test_create_workflow_deployment):
