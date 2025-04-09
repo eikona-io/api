@@ -301,13 +301,13 @@ async def list_assets(
     # Generate temporary URLs for private files
     if user_settings and user_settings.output_visibility == "private":
         for asset in assets:
-            if asset.file_url:  # Only for files, not folders
+            if asset.url:  # Only for files, not folders
                 region = user_settings.s3_region if user_settings.custom_output_bucket else os.getenv("SPACES_REGION_V2")
                 access_key = user_settings.s3_access_key_id if user_settings.custom_output_bucket else os.getenv("SPACES_KEY_V2")
                 secret_key = user_settings.s3_secret_access_key if user_settings.custom_output_bucket else os.getenv("SPACES_SECRET_V2")
                 
-                asset.file_url = get_temporary_download_url(
-                    asset.file_url,
+                asset.url = get_temporary_download_url(
+                    asset.url,
                     region,
                     access_key,
                     secret_key,
