@@ -320,7 +320,7 @@ def guess_output_id(output):
     Returns:
         The first output ID found, or None if no output IDs are found
     """
-    if output.data is None or output.data == []:
+    if output is None or output.data is None or output.data == []:
         return None
         
     # Dictionary to store output IDs by upload type
