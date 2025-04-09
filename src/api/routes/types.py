@@ -92,10 +92,12 @@ class MediaItem(BaseModel):
     is_public: Optional[bool] = None
     subfolder: Optional[str] = None
     upload_duration: Optional[float] = None
+    # output_id: Optional[str] = None
 
 
 class WorkflowRunOutputModel(BaseModel):
     id: UUID
+    output_id: Optional[str] = None # user specified output id
     run_id: UUID
     data: Dict[str, List[Union[MediaItem, str, bool]]]
     node_meta: Optional[Any]
