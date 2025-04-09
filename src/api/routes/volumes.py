@@ -472,7 +472,7 @@ async def handle_file_download(
                     db_model_id,
                     full_path,
                     volume_name,
-                    upload_type,
+                    "huggingface" if "huggingface.co" in download_url else upload_type,
                     hugging_face_token,
                 ):
                     # Update database with the event status

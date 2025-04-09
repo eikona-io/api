@@ -65,6 +65,7 @@ async def modal_download_file_task(
     print(f"full_path: {full_path}")
     print(f"volume_name: {volume_name}")
     print(f"upload_type: {upload_type}")
+    print(f"token exists: {token is not None}")
 
     async def download_url_file(download_url: str, token: Optional[str]):
         # Create a shared state for progress tracking
