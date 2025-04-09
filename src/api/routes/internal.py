@@ -4,6 +4,7 @@ import time
 from urllib.parse import urlparse, quote
 from api.sqlmodels import WorkflowRunStatus
 from api.middleware.auth import parse_jwt
+from api.utils.storage_helper import get_s3_config
 from fastapi import (
     APIRouter,
     Body,
@@ -428,16 +429,20 @@ async def update_run(
                 # Send webhook if no target_events specified or if the event type is in target_events
                 if "run.output" in target_events:
                     workflow_run_data = workflow_run.to_dict()
-                    workflow_run_data["outputs"] = [newOutput.to_dict()]
-                    asyncio.create_task(
-                        send_webhook(
-                            workflow_run=workflow_run_data,
-                            updated_at=updated_at,
-                            run_id=workflow_run.id,
-                            type="run.output",
-                            client=client,
+                    outputs = clean_up_outputs([newOutput])
+                    if len(outputs) > 0:
+                        workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
+                        asyncio.create_task(
+                            send_webhook(
+                                workflow_run=workflow_run_data,
+                                updated_at=updated_at,
+                                run_id=workflow_run.id,
+                                type="run.output",
+                                client=client,
+                            )
                         )
-                    )
+                    else:
+                        logfire.info("No outputs to send", workflow_run_id=workflow_run.id)
             except Exception as e:
                 # Log the error but don't send webhook
                 logging.error(f"Error processing webhook URL parameters: {str(e)}")
@@ -804,35 +809,6 @@ async def cancel_executing_runs(session_id: str):
         await db.commit()
 
 
-# @router.post("/machine-built", include_in_schema=False)
-# async def machine_built(request: Request, data: Any = Body(...)):
-#     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
-#     new_url = f"{legacy_api_url}/api/machine-built"
-
-#     # Get headers from the incoming request
-#     headers = dict(request.headers)
-#     # Remove host header as it will be set by aiohttp
-#     headers.pop("host", None)
-
-#     async with aiohttp.ClientSession() as session:
-#         # Remove any existing encoding headers and set to just gzip
-#         headers["Accept-Encoding"] = "gzip, deflate"
-#         if "content-encoding" in headers:
-#             del headers["content-encoding"]
-
-#         async with session.post(new_url, json=data, headers=headers) as response:
-#             content = await response.read()
-#             return Response(
-#                 content=content,
-#                 status_code=response.status,
-#                 headers={
-#                     k: v
-#                     for k, v in response.headers.items()
-#                     if k.lower() != "content-encoding"
-#                 },
-#             )
-
-
 @router.post("/fal-webhook", include_in_schema=False)
 async def fal_webhook(request: Request, data: Any = Body(...)):
     legacy_api_url = os.getenv("LEGACY_API_URL", "").rstrip("/")
@@ -875,22 +851,9 @@ async def get_file_upload_url(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        user_settings = await get_user_settings(request, db)
-
-        bucket = os.getenv("SPACES_BUCKET_V2")
-        region = os.getenv("SPACES_REGION_V2")
-        access_key = os.getenv("SPACES_KEY_V2")
-        secret_key = os.getenv("SPACES_SECRET_V2")
-
-        if user_settings is not None:
-            if user_settings.output_visibility == "private":
-                public = False
-
-            if user_settings.custom_output_bucket:
-                bucket = user_settings.s3_bucket_name
-                region = user_settings.s3_region
-                access_key = user_settings.s3_access_key_id
-                secret_key = user_settings.s3_secret_access_key
+        s3_config = await get_s3_config(request, db)
+        if not s3_config.public:
+            public = False
 
         # Generate the object key
         object_key = f"outputs/runs/{run_id}/{file_name}"
@@ -898,7 +861,7 @@ async def get_file_upload_url(
         # Encode the object key for use in the URL
         encoded_object_key = quote(object_key)
         # SPACES_ENDPOINT_V2="https://comfy-deploy-output-dev.s3.amazonaws.com"
-        composed_endpoint = f"https://{bucket}.s3.{region}.amazonaws.com"
+        composed_endpoint = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com"
         download_url = f"{composed_endpoint}/{encoded_object_key}"
 
         # Generate pre-signed S3 upload URL
@@ -909,10 +872,10 @@ async def get_file_upload_url(
             size=size,
             content_type=type,
             public=public,
-            bucket=bucket,
-            region=region,
-            access_key=access_key,
-            secret_key=secret_key,
+            bucket=s3_config.bucket,
+            region=s3_config.region,
+            access_key=s3_config.access_key,
+            secret_key=s3_config.secret_key,
         )
 
         # if public:

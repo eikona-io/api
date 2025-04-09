@@ -752,6 +752,65 @@ async def test_create_workflow_deployment_public(app, paid_user, test_serverless
         yield deployment_id
 
 
+basic_workflow_json_output_id = """
+{"extra":{"ds":{"scale":1,"offset":[-134.83461235393543,-31.966476026948783]}},"links":[[14,16,0,18,0,"IMAGE"]],"nodes":[{"id":16,"pos":[337.5181884765625,284.7711486816406],"mode":0,"size":[390.5999755859375,366],"type":"ComfyUIDeployExternalImage","flags":{},"order":0,"inputs":[{"link":null,"name":"default_value","type":"IMAGE","shape":7}],"outputs":[{"name":"image","type":"IMAGE","links":[14],"slot_index":0}],"properties":{"Node name for S&R":"ComfyUIDeployExternalImage"},"widgets_values":["input_image","","","https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/assets/img_bRFqDVG5VG87N29W.png",""]},{"id":18,"pos":[893.0611572265625,382.5367736816406],"mode":0,"size":[327.5999755859375,130],"type":"ComfyDeployOutputImage","flags":{},"order":1,"inputs":[{"link":14,"name":"images","type":"IMAGE"}],"outputs":[],"properties":{"Node name for S&R":"ComfyDeployOutputImage"},"widgets_values":["ComfyUI","webp",80,"my_image"]}],"config":{},"groups":[],"version":0.4,"last_link_id":14,"last_node_id":18}
+"""
+basic_workflow_api_json_output_id = """
+{"16":{"_meta":{"title":"External Image (ComfyUI Deploy)"},"inputs":{"input_id":"input_image","description":"","display_name":"","default_value_url":"https://comfy-deploy-output-dev.s3.us-east-2.amazonaws.com/assets/img_bRFqDVG5VG87N29W.png"},"class_type":"ComfyUIDeployExternalImage"},"18":{"_meta":{"title":"Image Output (ComfyDeploy)"},"inputs":{"images":["16",0],"quality":80,"file_type":"webp","output_id":"my_image","filename_prefix":"ComfyUI"},"class_type":"ComfyDeployOutputImage"}}
+"""
+
+@pytest_asyncio.fixture(scope="session")
+async def test_create_workflow_deployment_output_id(app, paid_user, test_serverless_machine):
+    """Test creating a workflow and deployment"""
+    async with get_test_client(app, paid_user) as client:
+        workflow_data = {
+            "name": "test-workflow-output-id",
+            "workflow_json": basic_workflow_json_output_id,
+            "workflow_api": basic_workflow_api_json_output_id,
+            "machine_id": test_serverless_machine,
+        }
+        response = await client.post("/workflow", json=workflow_data)
+        assert response.status_code == 200, (
+            f"Workflow creation failed with response: {response.text}"
+        )
+        workflow_id = response.json()["workflow_id"]
+
+        response = await client.get(f"/workflow/{workflow_id}/versions")
+        assert response.status_code == 200, (
+            f"Getting workflow versions failed with response: {response.text}"
+        )
+        workflow_version_id = response.json()[0]["id"]
+
+        deployment_data = {
+            "workflow_id": workflow_id,
+            "workflow_version_id": workflow_version_id,
+            "machine_id": test_serverless_machine,
+            "environment": "production",
+        }
+        print(f"Deployment data: {deployment_data}")
+        response = await client.post("/deployment", json=deployment_data)
+        if response.status_code != 200:
+            print(f"Deployment creation failed with status {response.status_code}")
+            print(f"Response body: {response.text}")
+            raise AssertionError(f"Deployment creation failed: {response.text}")
+        deployment_id = response.json()["id"]
+
+        yield deployment_id
+
+
+@pytest.mark.asyncio
+async def test_run_deployment_sync_ensure_output_id(app, paid_user, test_create_workflow_deployment_output_id):
+    """Test running a deployment"""
+    async with get_test_client(app, paid_user) as client:
+        deployment_id = test_create_workflow_deployment_output_id
+        response = await client.post(
+            "/run/deployment/sync", json={"deployment_id": deployment_id}
+        )
+        assert response.status_code == 200
+        run_id = response.json()[0]["run_id"]
+        assert run_id is not None
+        assert response.json()[0]["outputs"][0]["output_id"] == "my_image"
+
 @pytest.mark.asyncio
 async def test_run_deployment_sync(app, paid_user, test_create_workflow_deployment):
     """Test running a deployment"""
