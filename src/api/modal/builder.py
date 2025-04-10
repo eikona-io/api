@@ -170,6 +170,7 @@ class BuildMachineItem(BaseModel):
     is_deployment: Optional[bool] = False
     environment: Optional[str] = None
     disable_metadata: Optional[bool] = None
+    secrets: Optional[Dict] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -617,6 +618,8 @@ async def build_logic(item: BuildMachineItem):
             "modal_image_id": item.modal_image_id,
             "environment": item.environment,
             "disable_metadata": "True" if item.disable_metadata else "False",
+            "secrets": item.secrets
+            # "secret": item.secret pass it as a string
         }
 
         # print("config: ", config)

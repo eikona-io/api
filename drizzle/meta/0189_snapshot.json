@@ -1,6 +1,6 @@
 {
-  "id": "4503fd39-a427-4bcb-ab42-8593a4129300",
-  "prevId": "fb43344c-5df5-4685-b0b3-b0d9c859dcd2",
+  "id": "45a92450-6ef7-472d-80ef-3f2e7de25123",
+  "prevId": "0a523c6a-ae7c-4884-96f1-15390a23a9ed",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1012,6 +1012,114 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "comfyui_deploy.machine_secrets": {
+      "name": "machine_secrets",
+      "schema": "comfyui_deploy",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "machine_id": {
+          "name": "machine_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "secret_id": {
+          "name": "secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "idx_machine_secrets_machine_id": {
+          "name": "idx_machine_secrets_machine_id",
+          "columns": [
+            {
+              "expression": "machine_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_machine_secrets_secret_id": {
+          "name": "idx_machine_secrets_secret_id",
+          "columns": [
+            {
+              "expression": "secret_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "machine_secrets_machine_id_machines_id_fk": {
+          "name": "machine_secrets_machine_id_machines_id_fk",
+          "tableFrom": "machine_secrets",
+          "tableTo": "machines",
+          "schemaTo": "comfyui_deploy",
+          "columnsFrom": [
+            "machine_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "machine_secrets_secret_id_secrets_id_fk": {
+          "name": "machine_secrets_secret_id_secrets_id_fk",
+          "tableFrom": "machine_secrets",
+          "tableTo": "secrets",
+          "schemaTo": "comfyui_deploy",
+          "columnsFrom": [
+            "secret_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "unq_machine_secret": {
+          "name": "unq_machine_secret",
+          "nullsNotDistinct": false,
+          "columns": [
+            "machine_id",
+            "secret_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "comfyui_deploy.machine_versions": {
       "name": "machine_versions",
       "schema": "comfyui_deploy",
@@ -1146,6 +1254,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "disable_metadata": {
+          "name": "disable_metadata",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
         },
         "prestart_command": {
           "name": "prestart_command",
@@ -1545,6 +1660,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "disable_metadata": {
+          "name": "disable_metadata",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
         "prestart_command": {
           "name": "prestart_command",
           "type": "text",
@@ -1845,6 +1967,79 @@
           "schemaTo": "comfyui_deploy",
           "columnsFrom": [
             "user_volume_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "comfyui_deploy.secrets": {
+      "name": "secrets",
+      "schema": "comfyui_deploy",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "org_id": {
+          "name": "org_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "environment_variables": {
+          "name": "environment_variables",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "secrets_user_id_users_id_fk": {
+          "name": "secrets_user_id_users_id_fk",
+          "tableFrom": "secrets",
+          "tableTo": "users",
+          "schemaTo": "comfyui_deploy",
+          "columnsFrom": [
+            "user_id"
           ],
           "columnsTo": [
             "id"

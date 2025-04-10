@@ -38,7 +38,7 @@ from .types import (
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .utils import generate_persistent_token, select, is_valid_uuid
+from .utils import generate_persistent_token, select, SecretManager
 from sqlalchemy import func, text
 from fastapi.responses import JSONResponse
 
@@ -49,6 +49,8 @@ from api.models import (
     Workflow,
     MachineVersion,
     get_machine_columns,
+    Secret,
+    MachineSecret
 )
 
 # from sqlalchemy import select
@@ -579,6 +581,8 @@ async def create_serverless_machine(
     # docker_commands = generate_all_docker_commands(machine)
     machine_token = generate_persistent_token(user_id, org_id)
 
+    secrets = await get_machine_secrets(db=db, machine_id=machine.id)
+
     if machine.machine_hash is not None:
         existing_machine_info_url = f"https://comfyui.comfydeploy.com/static-assets/{machine.machine_hash}/object_info.json"
         try:
@@ -623,6 +627,7 @@ async def create_serverless_machine(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=docker_commands_hash,
         disable_metadata=machine.disable_metadata,
+        secrets=secrets,  # Add the decrypted secrets to the build parameters
     )
 
     if wait_for_build:
@@ -631,6 +636,441 @@ async def create_serverless_machine(
         background_tasks.add_task(build_logic, params)
 
     return JSONResponse(content=machine.to_dict())
+
+class SecretKeyValue(BaseModel):
+    key: str
+    value: str
+
+class SecretInput(BaseModel):
+    secret: List[SecretKeyValue]
+    secret_name: str
+    machine_id: UUID
+
+@router.post("/machine/secret")
+async def create_secret(
+    request: Request,
+    request_body: SecretInput,
+    db: AsyncSession = Depends(get_db)
+    ):
+        try:
+            current_user = request.state.current_user
+            user_id = current_user["user_id"]
+            org_id = current_user["org_id"] if "org_id" in current_user else None
+            new_secret_id = uuid.uuid4()
+            secret = request_body.secret
+            machine_id = request_body.machine_id
+            
+            machine_query = await db.execute(
+                select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+            )
+            machine = machine_query.scalars().first()
+            if not machine:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Machine not found"
+                )
+        
+            secret_manager = SecretManager()
+            encrypted_secrets = []
+            for item in secret:
+                encrypted_item = {
+                    "key": item.key,
+                    "encrypted_value": secret_manager.encrypt_value(item.value)
+                }
+                encrypted_secrets.append(encrypted_item)
+
+            secret = Secret(
+                id=new_secret_id,
+                name=request_body.secret_name,
+                user_id=user_id,
+                org_id=org_id,
+                environment_variables=encrypted_secrets,
+                created_at=func.now(),
+                updated_at=func.now(),
+            )
+
+            db.add(secret)
+            await db.flush()
+            
+            machine_secret = MachineSecret(
+                id=uuid.uuid4(),
+                machine_id=machine_id,
+                secret_id=new_secret_id,
+                created_at=func.now(),
+            )
+            db.add(machine_secret)
+            await db.commit()
+            
+            return secret
+        except ValueError as e:
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=str(e)
+                )
+
+
+class UpdateMachineWithSecretInput(BaseModel):
+    machine_id: UUID
+    secret_id: UUID
+
+@router.patch("/machine/secret")
+async def update_machine_with_secret(
+    request: Request,
+    request_body: UpdateMachineWithSecretInput,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        machine_id = request_body.machine_id
+        secret_id = request_body.secret_id
+
+        machine_query = await db.execute(
+            select(Machine).where(Machine.id == machine_id)
+        )
+        machine = machine_query.scalars().first()
+        if not machine:
+            raise HTTPException(
+                status_code=404,
+                detail="Machine doesn't exist"
+            )
+        
+        secret_query = await db.execute(
+            select(Secret).where(Secret.id == secret_id).apply_org_check(request)
+        )
+        secret = secret_query.scalars().first()
+        if not secret:
+            raise HTTPException(
+                status_code=404,
+                detail="Secret doesn't exist!"
+            )
+        
+        existing_query = await db.execute(
+            select(MachineSecret).where(
+                MachineSecret.machine_id == machine_id,
+                MachineSecret.secret_id == secret_id
+            )
+        )
+        existing = existing_query.scalars().first()
+        
+        if existing:
+            await db.delete(existing)
+            await db.commit()
+            return JSONResponse(
+                status_code=200, 
+                content={"message": "Secret removed from the machine successfully", "status": 200, "is_selected": False}
+            )
+        
+        secret.updated_at = func.now()
+        
+        new_machine_secret_id = uuid.uuid4()
+        machine_secret = MachineSecret(
+           id=new_machine_secret_id,
+           machine_id=machine_id,
+           secret_id=secret_id,
+           created_at=func.now(),
+        )
+        
+        db.add(machine_secret)
+        await db.commit()
+        
+        return JSONResponse(
+            status_code=200, 
+            content={"message": "Secret added to machine successfully", "status": 200, "is_selected": True}
+        )
+    except Exception as e:
+        await db.rollback()
+        raise e
+
+
+class SecretUpdateInput(BaseModel):
+    secret: List[SecretKeyValue]
+
+@router.patch("/machine/secret/{secret_id}/envs")
+async def update_secret_envs(
+    request: Request,
+    request_body: SecretUpdateInput,
+    secret_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        secret_query = await db.execute(
+            select(Secret).where(Secret.id == secret_id).apply_org_check(request)
+        )
+        secret = secret_query.scalars().first()
+        if not secret:
+            raise HTTPException(
+                status_code=404,
+                detail="Secret doesn't exist!"
+            )
+        
+        secret_data = request_body.secret
+        secret_manager = SecretManager()
+        encrypted_secrets = []
+        for item in secret_data:
+            encrypted_item = {
+                "key": item.key,
+                "encrypted_value": secret_manager.encrypt_value(item.value)
+                }
+            encrypted_secrets.append(encrypted_item)
+        
+        secret.environment_variables = encrypted_secrets
+        secret.updated_at = func.now()
+        await db.commit()
+        
+        return secret
+    except Exception as e:
+        raise e
+ 
+
+@router.get("/machine/secrets/all")
+async def get_all_secrets(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+    ):
+        try:
+            current_user = request.state.current_user
+            user_id = current_user["user_id"]
+            org_id = current_user["org_id"] if "org_id" in current_user else None
+            
+            if org_id:
+                query = select(Secret).where(Secret.org_id == org_id)
+            else:
+                query = select(Secret).where(Secret.user_id == user_id)
+                
+            result = await db.execute(query)
+            secrets = result.scalars().all()
+            
+            secret_manager = SecretManager()
+            
+            secrets_response = []
+            for secret in secrets:
+                secret_dict = secret.to_dict() if hasattr(secret, 'to_dict') else {
+                    "id": str(secret.id),
+                    "user_id": str(secret.user_id),
+                    "org_id": str(secret.org_id) if secret.org_id else None,
+                    "machine_id": str(secret.machine_id) if secret.machine_id else None,
+                    "created_at": secret.created_at.isoformat() if hasattr(secret.created_at, 'isoformat') else str(secret.created_at),
+                    "updated_at": secret.updated_at.isoformat() if hasattr(secret.updated_at, 'isoformat') else str(secret.updated_at)
+                }
+                
+                # Decrypt environment variables
+                if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                    decrypted_env_vars = []
+                    for env_var in secret.environment_variables:
+                        decrypted_env_var = {
+                            "key": env_var["key"],
+                            "value": secret_manager.decrypt_value(env_var["encrypted_value"])
+                        }
+                        decrypted_env_vars.append(decrypted_env_var)
+                    
+                    secret_dict["environment_variables"] = decrypted_env_vars
+                else:
+                    secret_dict["environment_variables"] = []
+                
+                # Get associated machines through machine_secrets table
+                machine_secrets_query = await db.execute(
+                    select(MachineSecret).where(MachineSecret.secret_id == secret.id)
+                )
+                machine_secrets = machine_secrets_query.scalars().all()
+                secret_dict["machines"] = [str(ms.machine_id) for ms in machine_secrets]
+                    
+                secrets_response.append(secret_dict)
+            
+            return JSONResponse(content=secrets_response)
+            
+        except Exception as e:
+            logger.error(f"Error getting secrets: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=str(e)
+            )
+
+
+@router.get("/machine/{machine_id}/secrets/linked")
+async def get_all_linked_machine_secrets(
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        # Verify the machine exists and user has access
+        machine_query = await db.execute(
+            select(Machine).where(Machine.id == machine_id)
+        )
+        machine = machine_query.scalars().first()
+        if not machine:
+            raise HTTPException(
+                status_code=404,
+                detail="Machine not found"
+            )
+        
+        # Get all machine_secrets linking the machine to secrets
+        machine_secrets_query = await db.execute(
+            select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+        )
+        machine_secrets = machine_secrets_query.scalars().all()
+        
+        secret_ids = [ms.secret_id for ms in machine_secrets]
+        
+        if not secret_ids:
+            return JSONResponse(content=[])
+        
+        # Get all secrets linked to this machine
+        query = select(Secret).where(Secret.id.in_(secret_ids))
+        result = await db.execute(query)
+        secrets = result.scalars().all()
+        
+        secret_manager = SecretManager()
+        
+        secrets_response = []
+        for secret in secrets:
+            secret_dict = secret.to_dict() if hasattr(secret, 'to_dict') else {
+                "id": str(secret.id),
+                "name": secret.name,
+                "user_id": str(secret.user_id),
+                "org_id": str(secret.org_id) if secret.org_id else None,
+                "created_at": secret.created_at.isoformat() if hasattr(secret.created_at, 'isoformat') else str(secret.created_at),
+                "updated_at": secret.updated_at.isoformat() if hasattr(secret.updated_at, 'isoformat') else str(secret.updated_at)
+            }
+            
+            # Decrypt environment variables
+            if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                decrypted_env_vars = []
+                for env_var in secret.environment_variables:
+                    decrypted_env_var = {
+                        "key": env_var["key"],
+                        "value": secret_manager.decrypt_value(env_var["encrypted_value"])
+                    }
+                    decrypted_env_vars.append(decrypted_env_var)
+                
+                secret_dict["environment_variables"] = decrypted_env_vars
+            else:
+                secret_dict["environment_variables"] = []
+                
+            secrets_response.append(secret_dict)
+        
+        return JSONResponse(content=secrets_response)
+        
+    except Exception as e:
+        logger.error(f"Error getting linked machine secrets: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+@router.get("/machine/{machine_id}/secrets/unlinked")
+async def get_all_unlinked_machine_secrets(
+    request: Request,
+    machine_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        # Verify the machine exists and user has access
+        machine_query = await db.execute(
+            select(Machine).where(Machine.id == machine_id)
+        )
+        machine = machine_query.scalars().first()
+        if not machine:
+            raise HTTPException(
+                status_code=404,
+                detail="Machine not found"
+            )
+        
+        current_user = request.state.current_user
+        user_id = current_user["user_id"]
+        org_id = current_user["org_id"] if "org_id" in current_user else None
+        
+        # Get all secrets already linked to this machine
+        machine_secrets_query = await db.execute(
+            select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+        )
+        machine_secrets = machine_secrets_query.scalars().all()
+        linked_secret_ids = [ms.secret_id for ms in machine_secrets]
+        
+        # Get all available secrets for the user/org that are not linked to this machine
+        if org_id:
+            query = select(Secret).where(Secret.org_id == org_id)
+        else:
+            query = select(Secret).where(Secret.user_id == user_id)
+            
+        if linked_secret_ids:
+            query = query.where(Secret.id.not_in(linked_secret_ids))
+            
+        result = await db.execute(query)
+        secrets = result.scalars().all()
+        
+        secret_manager = SecretManager()
+        
+        secrets_response = []
+        for secret in secrets:
+            secret_dict = secret.to_dict() if hasattr(secret, 'to_dict') else {
+                "id": str(secret.id),
+                "name": secret.name,
+                "user_id": str(secret.user_id),
+                "org_id": str(secret.org_id) if secret.org_id else None,
+                "created_at": secret.created_at.isoformat() if hasattr(secret.created_at, 'isoformat') else str(secret.created_at),
+                "updated_at": secret.updated_at.isoformat() if hasattr(secret.updated_at, 'isoformat') else str(secret.updated_at)
+            }
+            
+            # Decrypt environment variables
+            if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                decrypted_env_vars = []
+                for env_var in secret.environment_variables:
+                    decrypted_env_var = {
+                        "key": env_var["key"],
+                        "value": secret_manager.decrypt_value(env_var["encrypted_value"])
+                    }
+                    decrypted_env_vars.append(decrypted_env_var)
+                
+                secret_dict["environment_variables"] = decrypted_env_vars
+            else:
+                secret_dict["environment_variables"] = []
+                
+            secrets_response.append(secret_dict)
+        
+        return JSONResponse(content=secrets_response)
+        
+    except Exception as e:
+        logger.error(f"Error getting unlinked machine secrets: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+@router.delete("/machine/secret/{secret_id}")
+async def delete_secret(
+    request: Request,
+    secret_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        secret_query = await db.execute(
+            select(Secret).where(Secret.id == secret_id).apply_org_check(request)
+        )
+        secret = secret_query.scalars().first()
+        if not secret:
+            raise HTTPException(
+                status_code=404,
+                detail="Secret doesn't exist!"
+            )
+        
+        # Delete associated machine_secrets entries
+        machine_secrets_query = await db.execute(
+            select(MachineSecret).where(MachineSecret.secret_id == secret_id)
+        )
+        machine_secrets = machine_secrets_query.scalars().all()
+        
+        for machine_secret in machine_secrets:
+            await db.delete(machine_secret)
+        
+        # Delete the secret itself
+        await db.delete(secret)
+        await db.commit()
+        
+        return JSONResponse(content={"message": "Secret deleted successfully"})
+    except Exception as e:
+        raise e 
 
 
 @router.patch("/machine/serverless/{machine_id}")
@@ -789,6 +1229,8 @@ async def update_serverless_machine(
             volumes = await retrieve_model_volumes(request, db)
             docker_commands = generate_all_docker_commands(machine)
             machine_token = generate_persistent_token(user_id, org_id)
+            secrets = await get_machine_secrets(db=db, machine_id=machine.id)
+
             params = BuildMachineItem(
                 machine_id=str(machine.id),
                 name=str(machine.id),
@@ -818,6 +1260,7 @@ async def update_serverless_machine(
                 extra_args=machine.extra_args,
                 machine_version_id=str(machine.machine_version_id),
                 machine_hash=docker_commands_hash,
+                secrets=secrets,
                 modal_image_id=machine_version.modal_image_id
                 if machine_version
                 else None,
@@ -857,6 +1300,8 @@ async def redeploy_machine(
 
     volumes = await retrieve_model_volumes(request, db)
     machine_token = generate_persistent_token(user_id, org_id)
+    secrets = await get_machine_secrets(db=db, machine_id=machine.id)
+    
     params = BuildMachineItem(
         machine_id=str(machine.id),
         name=str(machine.id),
@@ -883,6 +1328,7 @@ async def redeploy_machine(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
+        secrets=secrets
     )
     print("params", params)
     if background_tasks:
@@ -900,6 +1346,7 @@ async def redeploy_machine_internal(
         # volumes = await retrieve_model_volumes(request, db)
         volume_name = "models_" + machine.org_id if machine.org_id else machine.user_id
         machine_token = generate_persistent_token(machine.user_id, machine.org_id)
+        secrets = await get_machine_secrets(db=db, machine_id=machine.id)
         machine_version = await db.execute(
             select(MachineVersion).where(
                 MachineVersion.id == machine.machine_version_id
@@ -939,6 +1386,7 @@ async def redeploy_machine_internal(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
+        secrets=secrets
     )
     await build_logic(params)
 
@@ -951,6 +1399,7 @@ async def redeploy_machine_deployment_internal(
             "models_" + deployment.org_id if deployment.org_id else deployment.user_id
         )
         machine_token = generate_persistent_token(deployment.user_id, deployment.org_id)
+        secrets = await get_machine_secrets(db=db, machine_id=deployment.machine_id)
         machine_version = await db.execute(
             select(MachineVersion).where(
                 MachineVersion.id == deployment.machine_version_id
@@ -992,6 +1441,7 @@ async def redeploy_machine_deployment_internal(
         is_deployment=True,
         environment=deployment.environment,
         disable_metadata=deployment.disable_metadata,
+        secrets=secrets
     )
     await build_logic(params)
 
@@ -1677,3 +2127,38 @@ async def update_machine_custom_nodes(
         raise HTTPException(
             status_code=500, detail=f"Failed to update custom nodes: {str(e)}"
         )
+
+async def get_machine_secrets(
+    db: AsyncSession = Depends(get_db),
+    machine_id = UUID,
+):
+        
+    # Get all secrets linked to this machine
+    machine_secrets_query = await db.execute(
+        select(MachineSecret).where(MachineSecret.machine_id == machine_id)
+    )
+    machine_secrets = machine_secrets_query.scalars().all()
+    
+    # Get all secret IDs linked to this machine
+    secret_ids = [ms.secret_id for ms in machine_secrets]
+    
+    # Initialize an empty dictionary to store all decrypted environment variables
+    secrets = {}
+    
+    if secret_ids:
+        # Get all secrets linked to this machine
+        secrets_query = await db.execute(
+            select(Secret).where(Secret.id.in_(secret_ids))
+        )
+        all_secrets = secrets_query.scalars().all()
+        
+        # Decrypt all environment variables and merge them into a single dictionary
+        secret_manager = SecretManager()
+        for secret in all_secrets:
+            if hasattr(secret, 'environment_variables') and secret.environment_variables:
+                for env_var in secret.environment_variables:
+                    key = env_var["key"]
+                    decrypted_value = secret_manager.decrypt_value(env_var["encrypted_value"])
+                    secrets[key] = decrypted_value
+
+    return secrets

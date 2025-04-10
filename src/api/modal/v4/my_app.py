@@ -75,6 +75,7 @@ modal_image_id = config["modal_image_id"]
 disable_metadata = config["disable_metadata"] == "True"
 
 print("disable_metadata: ", disable_metadata)
+secrets = config["secrets"]
 
 logger = logging.getLogger(__name__)
 
@@ -2334,7 +2335,8 @@ class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
     container_idle_timeout=config["idle_timeout"],
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
-    enable_memory_snapshot=True
+    enable_memory_snapshot=True,
+    secrets=[modal.Secret.from_dict(secrets)]
 )
 class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunnerOptimizedImports):
     pass
@@ -2355,6 +2357,7 @@ async def get_image_id():
     container_idle_timeout=config["idle_timeout"],
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
+    secrets=[modal.Secret.from_dict(secrets)]
 )
 class ComfyDeployRunner(BaseComfyDeployRunner):
     @enter()

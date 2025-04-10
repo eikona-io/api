@@ -39,6 +39,8 @@ from typing import Dict, List, Set
 from pydantic import ValidationError, BaseModel
 from uuid import UUID
 import random
+from cryptography.fernet import Fernet
+import base64
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -810,3 +812,40 @@ async def execute_with_org_check(
     print(sql)
     return await db.execute(text(sql), execute_params)
 
+
+class SecretManager:
+    def __init__(self, master_key=None):
+        if master_key is None:
+            master_key = os.environ.get('SECRET_ENCRYPTION_KEY')
+            if not master_key:
+                raise ValueError("SECRET_ENCRYPTION_KEY environment variable is not set")
+        
+        if isinstance(master_key, str):
+            master_key = master_key.encode('utf-8')
+            
+        try:
+            self.cipher = Fernet(master_key)
+        except ValueError:
+            try:
+                decoded = base64.urlsafe_b64decode(master_key + b'=' * (-len(master_key) % 4))
+                if len(decoded) != 32:
+                    import hashlib
+                    decoded = hashlib.sha256(master_key).digest()
+                fixed_key = base64.urlsafe_b64encode(decoded)
+                self.cipher = Fernet(fixed_key)
+            except Exception as e:
+                raise ValueError(f"Unable to create a valid Fernet key: {str(e)}")
+    
+    def encrypt_value(self, value):
+        if isinstance(value, str):
+            value = value.encode('utf-8')
+        
+        encrypted_value = self.cipher.encrypt(value)
+        return base64.b64encode(encrypted_value).decode('utf-8')
+    
+    def decrypt_value(self, encrypted_value):
+        if isinstance(encrypted_value, str):
+            encrypted_value = base64.b64decode(encrypted_value)
+        
+        decrypted_value = self.cipher.decrypt(encrypted_value)
+        return decrypted_value.decode('utf-8')
