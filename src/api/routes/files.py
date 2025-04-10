@@ -1,6 +1,7 @@
 from enum import Enum
 import os
 from api.models import Asset
+from api.utils.storage_helper import get_s3_config
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -126,24 +127,14 @@ async def upload_file(
     # Check if the file type is allowed
     if not file_type.startswith(("image/", "video/", "application/", "audio/")):
         raise HTTPException(status_code=400, detail="Unsupported file type")
+    
+    s3_config = await get_s3_config(request, db)
 
-    user_settings = await get_user_settings(request, db)
-
-    bucket = os.getenv("SPACES_BUCKET_V2")
-    region = os.getenv("SPACES_REGION_V2")
-    access_key = os.getenv("SPACES_KEY_V2")
-    secret_key = os.getenv("SPACES_SECRET_V2")
-    public = True
-
-    if user_settings is not None:
-        if user_settings.output_visibility == "private":
-            public = False
-
-        if user_settings.custom_output_bucket:
-            bucket = user_settings.s3_bucket_name
-            region = user_settings.s3_region
-            access_key = user_settings.s3_access_key_id
-            secret_key = user_settings.s3_secret_access_key
+    public = s3_config.public
+    bucket = s3_config.bucket
+    region = s3_config.region
+    access_key = s3_config.access_key
+    secret_key = s3_config.secret_key
 
     # File size check
     file_size = file.size
@@ -305,21 +296,17 @@ async def list_assets(
     assets = result.scalars().all()
     
     # Get user settings for S3 configuration
-    user_settings = await get_user_settings(request, db)
+    s3_config = await get_s3_config(request, db)
     
     # Generate temporary URLs for private files
-    if user_settings and user_settings.output_visibility == "private":
+    if s3_config and not s3_config.public:
         for asset in assets:
-            if asset.file_url:  # Only for files, not folders
-                region = user_settings.s3_region if user_settings.custom_output_bucket else os.getenv("SPACES_REGION_V2")
-                access_key = user_settings.s3_access_key_id if user_settings.custom_output_bucket else os.getenv("SPACES_KEY_V2")
-                secret_key = user_settings.s3_secret_access_key if user_settings.custom_output_bucket else os.getenv("SPACES_SECRET_V2")
-                
-                asset.file_url = get_temporary_download_url(
-                    asset.file_url,
-                    region,
-                    access_key,
-                    secret_key,
+            if asset.url:  # Only for files, not folders
+                asset.url = get_temporary_download_url(
+                    asset.url,
+                    region=s3_config.region,
+                    access_key=s3_config.access_key,
+                    secret_key=s3_config.secret_key,
                     expiration=3600,
                 )
     
@@ -350,17 +337,11 @@ async def delete_asset(
     # If it's a file, delete from S3
     elif not asset.is_folder:
         # Get S3 credentials from user settings
-        user_settings = await get_user_settings(request, db)
-        bucket = os.getenv("SPACES_BUCKET_V2")
-        region = os.getenv("SPACES_REGION_V2")
-        access_key = os.getenv("SPACES_KEY_V2")
-        secret_key = os.getenv("SPACES_SECRET_V2")
-
-        if user_settings and user_settings.custom_output_bucket:
-            bucket = user_settings.s3_bucket_name
-            region = user_settings.s3_region
-            access_key = user_settings.s3_access_key_id
-            secret_key = user_settings.s3_secret_access_key
+        s3_config = await get_s3_config(request, db)
+        bucket = s3_config.bucket
+        region = s3_config.region
+        access_key = s3_config.access_key
+        secret_key = s3_config.secret_key
 
         # Prefix the path with 'assets/' for S3 operations
         s3_path = f"assets/{asset.path}"
@@ -395,24 +376,14 @@ async def upload_asset_file(
     # Check if the file type is allowed
     if not file_type.startswith(("image/", "video/", "application/", "audio/")):
         raise HTTPException(status_code=400, detail="Unsupported file type")
+    
+    s3_config = await get_s3_config(request, db)
 
-    user_settings = await get_user_settings(request, db)
-
-    bucket = os.getenv("SPACES_BUCKET_V2")
-    region = os.getenv("SPACES_REGION_V2")
-    access_key = os.getenv("SPACES_KEY_V2")
-    secret_key = os.getenv("SPACES_SECRET_V2")
-    public = True
-
-    if user_settings is not None:
-        if user_settings.output_visibility == "private":
-            public = False
-
-        if user_settings.custom_output_bucket:
-            bucket = user_settings.s3_bucket_name
-            region = user_settings.s3_region
-            access_key = user_settings.s3_access_key_id
-            secret_key = user_settings.s3_secret_access_key
+    bucket = s3_config.bucket
+    region = s3_config.region
+    access_key = s3_config.access_key
+    secret_key = s3_config.secret_key
+    public = s3_config.public
 
     # File size check
     file_size = file.size
@@ -511,19 +482,15 @@ async def get_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
     
     # Get user settings for S3 configuration
-    user_settings = await get_user_settings(request, db)
-    
+    s3_config = await get_s3_config(request, db)
+
     # Generate temporary URL for private files
-    if user_settings and user_settings.output_visibility == "private" and asset.url:
-        region = user_settings.s3_region if user_settings.custom_output_bucket else os.getenv("SPACES_REGION_V2")
-        access_key = user_settings.s3_access_key_id if user_settings.custom_output_bucket else os.getenv("SPACES_KEY_V2")
-        secret_key = user_settings.s3_secret_access_key if user_settings.custom_output_bucket else os.getenv("SPACES_SECRET_V2")
-        
+    if s3_config and not s3_config.public and asset.url:
         asset.url = get_temporary_download_url(
             asset.url,
-            region,
-            access_key,
-            secret_key,
+            region=s3_config.region,
+            access_key=s3_config.access_key,
+            secret_key=s3_config.secret_key,
             expiration=3600,
         )
     

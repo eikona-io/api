@@ -5,7 +5,9 @@ import os
 import httpx
 from .utils import async_lru_cache
 from datetime import timedelta
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+import modal
+import json
 
 
 logger = logging.getLogger(__name__)
@@ -150,3 +152,30 @@ async def get_comfyui_versions(request: Request):
     }
     
     return JSONResponse(content=response)
+
+@router.get("/custom-node-list")
+async def get_nodes_json():
+    try:
+        # Get the data from modal function
+        function = await modal.Function.lookup.aio("comfy-nodes", "read_custom_nodes")
+        nodes_data = await function.remote.aio()
+
+        # Create a temporary file to serve
+        temp_file_path = "/tmp/nodes_cache.json"
+        with open(temp_file_path, "w") as f:
+            json.dump(nodes_data, f)
+
+        headers = {
+            "Cache-Control": "public, max-age=86400",
+            "ETag": f"\"{hash(json.dumps(nodes_data))}\"",
+        }
+
+        return FileResponse(
+            path=temp_file_path,
+            media_type="application/json",
+            filename="nodes.json",
+            headers=headers
+        )
+    except Exception as e:
+        logger.error(f"Error fetching nodes.json: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve nodes.json: {str(e)}")

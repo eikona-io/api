@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from api.utils.retrieve_s3_config_helper import retrieve_s3_config
 from upstash_redis.asyncio import Redis
 import logging
 from typing import Any, Literal, Self, TypeVar, Tuple, Union
@@ -308,6 +309,46 @@ def ensure_run_timeout(run):
             set_value(run, "status", "timeout")
 
 
+upload_types = ["images", "files", "gifs", "mesh"]
+
+def guess_output_id(output):
+    """
+    Aggregates all output IDs from an output object, groups them by upload type,
+    and returns the first output ID from the first upload type that has output IDs.
+    
+    Args:
+        output: The output object containing data with upload types
+        
+    Returns:
+        The first output ID found, or None if no output IDs are found
+    """
+    if output is None or output.data is None or output.data == []:
+        return None
+        
+    # Dictionary to store output IDs by upload type
+    output_ids_by_type = {}
+    
+    for upload_type in upload_types:
+        if upload_type in output.data:
+            # Collect all output IDs for this upload type
+            output_ids = []
+            for output_item in output.data[upload_type]:
+                if "output_id" in output_item:
+                    output_ids.append(output_item["output_id"])
+            
+            # If we found output IDs, store them by type
+            if output_ids:
+                output_ids_by_type[upload_type] = output_ids
+    
+    # If we have output IDs, return the first one
+    if output_ids_by_type:
+        # Get the first upload type that has output IDs
+        first_type = next(iter(output_ids_by_type))
+        # Get the first output ID from that type
+        return output_ids_by_type[first_type][0]
+    
+    return None
+
 def clean_up_outputs(outputs: List):
     """
     Clean up outputs by validating each against WorkflowRunOutputModel.
@@ -317,9 +358,14 @@ def clean_up_outputs(outputs: List):
     for i in range(len(outputs) - 1, -1, -1):
         output = outputs[i]
         if output.data is None or output.data == []:  # Check for None or empty list
-            logfire.warn("Empty output data", output=output)
+            logfire.info("Empty output data", output=output)
             outputs.pop(i)
             continue
+
+        # Guess the output ID and assign it to the top level
+        output_id = guess_output_id(output)
+        if output_id:
+            output.output_id = output_id
             
         if output.data:
             try:
@@ -338,22 +384,14 @@ def post_process_outputs(outputs, user_settings):
 
 
 def post_process_output_data(data, user_settings):
-    bucket = os.getenv("SPACES_BUCKET_V2")
-    region = os.getenv("SPACES_REGION_V2")
-    access_key = os.getenv("SPACES_KEY_V2")
-    secret_key = os.getenv("SPACES_SECRET_V2")
+    s3_config = retrieve_s3_config(user_settings)
 
-    if user_settings is not None:
-        if user_settings.output_visibility == "private":
-            public = False
+    # public = s3_config.public
+    region = s3_config.region
+    access_key = s3_config.access_key
+    secret_key = s3_config.secret_key
 
-        if user_settings.custom_output_bucket:
-            bucket = user_settings.s3_bucket_name
-            region = user_settings.s3_region
-            access_key = user_settings.s3_access_key_id
-            secret_key = user_settings.s3_secret_access_key
-
-    for upload_type in ["images", "files", "gifs", "mesh"]:
+    for upload_type in upload_types:
         if upload_type in data:
             for output_item in data[upload_type]:
                 if output_item.get("is_public") is False:
