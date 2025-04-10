@@ -638,7 +638,7 @@ async def create_serverless_machine(
     return JSONResponse(content=machine.to_dict())
 
 class SecretKeyValue(BaseModel):
-    key: str
+    key: constr(pattern=r"^[^\s]+$")
     value: str
 
 class SecretInput(BaseModel):
