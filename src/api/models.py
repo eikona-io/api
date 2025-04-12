@@ -506,10 +506,29 @@ class Machine(SerializableMixin, Base):
     )
     is_workspace = Column(Boolean, nullable=False, default=False)
     optimized_runner = Column(Boolean, nullable=False, default=False)
-
     # Add shared columns
     locals().update(get_machine_columns())
 
+class Secret(SerializableMixin, Base):
+    __tablename__ = "secrets"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
+    name=Column(String, nullable=False)
+    org_id = Column(String)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+    environment_variables = Column(JSON)
+
+class MachineSecret(SerializableMixin, Base):
+    __tablename__ = "machine_secrets"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    machine_id = Column(UUID(as_uuid=True), ForeignKey("machines.id", ondelete="cascade"), nullable=False)
+    secret_id = Column(UUID(as_uuid=True), ForeignKey("secrets.id", ondelete="cascade"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
 
 class UserSettings(SerializableMixin, Base):
     __tablename__ = "user_settings"
