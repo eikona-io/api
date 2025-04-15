@@ -1583,38 +1583,54 @@ async def get_machine_version(
     version_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = request.state.current_user.get("user_id")
-    org_id = request.state.current_user.get("org_id")
+    try:
+        machine_query = select(Machine).where(
+            Machine.id == machine_id
+        ).apply_org_check(request)
+        
+        machine_result = await db.execute(machine_query)
+        machine = machine_result.scalars().first()
+        
+        if machine is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Machine not found"}
+            )
+        
+        version_query = select(MachineVersion).where(
+            MachineVersion.id == version_id,
+            MachineVersion.machine_id == machine_id
+        )
 
-    params = {
-        "version_id": version_id,
-        "user_id": user_id,
-        "org_id": org_id,
-    }
-
-    sql = """
-    SELECT mv.*, m.org_id FROM "comfyui_deploy"."machine_versions" mv
-    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
-    WHERE mv.id = :version_id
-    """
-
-    if org_id:
-        sql += " AND m.org_id = :org_id"
-    else:
-        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
-
-    result = await db.execute(text(sql), params)
-    machine_version = result.mappings().first()
-
-    version_dict = {}
-    for k, v in machine_version.items():
-        if isinstance(v, UUID):
-            version_dict[k] = str(v)
-        elif isinstance(v, datetime.datetime):
-            version_dict[k] = v.isoformat()
-        else:
-            version_dict[k] = v
-    return JSONResponse(content=version_dict)
+        
+        version_result = await db.execute(version_query)
+        machine_version = version_result.scalars().first()
+        
+        if machine_version is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Machine version not found"}
+            )
+        
+        version_dict = {}
+        for k in machine_version.__dict__:
+            if not k.startswith('_'):
+                v = getattr(machine_version, k)
+                if isinstance(v, UUID):
+                    version_dict[k] = str(v)
+                elif isinstance(v, datetime.datetime):
+                    version_dict[k] = v.isoformat()
+                else:
+                    version_dict[k] = v
+        
+        return JSONResponse(content=version_dict)
+        
+    except Exception as e:
+        logger.error(f"Error getting machine version: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)}
+        )
 
 
 class RollbackMachineVersionBody(BaseModel):
