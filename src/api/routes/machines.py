@@ -60,6 +60,7 @@ from typing import Any, Dict, List, Optional, Literal
 
 # from fastapi_pagination import Page, add_pagination, paginate
 from api.utils.multi_level_cache import multi_level_cached
+import modal
 
 logger = logging.getLogger(__name__)
 
@@ -1632,6 +1633,63 @@ async def get_machine_version(
             content={"detail": str(e)}
         )
 
+@router.get("/machine/serverless/{machine_id}/files")
+async def get_machine_files(
+    request: Request,
+    machine_id: UUID,
+    path: Optional[str] = "/",
+    db: AsyncSession = Depends(get_db),
+):
+    # get machine id
+    machine = await db.execute(
+        select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+    )
+    machine = machine.scalars().first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
+
+    # Path validation to prevent directory traversal
+    import os.path
+    import re
+
+    # Remove any ".." path traversal attempts and normalize the path
+    normalized_path = os.path.normpath(path)
+    if normalized_path == ".":
+        normalized_path = "/"
+
+    # Don't allow paths that try to go above the custom_nodes directory
+    if normalized_path.startswith("/..") or normalized_path.startswith("..") or "/../" in normalized_path:
+        raise HTTPException(
+            status_code=403,
+            detail="Access to parent directories is not allowed"
+        )
+
+    # Additional validation to ensure we're staying within custom_nodes
+    if re.search(r'^/+$', normalized_path) or normalized_path == "/":
+        # Allow the root of custom_nodes
+        pass
+    elif not normalized_path.startswith("/"):
+        # Ensure all paths start with /
+        normalized_path = "/" + normalized_path
+
+    try:
+        # URL-encode the path to handle spaces and special characters
+        import urllib.parse
+        encoded_path = urllib.parse.quote(f"/comfyui/custom_nodes{normalized_path}")
+
+        get_file_tree = modal.Function.from_name(str(machine_id), "get_file_tree")
+        result = await get_file_tree.remote.aio(path=encoded_path)
+        return JSONResponse(content=result)
+    except modal.exception.NotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Try to rebuild the machine to view the file tree."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting file tree: {str(e)}"
+        )
 
 class RollbackMachineVersionBody(BaseModel):
     machine_version_id: Optional[UUID] = None
