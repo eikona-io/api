@@ -2348,6 +2348,73 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunnerOptimizedImports):
 async def get_image_id():
     return target_image.object_id
 
+@app.function(
+    image=target_image,
+    gpu=None,
+)
+async def get_file_tree(path="/"):
+    """
+    Lists files and directories at the specified path (non-recursively).
+
+    Args:
+        path (str): The path to list contents from. Defaults to root '/'.
+
+    Returns:
+        dict: A dictionary representing the contents of the specified directory
+    """
+    import os
+
+    result = {
+        "path": path,
+        "contents": {},
+        "directories": [],
+        "files": []
+    }
+
+    try:
+        # List contents of the directory
+        entries = os.listdir(path)
+
+        # Sort entries - directories first, then files
+        dirs = []
+        files = []
+
+        for entry in entries:
+            full_path = os.path.join(path, entry)
+            if os.path.isdir(full_path):
+                dirs.append(entry)
+            else:
+                files.append(entry)
+
+        # Add sorted directories to result
+        for dir_name in sorted(dirs):
+            full_path = os.path.join(path, entry)
+            result["directories"].append(dir_name)
+            result["contents"][dir_name] = {
+                "type": "directory"
+            }
+
+        # Add sorted files to result
+        for file_name in sorted(files):
+            full_path = os.path.join(path, file_name)
+            # For files, store size and last modified time
+            stat = os.stat(full_path)
+            result["files"].append(file_name)
+            result["contents"][file_name] = {
+                "type": "file",
+                "size": stat.st_size,
+                "last_modified": stat.st_mtime
+            }
+
+    except PermissionError:
+        result["error"] = "Permission denied"
+    except FileNotFoundError:
+        result["error"] = "Path not found"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
 @app.cls(
     image=target_image,
     # will be overridden by the run function

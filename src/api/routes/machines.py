@@ -60,6 +60,7 @@ from typing import Any, Dict, List, Optional, Literal
 
 # from fastapi_pagination import Page, add_pagination, paginate
 from api.utils.multi_level_cache import multi_level_cached
+import modal
 
 logger = logging.getLogger(__name__)
 
@@ -1583,39 +1584,112 @@ async def get_machine_version(
     version_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = request.state.current_user.get("user_id")
-    org_id = request.state.current_user.get("org_id")
+    try:
+        machine_query = select(Machine).where(
+            Machine.id == machine_id
+        ).apply_org_check(request)
+        
+        machine_result = await db.execute(machine_query)
+        machine = machine_result.scalars().first()
+        
+        if machine is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Machine not found"}
+            )
+        
+        version_query = select(MachineVersion).where(
+            MachineVersion.id == version_id,
+            MachineVersion.machine_id == machine_id
+        )
 
-    params = {
-        "version_id": version_id,
-        "user_id": user_id,
-        "org_id": org_id,
-    }
+        
+        version_result = await db.execute(version_query)
+        machine_version = version_result.scalars().first()
+        
+        if machine_version is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Machine version not found"}
+            )
+        
+        version_dict = {}
+        for k in machine_version.__dict__:
+            if not k.startswith('_'):
+                v = getattr(machine_version, k)
+                if isinstance(v, UUID):
+                    version_dict[k] = str(v)
+                elif isinstance(v, datetime.datetime):
+                    version_dict[k] = v.isoformat()
+                else:
+                    version_dict[k] = v
+        
+        return JSONResponse(content=version_dict)
+        
+    except Exception as e:
+        logger.error(f"Error getting machine version: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)}
+        )
 
-    sql = """
-    SELECT mv.*, m.org_id FROM "comfyui_deploy"."machine_versions" mv
-    JOIN "comfyui_deploy"."machines" m ON mv.machine_id = m.id
-    WHERE mv.id = :version_id
-    """
+@router.get("/machine/serverless/{machine_id}/files")
+async def get_machine_files(
+    request: Request,
+    machine_id: UUID,
+    path: Optional[str] = "/",
+    db: AsyncSession = Depends(get_db),
+):
+    # get machine id
+    machine = await db.execute(
+        select(Machine).where(Machine.id == machine_id).apply_org_check(request)
+    )
+    machine = machine.scalars().first()
+    if not machine:
+        raise HTTPException(status_code=404, detail="Machine not found")
 
-    if org_id:
-        sql += " AND m.org_id = :org_id"
-    else:
-        sql += " AND mv.user_id = :user_id AND m.org_id IS NULL"
+    # Path validation to prevent directory traversal
+    import os.path
+    import re
 
-    result = await db.execute(text(sql), params)
-    machine_version = result.mappings().first()
+    # Remove any ".." path traversal attempts and normalize the path
+    normalized_path = os.path.normpath(path)
+    if normalized_path == ".":
+        normalized_path = "/"
 
-    version_dict = {}
-    for k, v in machine_version.items():
-        if isinstance(v, UUID):
-            version_dict[k] = str(v)
-        elif isinstance(v, datetime.datetime):
-            version_dict[k] = v.isoformat()
-        else:
-            version_dict[k] = v
-    return JSONResponse(content=version_dict)
+    # Don't allow paths that try to go above the custom_nodes directory
+    if normalized_path.startswith("/..") or normalized_path.startswith("..") or "/../" in normalized_path:
+        raise HTTPException(
+            status_code=403,
+            detail="Access to parent directories is not allowed"
+        )
 
+    # Additional validation to ensure we're staying within custom_nodes
+    if re.search(r'^/+$', normalized_path) or normalized_path == "/":
+        # Allow the root of custom_nodes
+        pass
+    elif not normalized_path.startswith("/"):
+        # Ensure all paths start with /
+        normalized_path = "/" + normalized_path
+
+    try:
+        # URL-encode the path to handle spaces and special characters
+        import urllib.parse
+        encoded_path = urllib.parse.quote(f"/comfyui/custom_nodes{normalized_path}")
+
+        get_file_tree = modal.Function.from_name(str(machine_id), "get_file_tree")
+        result = await get_file_tree.remote.aio(path=encoded_path)
+        return JSONResponse(content=result)
+    except modal.exception.NotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Try to rebuild the machine to view the file tree."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error getting file tree: {str(e)}"
+        )
 
 class RollbackMachineVersionBody(BaseModel):
     machine_version_id: Optional[UUID] = None
