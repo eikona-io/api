@@ -1,0 +1,1 @@
+ALTER TABLE comfyui_deploy.user_settings ADD COLUMN IF NOT EXISTS encrypted_s3_key text;
