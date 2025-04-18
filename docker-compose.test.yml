@@ -31,7 +31,6 @@ services:
         CLICKHOUSE_USER: "default"
         CLICKHOUSE_PASSWORD: "password"
         CLICKHOUSE_PORT: 8123
-        MODAL_ENVIRONMENT: "dev"
         MODAL_TOKEN_ID: ${MODAL_TOKEN_ID}
         MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET}
         SPACES_BUCKET_V2: "comfy-deploy-output-dev"
