@@ -13,8 +13,8 @@ jobs:
       NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      SPACES_KEY_V2: ${{ secrets.SPACES_KEY_V2 }}
-      SPACES_SECRET_V2: ${{ secrets.SPACES_SECRET_V2 }}
+      SPACES_KEY_V2: ${{ secrets.SPACES_KEY }}
+      SPACES_SECRET_V2: ${{ secrets.SPACES_SECRET }}
       LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
     steps:
       - uses: actions/checkout@v3
@@ -23,11 +23,9 @@ jobs:
         uses: docker/setup-buildx-action@v2
 
       - name: Build containers
-        working-directory: ./apps/api
         run: docker compose -f docker-compose.test.yml build
 
       - name: Run tests
-        working-directory: ./apps/api
         env:
           DB_HOST: postgres
           REDIS_HOST: serverless-redis-http
@@ -37,12 +35,10 @@ jobs:
 
       - name: Logs on failure
         if: failure()
-        working-directory: apps/api
         run: docker compose -f docker-compose.test.yml logs
 
       - name: Cleanup
         if: always()
-        working-directory: apps/api
         run: docker compose -f docker-compose.test.yml down -v
 
   migrate:
@@ -52,7 +48,7 @@ jobs:
     if: github.ref_name == 'main' || github.ref_name == 'dev'
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     env:
-      DATABASE_URL: ${{ github.ref == 'refs/heads/main' && secrets.PROD_DATABASE_URL || secrets.DEV_DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
       - uses: actions/checkout@v3
       
@@ -62,11 +58,9 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        working-directory: ./apps/api
         run: bun install
 
       - name: Run database migrations
-        working-directory: ./apps/api
         run: bun run migrate-production
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
