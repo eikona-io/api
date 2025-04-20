@@ -23,7 +23,7 @@
     },
     {
       "label": "dev:all",
-      "dependsOn": ["dev:api", "tunnel", "compose"],
+      "dependsOn": ["dev", "tunnel", "compose"],
       "dependsOrder": "parallel",
       "problemMatcher": []
     }
