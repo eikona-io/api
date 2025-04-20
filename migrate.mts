@@ -16,6 +16,8 @@ const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL
 
 let connectionString = dbUrl!;
 
+console.log(connectionString)
+
 const isDevContainer = process.env.REMOTE_CONTAINERS !== undefined;
 if (isDevContainer)
   connectionString = connectionString.replace(
