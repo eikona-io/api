@@ -440,6 +440,10 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
     
     secret_manager = SecretManager()
 
+    if "s3_secret_access_key" in update_data:
+        user_settings.encrypted_s3_key = secret_manager.encrypt_value(update_data["s3_secret_access_key"])
+        update_data["s3_secret_access_key"] = None
+
     if user_settings is None:
         # Create new settings if none exist
         org_id = request.state.current_user.get("org_id")
@@ -447,9 +451,6 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
             user_id=user_id,
             org_id=org_id
         )
-
-        if "s3_secret_access_key" in update_data:
-            user_settings.encrypted_s3_key = secret_manager.encrypt_value(update_data["s3_secret_access_key"])
 
         db.add(user_settings)
     
