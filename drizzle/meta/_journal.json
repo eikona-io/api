@@ -1331,6 +1331,13 @@
       "when": 1744098632735,
       "tag": "0189_wet_red_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1744980941521,
+      "tag": "0190_fuzzy_barracuda",
+      "breakpoints": true
     }
   ]
 }
