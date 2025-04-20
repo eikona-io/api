@@ -545,6 +545,7 @@ class UserSettings(SerializableMixin, Base):
     custom_output_bucket = Column(Boolean, default=False)
     s3_access_key_id = Column(String)
     s3_secret_access_key = Column(String)
+    encrypted_s3_key = Column(String)
     s3_bucket_name = Column(String)
     s3_region = Column(String)
     created_at = Column(

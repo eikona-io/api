@@ -334,11 +334,17 @@ export const workflowRunsTable = dbSchema.table(
                 table.workflow_id,
             ),
 
-            // Add the new index here
             idx_workflow_run_created_at_desc: index("idx_workflow_run_created_at_desc").on(
                 table.workflow_id,
                 desc(table.created_at),
-            )
+            ),
+
+            // Index for optimizing queue position queries
+            idx_workflow_run_queue_position: index("idx_workflow_run_queue_position").on(
+                table.machine_id,
+                table.status,
+                table.created_at
+            ),
         };
     },
 );
@@ -1067,6 +1073,7 @@ export const userSettingsTable = dbSchema.table("user_settings", {
     custom_output_bucket: boolean("custom_output_bucket").default(false),
     s3_access_key_id: text("s3_access_key_id"),
     s3_secret_access_key: text("s3_secret_access_key"),
+    encrypted_s3_key: text("encrypted_s3_key"),
     s3_bucket_name: text("s3_bucket_name"),
     s3_region: text("s3_region"),
     created_at: timestamp("created_at").defaultNow().notNull(),
@@ -1105,6 +1112,7 @@ export const updateUserSettingsSchema = createInsertSchema(userSettingsTable, {
     s3_access_key_id: z.string().optional().describe("S3 Access Key ID"),
     s3_secret_access_key: z.string().optional().describe("S3 Secret Access Key"),
     s3_bucket_name: z.string().optional().describe("S3 Bucket Name"),
+    encrypted_s3_key: z.string().optional(),
     s3_region: z.string().optional().describe("S3 Region"),
     spend_limit: z.coerce
         .number()

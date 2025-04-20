@@ -27,7 +27,7 @@ from .types import (
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Body
 from fastapi.responses import StreamingResponse
 import modal
-from sqlalchemy import func, update
+from sqlalchemy import func, and_, or_, text, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
@@ -102,7 +102,7 @@ async def run_update(
     },
 )
 @router.get("/run", response_model=WorkflowRunModel, include_in_schema=False)
-async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_run(request: Request, run_id: UUID, queue_position: bool = False, db: AsyncSession = Depends(get_db)):
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user.get("org_id", None)
@@ -138,6 +138,25 @@ async def get_run(request: Request, run_id: UUID, db: AsyncSession = Depends(get
         apply_org_check_direct(run, request)
 
     run = cast(WorkflowRun, run)
+    
+    # Calculate queue position if requested and run has a machine_id
+    if queue_position and run.machine_id is not None and run.status in ["not-started", "queued"]:
+        # Count runs that are queued or not-started, created before this run, and for the same machine
+        # Use a simple approach - just count runs that are in the queue and created before this one
+        queue_position_query = select(func.count()).where(
+            and_(
+                or_(WorkflowRun.status == "not-started", WorkflowRun.status == "queued"),
+                WorkflowRun.machine_id == run.machine_id,
+                WorkflowRun.id != run.id,
+                func.timezone('UTC', WorkflowRun.created_at) < func.timezone('UTC', run.created_at),
+                func.timezone('UTC', WorkflowRun.created_at) >= func.timezone('UTC', datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24))
+            )
+        )
+        queue_position_result = await db.execute(queue_position_query)
+        queue_position = queue_position_result.scalar_one()
+        
+        # Add queue position to the run object
+        setattr(run, "queue_position", queue_position)
 
     # If the run is not in a terminal state, check if the GPU event ended
     # logfire.info(str(run.status))
