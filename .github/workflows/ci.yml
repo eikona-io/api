@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     # drop the "contains" portion, since we already filter at top-level
     if: github.ref_name == 'main' || github.ref_name == 'dev'
-    # environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
