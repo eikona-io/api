@@ -5,6 +5,8 @@ from scalar_fastapi import get_scalar_api_reference
 from fastapi.responses import JSONResponse
 import os
 
+from sqlalchemy import false
+
 app = FastAPI(
     servers=[
         {"url": "https://api.comfydeploy.com/api", "description": "Production server"},
@@ -46,7 +48,9 @@ def custom_openapi(with_code_samples: bool = True):
     # if app.openapi_schema and with_code_samples:
     #     return app.openapi_schema
     
-    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    # fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    # Disable fetching from speakeasy
+    fetch_from_speakeasy = False
     
     if (fetch_from_speakeasy):
         # In development mode, fetch from Speakeasy
