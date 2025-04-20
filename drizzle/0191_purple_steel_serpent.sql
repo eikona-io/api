@@ -1,0 +1,1 @@
+CREATE INDEX "idx_workflow_run_queue_position" ON "comfyui_deploy"."workflow_runs" USING btree ("machine_id","status","created_at");

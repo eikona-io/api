@@ -159,6 +159,7 @@ class WorkflowRunModel(BaseModel):
     cold_start_duration: Optional[float] = 0
     cold_start_duration_total: Optional[float] = 0
     run_duration: Optional[float] = 0
+    queue_position: Optional[int] = None
 
     class Config:
         from_attributes = True

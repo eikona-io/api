@@ -334,11 +334,17 @@ export const workflowRunsTable = dbSchema.table(
                 table.workflow_id,
             ),
 
-            // Add the new index here
             idx_workflow_run_created_at_desc: index("idx_workflow_run_created_at_desc").on(
                 table.workflow_id,
                 desc(table.created_at),
-            )
+            ),
+
+            // Index for optimizing queue position queries
+            idx_workflow_run_queue_position: index("idx_workflow_run_queue_position").on(
+                table.machine_id,
+                table.status,
+                table.created_at
+            ),
         };
     },
 );
