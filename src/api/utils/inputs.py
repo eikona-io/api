@@ -100,6 +100,7 @@ def get_inputs_from_workflow_api(
                 "type": node_type.get("type"),
                 "input_id": input_id,
                 "default_value": default_value,
+                "default_lora_name": value["inputs"].get("default_lora_name", ""),
                 "min_value": value["inputs"].get("min_value"),
                 "max_value": value["inputs"].get("max_value"),
                 "display_name": value["inputs"].get("display_name", ""),
