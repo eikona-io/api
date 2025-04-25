@@ -1,7 +1,9 @@
 from conftest import get_test_client
 import pytest  # noqa: E402
 
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # ===================== machine =====================
 
