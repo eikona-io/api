@@ -12,7 +12,9 @@ from api.routes.utils import generate_persistent_token  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession  # noqa: E402
 from sqlalchemy.pool import AsyncAdaptedQueuePool  # noqa: E402
+from dotenv import load_dotenv
 
+load_dotenv()
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")

@@ -1,6 +1,9 @@
 from conftest import get_test_client
 import pytest  # noqa: E402
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 @pytest.mark.asyncio
 async def test_session_for_free_user(

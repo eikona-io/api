@@ -3,7 +3,9 @@ import pytest  # noqa: E402
 import asyncio
 from contextlib import asynccontextmanager  # noqa: E402
 from aiohttp import web 
+from dotenv import load_dotenv
 
+load_dotenv()
 
 
 @pytest.mark.asyncio
