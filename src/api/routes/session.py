@@ -21,9 +21,6 @@ from api.utils.docker import (
     comfyui_cmd,
     generate_all_docker_commands,
 )
-from dotenv import load_dotenv
-
-load_dotenv()
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 import logfire

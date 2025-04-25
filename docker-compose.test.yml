@@ -23,6 +23,7 @@ services:
         # Default to host.docker.internal, override in CI
         DATABASE_URL: "postgresql://postgres:postgres@${DB_HOST:-host.docker.internal}:5432/verceldb"
         JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054"
+        CURRENT_API_URL: "${CURRENT_API_URL}"
         # Default to host.docker.internal, override in CI
         UPSTASH_REDIS_META_REST_URL: "http://${REDIS_HOST:-host.docker.internal}:80"
         UPSTASH_REDIS_META_REST_TOKEN: "example_token"
