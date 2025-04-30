@@ -297,7 +297,11 @@ async def get_machine(
         m.prestart_command,
         m.install_custom_node_with_gpu,
         m.optimized_runner,
-        m.disable_metadata
+        m.disable_metadata,
+        m.cpu_request,
+        m.cpu_limit,
+        m.memory_request,
+        m.memory_limit
     FROM "comfyui_deploy"."machines" m
     WHERE m.id = :machine_id
     AND m.deleted = FALSE
@@ -400,6 +404,10 @@ class ServerlessMachineModel(BaseModel):
     wait_for_build: Optional[bool] = False
     optimized_runner: Optional[bool] = None
     disable_metadata: Optional[bool] = None
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
 
 
 class UpdateServerlessMachineModel(BaseModel):
@@ -422,6 +430,10 @@ class UpdateServerlessMachineModel(BaseModel):
     is_trigger_rebuild: Optional[bool] = False
     optimized_runner: Optional[bool] = None
     disable_metadata: Optional[bool] = None
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
@@ -629,6 +641,10 @@ async def create_serverless_machine(
         machine_hash=docker_commands_hash,
         disable_metadata=machine.disable_metadata,
         secrets=secrets,  # Add the decrypted secrets to the build parameters
+        cpu_request=machine.cpu_request,
+        cpu_limit=machine.cpu_limit,
+        memory_request=machine.memory_request,
+        memory_limit=machine.memory_limit
     )
 
     if wait_for_build:
@@ -1134,6 +1150,10 @@ async def update_serverless_machine(
             "prestart_command",
             "python_version",
             "install_custom_node_with_gpu",
+            "cpu_request",
+            "cpu_limit",
+            "memory_request",
+            "memory_limit",
         ]
 
         update_machine_dict = update_machine.model_dump()
@@ -1266,6 +1286,10 @@ async def update_serverless_machine(
                 if machine_version
                 else None,
                 disable_metadata=machine.disable_metadata,
+                cpu_request=machine.cpu_request,
+                cpu_limit=machine.cpu_limit,
+                memory_request=machine.memory_request,
+                memory_limit=machine.memory_limit
             )
             background_tasks.add_task(build_logic, params)
 
@@ -1329,7 +1353,11 @@ async def redeploy_machine(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
-        secrets=secrets
+        secrets=secrets,
+        cpu_request=machine.cpu_request,
+        cpu_limit=machine.cpu_limit,
+        memory_request=machine.memory_request,
+        memory_limit=machine.memory_limit
     )
     print("params", params)
     if background_tasks:
@@ -1387,7 +1415,11 @@ async def redeploy_machine_internal(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
-        secrets=secrets
+        secrets=secrets,
+        cpu_request=machine.cpu_request,
+        cpu_limit=machine.cpu_limit,
+        memory_request=machine.memory_request,
+        memory_limit=machine.memory_limit
     )
     await build_logic(params)
 
@@ -1442,7 +1474,11 @@ async def redeploy_machine_deployment_internal(
         is_deployment=True,
         environment=deployment.environment,
         disable_metadata=deployment.disable_metadata,
-        secrets=secrets
+        secrets=secrets,
+        cpu_request=deployment.cpu_request,
+        cpu_limit=deployment.cpu_limit,
+        memory_request=deployment.memory_request,
+        memory_limit=deployment.memory_limit
     )
     await build_logic(params)
 

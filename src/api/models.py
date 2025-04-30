@@ -415,6 +415,10 @@ def get_machine_columns():
         "build_log": Column(String),
         "machine_hash": Column(String),
         "disable_metadata": Column(Boolean, nullable=False, default=True),
+        "cpu_request": Column(Float),
+        "cpu_limit": Column(Float),
+        "memory_request": Column(Integer),
+        "memory_limit": Column(Integer),
     }
 
 

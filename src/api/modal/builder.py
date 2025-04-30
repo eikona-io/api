@@ -171,6 +171,11 @@ class BuildMachineItem(BaseModel):
     environment: Optional[str] = None
     disable_metadata: Optional[bool] = None
     secrets: Optional[Dict] = None
+    # CPU/MEMORY resource requests/limits
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -618,11 +623,12 @@ async def build_logic(item: BuildMachineItem):
             "modal_image_id": item.modal_image_id,
             "environment": item.environment,
             "disable_metadata": "True" if item.disable_metadata else "False",
-            "secrets": item.secrets
-            # "secret": item.secret pass it as a string
+            "secrets": item.secrets,
+            "cpu_request": item.cpu_request,
+            "cpu_limit": item.cpu_limit,
+            "memory_request": item.memory_request,
+            "memory_limit": item.memory_limit
         }
-
-        # print("config: ", config)
 
         config_file_path = os.path.abspath(f"{folder_path}/config.py")
         print(f"Debug: Opening config file at: {config_file_path}")

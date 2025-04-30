@@ -416,6 +416,11 @@ const machineColumns = () => ({
     docker_command_steps: jsonb("docker_command_steps").$type<any>(),
     allow_concurrent_inputs: integer("allow_concurrent_inputs").default(1),
     concurrency_limit: integer("concurrency_limit").default(2),
+    // CPU and Memory resource requests/limits for Modal
+    cpu_request: real("cpu_request"),
+    cpu_limit: real("cpu_limit"),
+    memory_request: integer("memory_request"),
+    memory_limit: integer("memory_limit"),
     install_custom_node_with_gpu: boolean("install_custom_node_with_gpu").default(false),
     run_timeout: integer("run_timeout").default(60 * 5).notNull(),
     idle_timeout: integer("idle_timeout").default(60).notNull(),

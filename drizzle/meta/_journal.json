@@ -1345,6 +1345,13 @@
       "when": 1745138566297,
       "tag": "0191_purple_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1746000501688,
+      "tag": "0192_bitter_black_bird",
+      "breakpoints": true
     }
   ]
 }

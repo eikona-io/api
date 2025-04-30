@@ -77,6 +77,17 @@ disable_metadata = config["disable_metadata"] == "True"
 print("disable_metadata: ", disable_metadata)
 secrets = config["secrets"]
 
+# --- CPU/MEMORY resource config ---
+cpu_request = config["cpu_request"]
+cpu_limit = config["cpu_limit"]
+memory_request = config["memory_request"]
+memory_limit = config["memory_limit"]
+
+cpu = (cpu_request, cpu_limit) if cpu_request and cpu_limit else cpu_request or None
+memory = (memory_request, memory_limit) if memory_request and memory_limit else memory_request or None
+print(f"CPU: {cpu}, Memory: {memory}")
+# --- END CPU/MEMORY resource config ---
+
 logger = logging.getLogger(__name__)
 
 # print(base_docker_image, python_version, prestart_command, global_extra_args)
@@ -791,38 +802,58 @@ def send_log_entry(
 async def check_for_timeout(
     update_endpoint: str, session_id: str
 ):
+    max_retries = 5
+    base_delay = 1  # seconds
     try:
         while True:
-            async with aiohttp.ClientSession() as client:
-                # token = generate_temporary_token(user_id, org_id)
-                token = config["auth_token"]
-                async with client.post(
-                    update_endpoint + "/api/session/callback/check-timeout",
-                    headers={"Authorization": f"Bearer {token}"},
-                    json={
-                        "session_id": str(session_id),
-                    },
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if data.get("continue", True):
-                            await asyncio.sleep(1)
-                        else:
-                            send_log_entry(
-                                update_endpoint,
-                                session_id,
-                                config["machine_id"],
-                                "Session closed due to timeout",
-                            )
-                            break
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    async with aiohttp.ClientSession() as client:
+                        token = config["auth_token"]
+                        async with client.post(
+                            update_endpoint + "/api/session/callback/check-timeout",
+                            headers={"Authorization": f"Bearer {token}"},
+                            json={
+                                "session_id": str(session_id),
+                            },
+                        ) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                if data.get("continue", True):
+                                    await asyncio.sleep(1)
+                                else:
+                                    send_log_entry(
+                                        update_endpoint,
+                                        session_id,
+                                        config["machine_id"],
+                                        "Session closed due to timeout",
+                                    )
+                                    return
+                                break  # Success, break out of retry loop
+                            else:
+                                logger.warning(f"Non-200 response: {response.status}")
+                                retry_count += 1
+                                await asyncio.sleep(base_delay * (2 ** (retry_count - 1)))
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning(f"Timeout or connection error: {e}, retry {retry_count+1}/{max_retries}")
+                    retry_count += 1
+                    await asyncio.sleep(base_delay * (2 ** (retry_count - 1)))
+                except Exception as e:
+                    logger.error(f"Unexpected error in check_for_timeout: {str(e)}")
+                    retry_count += 1
+                    await asyncio.sleep(base_delay * (2 ** (retry_count - 1)))
+                if retry_count >= max_retries:
+                    logger.error(f"Max retries reached for check_for_timeout (session {session_id})")
+                    break
             await asyncio.sleep(1)
     except asyncio.CancelledError:
-        # Handle cancellation gracefully
         logger.info(f"Timeout checker cancelled for session {session_id}")
         raise
     except Exception as e:
         logger.error(f"Error in timeout checker for session {session_id}: {str(e)}")
         raise
+
 
 async def delete_session(
     update_endpoint: str, session_id: str
@@ -2336,7 +2367,9 @@ class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
     enable_memory_snapshot=True,
-    secrets=[modal.Secret.from_dict(secrets)]
+    secrets=[modal.Secret.from_dict(secrets)],
+    cpu=cpu,
+    memory=memory,
 )
 class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunnerOptimizedImports):
     pass
@@ -2424,7 +2457,9 @@ async def get_file_tree(path="/"):
     container_idle_timeout=config["idle_timeout"],
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
-    secrets=[modal.Secret.from_dict(secrets)]
+    secrets=[modal.Secret.from_dict(secrets)],
+    cpu=cpu,
+    memory=memory,
 )
 class ComfyDeployRunner(BaseComfyDeployRunner):
     @enter()
