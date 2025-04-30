@@ -297,7 +297,11 @@ async def get_machine(
         m.prestart_command,
         m.install_custom_node_with_gpu,
         m.optimized_runner,
-        m.disable_metadata
+        m.disable_metadata,
+        m.cpu_request,
+        m.cpu_limit,
+        m.memory_request,
+        m.memory_limit
     FROM "comfyui_deploy"."machines" m
     WHERE m.id = :machine_id
     AND m.deleted = FALSE
@@ -1142,6 +1146,10 @@ async def update_serverless_machine(
             "prestart_command",
             "python_version",
             "install_custom_node_with_gpu",
+            "cpu_request",
+            "cpu_limit",
+            "memory_request",
+            "memory_limit",
         ]
 
         update_machine_dict = update_machine.model_dump()
