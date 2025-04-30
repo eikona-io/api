@@ -26,6 +26,7 @@ def get_ngrok_url_with_retry(max_retries=5, delay=1):
 
 ngrok_url = get_ngrok_url_with_retry()
 
+# This should override the CURRENT_API_URL in the .env file to be the dynamic ngrok url
 os.environ["CURRENT_API_URL"] = ngrok_url
 
 
