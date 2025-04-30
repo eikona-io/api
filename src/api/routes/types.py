@@ -552,7 +552,6 @@ class InputModel(BaseModel):
     class_type: str
     input_id: str
     default_value: Optional[Union[str, int, float, bool, List[Any]]] = None
-    default_lora_name: Optional[Union[str, int, float, bool, List[Any]]] = None
     min_value: Optional[Union[int, float]] = None
     max_value: Optional[Union[int, float]] = None
     display_name: str = ""
