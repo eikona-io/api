@@ -641,6 +641,10 @@ async def create_serverless_machine(
         machine_hash=docker_commands_hash,
         disable_metadata=machine.disable_metadata,
         secrets=secrets,  # Add the decrypted secrets to the build parameters
+        cpu_request=machine.cpu_request,
+        cpu_limit=machine.cpu_limit,
+        memory_request=machine.memory_request,
+        memory_limit=machine.memory_limit
     )
 
     if wait_for_build:
@@ -1345,7 +1349,11 @@ async def redeploy_machine(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
-        secrets=secrets
+        secrets=secrets,
+        cpu_request=machine.cpu_request,
+        cpu_limit=machine.cpu_limit,
+        memory_request=machine.memory_request,
+        memory_limit=machine.memory_limit
     )
     print("params", params)
     if background_tasks:
@@ -1403,7 +1411,11 @@ async def redeploy_machine_internal(
         machine_version_id=str(machine.machine_version_id),
         machine_hash=machine_version.machine_hash,
         disable_metadata=machine.disable_metadata,
-        secrets=secrets
+        secrets=secrets,
+        cpu_request=machine.cpu_request,
+        cpu_limit=machine.cpu_limit,
+        memory_request=machine.memory_request,
+        memory_limit=machine.memory_limit
     )
     await build_logic(params)
 
@@ -1458,7 +1470,11 @@ async def redeploy_machine_deployment_internal(
         is_deployment=True,
         environment=deployment.environment,
         disable_metadata=deployment.disable_metadata,
-        secrets=secrets
+        secrets=secrets,
+        cpu_request=deployment.cpu_request,
+        cpu_limit=deployment.cpu_limit,
+        memory_request=deployment.memory_request,
+        memory_limit=deployment.memory_limit
     )
     await build_logic(params)
 
