@@ -77,6 +77,17 @@ disable_metadata = config["disable_metadata"] == "True"
 print("disable_metadata: ", disable_metadata)
 secrets = config["secrets"]
 
+# --- CPU/MEMORY resource config ---
+cpu_request = config["cpu_request"]
+cpu_limit = config["cpu_limit"]
+memory_request = config["memory_request"]
+memory_limit = config["memory_limit"]
+
+cpu = (cpu_request, cpu_limit) if cpu_request and cpu_limit else cpu_request or None
+memory = (memory_request, memory_limit) if memory_request and memory_limit else memory_request or None
+print(f"CPU: {cpu}, Memory: {memory}")
+# --- END CPU/MEMORY resource config ---
+
 logger = logging.getLogger(__name__)
 
 # print(base_docker_image, python_version, prestart_command, global_extra_args)
@@ -2345,16 +2356,6 @@ class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
 
             print(f"\nGPUs available: {torch.cuda.is_available()}")
 
-
-# --- CPU/MEMORY resource config ---
-cpu_request = config.get("cpu_request")
-cpu_limit = config.get("cpu_limit")
-memory_request = config.get("memory_request")
-memory_limit = config.get("memory_limit")
-
-cpu = (cpu_request, cpu_limit) if cpu_request and cpu_limit else cpu_request or None
-memory = (memory_request, memory_limit) if memory_request and memory_limit else memory_request or None
-# --- END CPU/MEMORY resource config ---
 
 @app.cls(
     image=target_image,

@@ -623,20 +623,12 @@ async def build_logic(item: BuildMachineItem):
             "modal_image_id": item.modal_image_id,
             "environment": item.environment,
             "disable_metadata": "True" if item.disable_metadata else "False",
-            "secrets": item.secrets
-            # "secret": item.secret pass it as a string
+            "secrets": item.secrets,
+            "cpu_request": item.cpu_request,
+            "cpu_limit": item.cpu_limit,
+            "memory_request": item.memory_request,
+            "memory_limit": item.memory_limit
         }
-        # Add CPU/MEMORY resource requests/limits if present
-        if item.cpu_request is not None:
-            config["cpu_request"] = item.cpu_request
-        if item.cpu_limit is not None:
-            config["cpu_limit"] = item.cpu_limit
-        if item.memory_request is not None:
-            config["memory_request"] = item.memory_request
-        if item.memory_limit is not None:
-            config["memory_limit"] = item.memory_limit
-
-        # print("config: ", config)
 
         config_file_path = os.path.abspath(f"{folder_path}/config.py")
         print(f"Debug: Opening config file at: {config_file_path}")

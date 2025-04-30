@@ -1286,6 +1286,10 @@ async def update_serverless_machine(
                 if machine_version
                 else None,
                 disable_metadata=machine.disable_metadata,
+                cpu_request=machine.cpu_request,
+                cpu_limit=machine.cpu_limit,
+                memory_request=machine.memory_request,
+                memory_limit=machine.memory_limit
             )
             background_tasks.add_task(build_logic, params)
 
