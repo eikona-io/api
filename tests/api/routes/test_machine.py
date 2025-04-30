@@ -248,3 +248,69 @@ async def test_update_serverless_machine(app, paid_user, test_serverless_machine
             updated_machine["docker_command_steps"]
             == update_data["docker_command_steps"]
         )
+
+@pytest.mark.asyncio
+async def test_create_serverless_machine_cpu_mem_restriction(app, free_user, paid_user, paid_user_2):
+    # Test data with cpu/mem fields
+    machine_data = {
+        "name": "test-serverless-machine-cpu-mem",
+        "gpu": "CPU",
+        "wait_for_build": True,
+        "cpu_request": 2.0,
+        "cpu_limit": 4.0,
+        "memory_request": 4096,
+        "memory_limit": 8192,
+    }
+
+    # Free user - forbidden
+    async with get_test_client(app, free_user) as client:
+        response = await client.post("/machine/serverless", json=machine_data)
+        assert response.status_code == 403
+
+    # Paid user 2 (non-business) - forbidden
+    async with get_test_client(app, paid_user_2) as client:
+        response = await client.post("/machine/serverless", json=machine_data)
+        assert response.status_code == 403
+
+    # Paid user (business) - allowed
+    async with get_test_client(app, paid_user) as client:
+        response = await client.post("/machine/serverless", json=machine_data)
+        assert response.status_code == 200
+        machine_id = response.json()["id"]
+        # Check the values are set
+        get_response = await client.get(f"/machine/{machine_id}")
+        assert get_response.status_code == 200
+        machine = get_response.json()
+        assert machine["cpu_request"] == 2.0
+        assert machine["cpu_limit"] == 4.0
+        assert machine["memory_request"] == 4096
+        assert machine["memory_limit"] == 8192
+        # Cleanup
+        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
+        assert delete_response.status_code == 200
+
+@pytest.mark.asyncio
+async def test_update_serverless_machine_cpu_mem_restriction(app, paid_user, paid_user_2, test_serverless_machine):
+    update_data = {
+        "cpu_request": 1.0,
+        "cpu_limit": 2.0,
+        "memory_request": 2048,
+        "memory_limit": 4096,
+    }
+    # Paid user 2 (non-business) - forbidden
+    async with get_test_client(app, paid_user_2) as client:
+        response = await client.patch(
+            f"/machine/serverless/{test_serverless_machine}", json=update_data
+        )
+        assert response.status_code == 403
+    # Paid user (business) - allowed
+    async with get_test_client(app, paid_user) as client:
+        response = await client.patch(
+            f"/machine/serverless/{test_serverless_machine}", json=update_data
+        )
+        assert response.status_code == 200
+        updated_machine = response.json()
+        assert updated_machine["cpu_request"] == 1.0
+        assert updated_machine["cpu_limit"] == 2.0
+        assert updated_machine["memory_request"] == 2048
+        assert updated_machine["memory_limit"] == 4096

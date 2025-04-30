@@ -171,6 +171,11 @@ class BuildMachineItem(BaseModel):
     environment: Optional[str] = None
     disable_metadata: Optional[bool] = None
     secrets: Optional[Dict] = None
+    # CPU/MEMORY resource requests/limits
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -621,6 +626,15 @@ async def build_logic(item: BuildMachineItem):
             "secrets": item.secrets
             # "secret": item.secret pass it as a string
         }
+        # Add CPU/MEMORY resource requests/limits if present
+        if item.cpu_request is not None:
+            config["cpu_request"] = item.cpu_request
+        if item.cpu_limit is not None:
+            config["cpu_limit"] = item.cpu_limit
+        if item.memory_request is not None:
+            config["memory_request"] = item.memory_request
+        if item.memory_limit is not None:
+            config["memory_limit"] = item.memory_limit
 
         # print("config: ", config)
 

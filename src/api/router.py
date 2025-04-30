@@ -5,7 +5,6 @@ from scalar_fastapi import get_scalar_api_reference
 from fastapi.responses import JSONResponse
 import os
 
-from sqlalchemy import false
 
 app = FastAPI(
     servers=[

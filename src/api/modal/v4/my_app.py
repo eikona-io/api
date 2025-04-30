@@ -2326,6 +2326,16 @@ class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             print(f"\nGPUs available: {torch.cuda.is_available()}")
 
 
+# --- CPU/MEMORY resource config ---
+cpu_request = config.get("cpu_request")
+cpu_limit = config.get("cpu_limit")
+memory_request = config.get("memory_request")
+memory_limit = config.get("memory_limit")
+
+cpu = (cpu_request, cpu_limit) if cpu_request and cpu_limit else cpu_request or None
+memory = (memory_request, memory_limit) if memory_request and memory_limit else memory_request or None
+# --- END CPU/MEMORY resource config ---
+
 @app.cls(
     image=target_image,
     # will be overridden by the run function
@@ -2336,7 +2346,9 @@ class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
     enable_memory_snapshot=True,
-    secrets=[modal.Secret.from_dict(secrets)]
+    secrets=[modal.Secret.from_dict(secrets)],
+    cpu=cpu,
+    memory=memory,
 )
 class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunnerOptimizedImports):
     pass
@@ -2424,7 +2436,9 @@ async def get_file_tree(path="/"):
     container_idle_timeout=config["idle_timeout"],
     allow_concurrent_inputs=config["allow_concurrent_inputs"],
     concurrency_limit=config["concurrency_limit"],
-    secrets=[modal.Secret.from_dict(secrets)]
+    secrets=[modal.Secret.from_dict(secrets)],
+    cpu=cpu,
+    memory=memory,
 )
 class ComfyDeployRunner(BaseComfyDeployRunner):
     @enter()
