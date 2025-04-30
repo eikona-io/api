@@ -231,69 +231,29 @@ async def run_session(
         )
 
     async def check_for_timeout(session_id: str):
-        max_retries = 5
-        backoff_factor = 1.5  # Each retry will wait longer than the previous one
-        initial_delay = 1.0  # First retry after 1 second
         try:
             while True:
-                retries = 0
-                success = False
-                last_error = None
-                
-                while retries <= max_retries and not success:
-                    try:
-                        async with aiohttp.ClientSession() as client:
-                            token = generate_temporary_token(user_id, org_id)
-                            async with client.post(
-                                update_endpoint + "/api/session/callback/check-timeout",
-                                headers={"Authorization": f"Bearer {token}"},
-                                json={
-                                    "session_id": str(session_id),
-                                    },
-                                    timeout=10  # Add a timeout parameter to avoid waiting too long
-                                    ) as response:
-                                if response.status == 200:
-                                    data = await response.json()
-                                    success = True
-                                    if data.get("continue", True):
-                                        await asyncio.sleep(1)
-                                    else:
-                                        send_log_entry(
-                                            update_endpoint,
-                                            session_id,
-                                            machine_id,
-                                            "Session closed due to timeout",
-                                            )
-                                    return  # Exit the function
-                                else:
-                                    error_text = await response.text()
-                                    last_error = f"HTTP error: {response.status} - {error_text}"
-                                    retries += 1
-                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                        # Network-related exceptions that are worth retrying
-                        last_error = str(e)
-                        retries += 1
-                        
-                    # If we've had an error and need to retry, implement exponential backoff
-                    if not success and retries <= max_retries:
-                        retry_delay = initial_delay * (backoff_factor ** (retries - 1))
-                        logger.info(f"Retry {retries}/{max_retries} for session {session_id} after {retry_delay:.2f}s: {last_error}")
-                        await asyncio.sleep(retry_delay)
-                    
-                    # If we exhausted all retries without success, log the error and terminate                                 
-                    if not success:
-                        error_message = f"All retries failed for session {session_id}: {last_error}"
-                        logger.error(error_message)
-                        send_log_entry(
-                            update_endpoint,
-                            session_id,
-                            machine_id,
-                            f"Timeout checker terminated after {max_retries} failed attempts"
-                            )
-                        # Terminate the function by raising an exception
-                        raise RuntimeError(error_message)
-
-                # Continue the main polling loop
+                async with aiohttp.ClientSession() as client:
+                    token = generate_temporary_token(user_id, org_id)
+                    async with client.post(
+                        update_endpoint + "/api/session/callback/check-timeout",
+                        headers={"Authorization": f"Bearer {token}"},
+                        json={
+                            "session_id": str(session_id),
+                        },
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            if data.get("continue", True):
+                                await asyncio.sleep(1)
+                            else:
+                                send_log_entry(
+                                    update_endpoint,
+                                    session_id,
+                                    machine_id,
+                                    "Session closed due to timeout",
+                                )
+                                break
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             # Handle cancellation gracefully
