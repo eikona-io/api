@@ -400,6 +400,10 @@ class ServerlessMachineModel(BaseModel):
     wait_for_build: Optional[bool] = False
     optimized_runner: Optional[bool] = None
     disable_metadata: Optional[bool] = None
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
 
 
 class UpdateServerlessMachineModel(BaseModel):
@@ -422,6 +426,10 @@ class UpdateServerlessMachineModel(BaseModel):
     is_trigger_rebuild: Optional[bool] = False
     optimized_runner: Optional[bool] = None
     disable_metadata: Optional[bool] = None
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
