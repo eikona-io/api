@@ -279,6 +279,10 @@ class MachineModel(MachineSharedFields):
     import_failed_logs: Optional[str]
     machine_version_id: Optional[UUID]
     has_workflows: bool = False
+    cpu_request: Optional[float] = None
+    cpu_limit: Optional[float] = None
+    memory_request: Optional[int] = None
+    memory_limit: Optional[int] = None
 
     class Config:
         from_attributes = True
