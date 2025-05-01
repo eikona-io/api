@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 
 from modal._output import OutputManager
+from modal.call_graph import InputStatus
 
 
 class CustomOutputManager(OutputManager):
@@ -1472,9 +1473,21 @@ async def delete_session(
         if is_sandbox:
             await modal.Sandbox.from_id(modal_function_id).terminate.aio()
         else:
-            await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
+            call_graph = await modal.functions.FunctionCall.from_id(modal_function_id).get_call_graph.aio()
+            call_status = call_graph[0].status if call_graph else None
+     
+            # If already terminated/failed/timed out, just update the database
+            if call_status in [InputStatus.TERMINATED, InputStatus.FAILURE, InputStatus.TIMEOUT, InputStatus.INIT_FAILURE]:
+                if gpuEvent.start_time is not None and gpuEvent.end_time is None:
+                    gpuEvent.end_time = gpuEvent.start_time
+                    await db.commit()
+                    await db.refresh(gpuEvent)
+                    logfire.error("Session end has some problem, force closing (reset to 0)", status=call_status.name)
+            else:
+                # Only attempt cancellation if not already terminated
+                await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
     except Exception as e:
-        logger.error(f"Error cancelling modal function {modal_function_id}: {str(e)}")
+        logger.error(f"Error handling modal function {modal_function_id}: {str(e)}")
 
     # Update GPU event end time if is sandbox
     if is_sandbox:
