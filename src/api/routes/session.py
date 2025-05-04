@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 
 from modal._output import OutputManager
+from modal.call_graph import InputStatus
 
 
 class CustomOutputManager(OutputManager):
@@ -655,6 +656,31 @@ async def create_session(
             raise HTTPException(
                 status_code=400, detail="Free plan does not support concurrent sessions"
             )
+    
+    # Optimize by using COUNT directly in the database query
+    max_concurrent_sessions = 5
+    
+    session_count_query = (
+        select(func.count())
+        .select_from(GPUEvent)
+        .where(GPUEvent.machine_id == body.machine_id)
+        .where(GPUEvent.session_id.isnot(None))
+        .where(GPUEvent.end_time.is_(None))
+    )
+    
+    # use func count cannot use apply_org_check
+    if org_id:
+        session_count_query = session_count_query.where(GPUEvent.org_id == org_id)
+    else:
+        session_count_query = session_count_query.where((GPUEvent.user_id == user_id) & (GPUEvent.org_id.is_(None)))
+        
+    session_count = await db.execute(session_count_query)
+    session_count = session_count.scalar_one()
+
+    if session_count >= max_concurrent_sessions:
+        raise HTTPException(
+            status_code=400, detail="You have reached the maximum number of concurrent sessions. Please close some sessions and try again."
+        )
 
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
@@ -1447,9 +1473,21 @@ async def delete_session(
         if is_sandbox:
             await modal.Sandbox.from_id(modal_function_id).terminate.aio()
         else:
-            await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
+            call_graph = await modal.functions.FunctionCall.from_id(modal_function_id).get_call_graph.aio()
+            call_status = call_graph[0].status if call_graph else None
+     
+            # If already terminated/failed/timed out, just update the database
+            if call_status in [InputStatus.TERMINATED, InputStatus.FAILURE, InputStatus.TIMEOUT, InputStatus.INIT_FAILURE]:
+                if gpuEvent.start_time is not None and gpuEvent.end_time is None:
+                    gpuEvent.end_time = gpuEvent.start_time
+                    await db.commit()
+                    await db.refresh(gpuEvent)
+                    logfire.error("Session end has some problem, force closing (reset to 0)", status=call_status.name)
+            else:
+                # Only attempt cancellation if not already terminated
+                await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
     except Exception as e:
-        logger.error(f"Error cancelling modal function {modal_function_id}: {str(e)}")
+        logger.error(f"Error handling modal function {modal_function_id}: {str(e)}")
 
     # Update GPU event end time if is sandbox
     if is_sandbox:
