@@ -1488,6 +1488,13 @@ async def delete_session(
                 await modal.functions.FunctionCall.from_id(modal_function_id).cancel.aio()
     except Exception as e:
         logger.error(f"Error handling modal function {modal_function_id}: {str(e)}")
+        # Handle the "No Function Call with ID" error specifically
+        if "No Function Call with ID" in str(e):
+            if gpuEvent.start_time is not None and gpuEvent.end_time is None:
+                gpuEvent.end_time = gpuEvent.start_time
+                await db.commit()
+                await db.refresh(gpuEvent)
+                logfire.error("Session end has some problem, function ID might be expired", function_id=modal_function_id)
 
     # Update GPU event end time if is sandbox
     if is_sandbox:
