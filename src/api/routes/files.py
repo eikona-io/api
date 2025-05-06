@@ -481,36 +481,6 @@ async def upload_asset_file(
             raise HTTPException(status_code=500, detail="Error uploading file")
 
 
-@router.get("/assets/{asset_id}", response_model=AssetResponse)
-async def get_asset(
-    request: Request,
-    asset_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    # Get the asset
-    query = select(Asset).apply_org_check(request).where(Asset.id == asset_id)
-    result = await db.execute(query)
-    asset = result.scalar_one_or_none()
-    
-    if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    
-    # Get user settings for S3 configuration
-    s3_config = await get_s3_config(request, db)
-
-    # Generate temporary URL for private files
-    if s3_config and not s3_config.public and asset.url:
-        asset.url = get_temporary_download_url(
-            asset.url,
-            region=s3_config.region,
-            access_key=s3_config.access_key,
-            secret_key=s3_config.secret_key,
-            expiration=3600,
-        )
-    
-    return asset
-
-
 @router.get("/assets/presigned-url")
 async def get_asset_upload_url(
     request: Request,
@@ -589,3 +559,29 @@ async def register_asset(
     await db.refresh(new_asset)
     
     return new_asset
+
+@router.get("/assets/{asset_id}", response_model=AssetResponse)
+async def get_asset(
+    request: Request,
+    asset_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Asset).apply_org_check(request).where(Asset.id == asset_id)
+    result = await db.execute(query)
+    asset = result.scalar_one_or_none()
+    
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    s3_config = await get_s3_config(request, db)
+
+    if s3_config and not s3_config.public and asset.url:
+        asset.url = get_temporary_download_url(
+            asset.url,
+            region=s3_config.region,
+            access_key=s3_config.access_key,
+            secret_key=s3_config.secret_key,
+            expiration=3600,
+        )
+    
+    return asset
