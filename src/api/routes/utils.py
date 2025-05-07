@@ -617,6 +617,46 @@ def generate_presigned_url(
     return response
 
 
+def delete_s3_object(
+    bucket: str,
+    object_key: str,
+    region: str,
+    access_key: str,
+    secret_key: str,
+):
+    """
+    Delete an object from an S3 bucket
+    
+    Args:
+        bucket: The name of the S3 bucket
+        object_key: The key of the object to delete
+        region: The AWS region
+        access_key: The AWS access key
+        secret_key: The AWS secret key
+        
+    Returns:
+        None
+    """
+    try:
+        s3_client = boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+        
+        s3_client.delete_object(
+            Bucket=bucket,
+            Key=object_key
+        )
+        
+        return True
+    except ClientError as e:
+        logging.error(f"Error deleting S3 object: {e}")
+        return False
+
+
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
 
 
