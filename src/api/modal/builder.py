@@ -630,7 +630,7 @@ async def build_logic(item: BuildMachineItem):
             "memory_limit": item.memory_limit
         }
 
-        config_file_path = os.path.abspath(f"{folder_path}/config.py")
+        config_file_path = os.path.abspath(f"{folder_path}/config_v4.py")
         print(f"Debug: Opening config file at: {config_file_path}")
 
         if os.environ.get("TAILSCALE_AUTHKEY", None) is not None:
@@ -645,7 +645,7 @@ async def build_logic(item: BuildMachineItem):
         # with open(f"{folder_path}/config.py", "w") as f:
         #     f.write("config = " + json.dumps(config))
 
-        with open(f"{folder_path}/config.py", "w") as f:
+        with open(f"{folder_path}/config_v4.py", "w") as f:
             f.write("config = {\n")
             for key, value in config.items():
                 if isinstance(value, str):
