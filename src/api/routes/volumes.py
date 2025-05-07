@@ -541,12 +541,14 @@ async def handle_file_download(
                     try:
                         await event_generator()  # Wait for download to complete
                         
+                        s3_config = await get_s3_config(request, db)
+                        
                         delete_s3_object(
                             bucket=s3_temp_object["bucket"],
                             object_key=s3_temp_object["object_key"],
-                            region=os.environ.get("S3_REGION"),
-                            access_key=os.environ.get("S3_ACCESS_KEY"),
-                            secret_key=os.environ.get("S3_SECRET_KEY")
+                            region=s3_config.region,
+                            access_key=s3_config.access_key,
+                            secret_key=s3_config.secret_key
                         )
                         logger.info(f"Deleted temporary S3 object: {s3_temp_object['object_key']}")
                     except Exception as e:
