@@ -1,7 +1,7 @@
 import gc
 import logging
 import threading
-from config_v4 import config
+from cd_config import config
 import modal
 from time import time
 from modal import (
