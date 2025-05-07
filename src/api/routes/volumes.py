@@ -1,12 +1,13 @@
 import time
 
 from api.utils.multi_level_cache import multi_level_cached
-from .types import Model
+from .types import Model, GenerateUploadUrlRequest, GenerateUploadUrlResponse
 from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
 from typing import Any, Dict, List, Tuple, Union, Optional, Literal
 import logging
 import os
-from .utils import get_user_settings, select
+import uuid
+from .utils import get_user_settings, select, generate_presigned_url, delete_s3_object
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 from api.database import get_db
@@ -436,6 +437,7 @@ async def handle_file_download(
     upload_type: str,
     db_model_id: str,
     background_tasks: BackgroundTasks,
+    s3_temp_object: Optional[Dict[str, str]] = None
 ) -> StreamingResponse:
     """Helper function to handle file downloads with progress tracking"""
     try:
@@ -532,7 +534,28 @@ async def handle_file_download(
                 await db.commit()
                 raise e
 
-        background_tasks.add_task(event_generator)
+        if s3_temp_object:
+            try:
+                async def delete_temp_s3_object():
+                    try:
+                        await event_generator()  # Wait for download to complete
+                        
+                        delete_s3_object(
+                            bucket=s3_temp_object["bucket"],
+                            object_key=s3_temp_object["object_key"],
+                            region=os.environ.get("S3_REGION"),
+                            access_key=os.environ.get("S3_ACCESS_KEY"),
+                            secret_key=os.environ.get("S3_SECRET_KEY")
+                        )
+                        logger.info(f"Deleted temporary S3 object: {s3_temp_object['object_key']}")
+                    except Exception as e:
+                        logger.error(f"Error deleting S3 object: {str(e)}")
+                
+                background_tasks.add_task(delete_temp_s3_object)
+            except Exception as e:
+                logger.error(f"Error setting up S3 object deletion: {str(e)}")
+        else:
+            background_tasks.add_task(event_generator)
 
         return JSONResponse(content={"message": "success"})
 
@@ -564,7 +587,8 @@ async def handle_generic_model(
     request: Request,
     data: AddFileInputNew, 
     db: AsyncSession,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    s3_temp_object: Optional[Dict[str, str]] = None
 ):
     filename = data.filename or await get_filename_from_url(data.url)
     if not filename:
@@ -601,7 +625,8 @@ async def handle_generic_model(
         filename=filename,
         upload_type="download-url", 
         db_model_id=str(model.id),
-        background_tasks=background_tasks
+        background_tasks=background_tasks,
+        s3_temp_object=s3_temp_object
     )
 
     return {"message": "Generic model download started"}
@@ -1333,6 +1358,58 @@ class AddModelRequest(BaseModel):
     huggingface: Optional[HuggingfaceModel] = None
     civitai: Optional[CivitaiModel] = None
     downloadLink: Optional[str] = None
+    isTemporaryUpload: Optional[bool] = False
+    s3ObjectKey: Optional[str] = None
+
+@router.post("/volume/file/generate-upload-url")
+async def generate_upload_url(
+    request: Request,
+    body: GenerateUploadUrlRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate a presigned URL for direct file uploads to S3"""
+    try:
+        bucket = os.environ.get("S3_BUCKET")
+        region = os.environ.get("S3_REGION")
+        access_key = os.environ.get("S3_ACCESS_KEY")
+        secret_key = os.environ.get("S3_SECRET_KEY")
+        
+        if not all([bucket, region, access_key, secret_key]):
+            raise HTTPException(status_code=500, detail="S3 configuration is incomplete")
+        
+        user_id = request.state.current_user.get("user_id")
+        org_id = request.state.current_user.get("org_id")
+        
+        owner_id = org_id if org_id else user_id
+        
+        object_key = f"temp-uploads/{owner_id}/{uuid.uuid4()}/{body.filename}"
+        
+        presigned_url = generate_presigned_url(
+            bucket=bucket,
+            object_key=object_key,
+            region=region,
+            access_key=access_key,
+            secret_key=secret_key,
+            expiration=3600,  # 1 hour expiration
+            http_method="PUT",
+            content_type=body.contentType,
+            public=False  # Keep uploads private
+        )
+        
+        if not presigned_url:
+            raise HTTPException(status_code=500, detail="Failed to generate upload URL")
+        
+        return GenerateUploadUrlResponse(
+            uploadUrl=presigned_url,
+            objectKey=object_key
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating upload URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/volume/model")
 async def add_model(
@@ -1399,17 +1476,59 @@ async def add_model(
         elif body.source == "link":
             if not body.downloadLink:
                 raise HTTPException(status_code=400, detail="Download link is required")
+            
+            url = body.downloadLink
+            
+            if body.isTemporaryUpload and body.s3ObjectKey:
+                bucket = os.environ.get("S3_BUCKET")
+                region = os.environ.get("S3_REGION")
+                access_key = os.environ.get("S3_ACCESS_KEY")
+                secret_key = os.environ.get("S3_SECRET_KEY")
                 
-            return await handle_generic_model(
-                request=request,
-                data=AddFileInputNew(
-                    url=body.downloadLink,
+                if not all([bucket, region, access_key, secret_key]):
+                    raise HTTPException(status_code=500, detail="S3 configuration is incomplete")
+                
+                url = generate_presigned_url(
+                    bucket=bucket,
+                    object_key=body.s3ObjectKey,
+                    region=region,
+                    access_key=access_key,
+                    secret_key=secret_key,
+                    expiration=3600,
+                    http_method="GET",
+                    public=False
+                )
+                
+                if not url:
+                    raise HTTPException(status_code=500, detail="Failed to generate download URL for temporary upload")
+                
+                data = AddFileInputNew(
+                    url=url,
                     filename=body.filename,
                     folder_path=body.folderPath
-                ),
-                db=db,
-                background_tasks=background_tasks
-            )
+                )
+                
+                return await handle_generic_model(
+                    request=request,
+                    data=data,
+                    db=db,
+                    background_tasks=background_tasks,
+                    s3_temp_object={
+                        "bucket": bucket,
+                        "object_key": body.s3ObjectKey
+                    }
+                )
+            else:
+                return await handle_generic_model(
+                    request=request,
+                    data=AddFileInputNew(
+                        url=url,
+                        filename=body.filename,
+                        folder_path=body.folderPath
+                    ),
+                    db=db,
+                    background_tasks=background_tasks
+                )
             
         else:
             raise HTTPException(status_code=400, detail="Invalid source type")
