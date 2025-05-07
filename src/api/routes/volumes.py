@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from .utils import get_user_settings, select, generate_presigned_url, delete_s3_object
+from api.utils.storage_helper import get_s3_config
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
 from api.database import get_db
@@ -1369,10 +1370,12 @@ async def generate_upload_url(
 ):
     """Generate a presigned URL for direct file uploads to S3"""
     try:
-        bucket = os.environ.get("S3_BUCKET")
-        region = os.environ.get("S3_REGION")
-        access_key = os.environ.get("S3_ACCESS_KEY")
-        secret_key = os.environ.get("S3_SECRET_KEY")
+        s3_config = await get_s3_config(request, db)
+        
+        bucket = s3_config.bucket
+        region = s3_config.region
+        access_key = s3_config.access_key
+        secret_key = s3_config.secret_key
         
         if not all([bucket, region, access_key, secret_key]):
             raise HTTPException(status_code=500, detail="S3 configuration is incomplete")
@@ -1480,10 +1483,12 @@ async def add_model(
             url = body.downloadLink
             
             if body.isTemporaryUpload and body.s3ObjectKey:
-                bucket = os.environ.get("S3_BUCKET")
-                region = os.environ.get("S3_REGION")
-                access_key = os.environ.get("S3_ACCESS_KEY")
-                secret_key = os.environ.get("S3_SECRET_KEY")
+                s3_config = await get_s3_config(request, db)
+                
+                bucket = s3_config.bucket
+                region = s3_config.region
+                access_key = s3_config.access_key
+                secret_key = s3_config.secret_key
                 
                 if not all([bucket, region, access_key, secret_key]):
                     raise HTTPException(status_code=500, detail="S3 configuration is incomplete")
