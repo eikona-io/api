@@ -1,5 +1,5 @@
 import modal
-from config import config
+from cd_config import config
 import os
 
 public_model_volume = modal.Volume.lookup(config["public_model_volume"], create_if_missing=True)
