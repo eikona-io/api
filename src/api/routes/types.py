@@ -703,3 +703,14 @@ class PlanInfo(BaseModel):
     expires_at: Optional[int] = -1
     spent: Optional[float] = None
     spend_limit: float = Field(default=500.0)
+
+
+class GenerateUploadUrlRequest(BaseModel):
+    filename: str
+    contentType: str
+    size: int
+
+
+class GenerateUploadUrlResponse(BaseModel):
+    uploadUrl: str
+    objectKey: str

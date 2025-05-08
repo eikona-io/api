@@ -431,12 +431,22 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
         )
 
     # Get existing settings or create new
-    user_settings = await db.execute(
-        select(UserSettings).where(
-            UserSettings.user_id == user_id
-        ).apply_org_check(request)
-    )
-    user_settings = user_settings.scalar_one_or_none()
+    # If the current user operates under an organisation, we want exactly **one** row per org.
+    # Otherwise we fall back to one row per individual user.
+
+    org_id = request.state.current_user.get("org_id")
+
+    if org_id is not None:
+        # Query by org_id only; do NOT filter by user_id so that all members share the same settings row.
+        user_settings_query = select(UserSettings).where(UserSettings.org_id == org_id).limit(1).order_by(UserSettings.created_at.desc())
+    else:
+        # Personal account (no org) – query by user_id with org_id IS NULL.
+        user_settings_query = select(UserSettings).where(
+            (UserSettings.user_id == user_id) & (UserSettings.org_id.is_(None))
+        )
+
+    user_settings_result = await db.execute(user_settings_query)
+    user_settings = user_settings_result.scalar_one_or_none()
     
     secret_manager = SecretManager()
 
@@ -615,6 +625,46 @@ def generate_presigned_url(
         return None
 
     return response
+
+
+def delete_s3_object(
+    bucket: str,
+    object_key: str,
+    region: str,
+    access_key: str,
+    secret_key: str,
+):
+    """
+    Delete an object from an S3 bucket
+    
+    Args:
+        bucket: The name of the S3 bucket
+        object_key: The key of the object to delete
+        region: The AWS region
+        access_key: The AWS access key
+        secret_key: The AWS secret key
+        
+    Returns:
+        None
+    """
+    try:
+        s3_client = boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+        
+        s3_client.delete_object(
+            Bucket=bucket,
+            Key=object_key
+        )
+        
+        return True
+    except ClientError as e:
+        logging.error(f"Error deleting S3 object: {e}")
+        return False
 
 
 project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
