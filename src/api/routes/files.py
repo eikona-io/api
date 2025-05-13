@@ -585,3 +585,31 @@ async def get_asset(
         )
     
     return asset
+
+
+@router.patch("/assets/{asset_id}", response_model=AssetResponse)
+async def update_asset(
+    request: Request,
+    asset_id: str,
+    db: AsyncSession = Depends(get_db),
+    path: str = Body(..., embed=True),
+):
+    query = select(Asset).apply_org_check(request).where(Asset.id == asset_id)
+    result = await db.execute(query)
+    asset = result.scalar_one_or_none()
+
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    if asset.is_folder:
+        raise HTTPException(status_code=400, detail="Cannot update path of a folder")
+
+    if path is not None:
+        filename = os.path.basename(asset.path)
+        new_path = os.path.join(path, filename).replace("\\", "/")
+        asset.path = new_path
+
+    await db.commit()
+    await db.refresh(asset)
+
+    return asset
