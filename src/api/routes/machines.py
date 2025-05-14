@@ -1838,6 +1838,7 @@ async def delete_machine(
             select(Deployment)
             .join(Workflow)
             .where(Deployment.machine_id == machine_id)
+            .where(~Workflow.deleted)
             .with_only_columns(Deployment.workflow_id, Workflow.name)
         )
         deployments = deployments.all()
