@@ -562,6 +562,52 @@ async def register_asset(
     
     return new_asset
 
+
+@router.get("/assets/search", response_model=list[AssetResponse])
+async def search_assets(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    query: Optional[str] = Query("", description="Search query"),
+    limit: Optional[int] = Query(5, description="Number of results to return"),
+):
+    # Escape special characters used in LIKE patterns
+    escaped_query = query.replace("%", r"\%").replace("_", r"\_")
+    
+    logger.info(f"Searching for: {escaped_query}")
+    
+    # Create the search query with ILIKE for case-insensitive search
+    search_query = (
+        select(Asset)
+        .apply_org_check(request)
+        .where(
+            and_(
+                Asset.name.ilike(f"%{escaped_query}%"),
+                Asset.is_folder.is_(False)
+            )
+        )
+        .limit(limit)
+    )
+    
+    result = await db.execute(search_query)
+    assets = result.scalars().all()
+    
+    # Get S3 config to handle URLs if needed
+    s3_config = await get_s3_config(request, db)
+    
+    # Generate temporary URLs for private files if needed
+    if s3_config and not s3_config.public:
+        for asset in assets:
+            if asset.url:  # Only for files, not folders
+                asset.url = get_temporary_download_url(
+                    asset.url,
+                    region=s3_config.region,
+                    access_key=s3_config.access_key,
+                    secret_key=s3_config.secret_key,
+                    expiration=3600,
+                )
+    
+    return assets
+
 @router.get("/assets/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     request: Request,
