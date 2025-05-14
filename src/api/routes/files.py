@@ -20,10 +20,11 @@ from botocore.config import Config
 import random
 import aioboto3
 import mimetypes
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from datetime import datetime
 from uuid import uuid4
 from .utils import select
+import urllib.parse
 
 # Implement nanoid-like function
 def custom_nanoid(size=16):
@@ -605,6 +606,23 @@ async def update_asset(
         raise HTTPException(status_code=400, detail="Cannot update path of a folder")
 
     if path is not None:
+        if path != "":
+            normalized_path = urllib.parse.quote(path)
+
+            folder_query = select(Asset).apply_org_check(request).where(
+                and_(
+                    Asset.path == urllib.parse.unquote(normalized_path),
+                    Asset.is_folder.is_(True)
+                )
+            )
+            existing_folder = await db.execute(folder_query)
+            
+            if not existing_folder.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=404, 
+                    detail="The target path does not exist"
+                )
+
         filename = os.path.basename(asset.path)
         new_path = os.path.join(path, filename).replace("\\", "/")
         asset.path = new_path
@@ -613,3 +631,12 @@ async def update_asset(
     await db.refresh(asset)
 
     return asset
+
+@router.post("/assets/add", response_model=AssetResponse)
+async def add_asset_via_url(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    url: str = Body(..., embed=True),
+    path: str = Body(..., embed=True),
+):
+    pass
