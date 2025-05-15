@@ -20,10 +20,12 @@ from botocore.config import Config
 import random
 import aioboto3
 import mimetypes
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from datetime import datetime
 from uuid import uuid4
 from .utils import select
+import urllib.parse
+import aiohttp
 
 # Implement nanoid-like function
 def custom_nanoid(size=16):
@@ -560,6 +562,52 @@ async def register_asset(
     
     return new_asset
 
+
+@router.get("/assets/search", response_model=list[AssetResponse])
+async def search_assets(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    query: Optional[str] = Query("", description="Search query"),
+    limit: Optional[int] = Query(5, description="Number of results to return"),
+):
+    # Escape special characters used in LIKE patterns
+    escaped_query = query.replace("%", r"\%").replace("_", r"\_")
+    
+    logger.info(f"Searching for: {escaped_query}")
+    
+    # Create the search query with ILIKE for case-insensitive search
+    search_query = (
+        select(Asset)
+        .apply_org_check(request)
+        .where(
+            and_(
+                Asset.name.ilike(f"%{escaped_query}%"),
+                Asset.is_folder.is_(False)
+            )
+        )
+        .limit(limit)
+    )
+    
+    result = await db.execute(search_query)
+    assets = result.scalars().all()
+    
+    # Get S3 config to handle URLs if needed
+    s3_config = await get_s3_config(request, db)
+    
+    # Generate temporary URLs for private files if needed
+    if s3_config and not s3_config.public:
+        for asset in assets:
+            if asset.url:  # Only for files, not folders
+                asset.url = get_temporary_download_url(
+                    asset.url,
+                    region=s3_config.region,
+                    access_key=s3_config.access_key,
+                    secret_key=s3_config.secret_key,
+                    expiration=3600,
+                )
+    
+    return assets
+
 @router.get("/assets/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     request: Request,
@@ -585,3 +633,136 @@ async def get_asset(
         )
     
     return asset
+
+
+@router.patch("/assets/{asset_id}", response_model=AssetResponse)
+async def update_asset(
+    request: Request,
+    asset_id: str,
+    db: AsyncSession = Depends(get_db),
+    path: str = Body(..., embed=True),
+):
+    query = select(Asset).apply_org_check(request).where(Asset.id == asset_id)
+    result = await db.execute(query)
+    asset = result.scalar_one_or_none()
+
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    if asset.is_folder:
+        raise HTTPException(status_code=400, detail="Cannot update path of a folder")
+
+    if path is not None:
+        if path != "":
+            normalized_path = urllib.parse.quote(path)
+
+            folder_query = select(Asset).apply_org_check(request).where(
+                and_(
+                    Asset.path == urllib.parse.unquote(normalized_path),
+                    Asset.is_folder.is_(True)
+                )
+            )
+            existing_folder = await db.execute(folder_query)
+            
+            if not existing_folder.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=404, 
+                    detail="The target path does not exist"
+                )
+
+        filename = os.path.basename(asset.path)
+        new_path = os.path.join(path, filename).replace("\\", "/")
+        asset.path = new_path
+
+    await db.commit()
+    await db.refresh(asset)
+
+    return asset
+
+@router.post("/assets/add", response_model=AssetResponse)
+async def add_asset_via_url(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    url: str = Body(..., embed=True),
+    path: str = Body(..., embed=True),
+):
+    user_id = request.state.current_user["user_id"]
+    org_id = request.state.current_user.get("org_id")
+
+    # Get file info from URL
+    parsed_url = urllib.parse.urlparse(url)
+    url_path = parsed_url.path
+    file_name = os.path.basename(url_path)
+    
+    # Guess mime type from URL
+    mime_type, _ = mimetypes.guess_type(url)
+    if not mime_type:
+        raise HTTPException(status_code=400, detail="Could not determine file type")
+
+    # Validate mime type
+    if not mime_type.startswith(("image/", "video/", "application/", "audio/")):
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    # Generate file ID based on mime type
+    file_id = new_id(get_id_prefix_from_type(mime_type))
+
+    # Check file size
+    async with aiohttp.ClientSession() as session:
+        async with session.head(url) as response:
+            if response.status != 200:
+                raise HTTPException(status_code=400, detail="Could not access URL")
+            
+            # Get content length
+            file_size = int(response.headers.get('content-length', 0))
+            if file_size > UPLOAD_FILE_SIZE_LIMIT_MB:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File size exceeds {UPLOAD_FILE_SIZE_LIMIT_MB // (1024 * 1024)}MB limit"
+                )
+            
+            # Verify content type from response
+            content_type = response.headers.get('content-type')
+            if content_type and not content_type.startswith(("image/", "video/", "application/", "audio/")):
+                raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    # Validate parent path exists if not root
+    if path and path != "/":
+        normalized_path = urllib.parse.quote(path)
+        folder_query = select(Asset).apply_org_check(request).where(
+            and_(
+                Asset.path == urllib.parse.unquote(normalized_path),
+                Asset.is_folder.is_(True)
+            )
+        )
+        existing_folder = await db.execute(folder_query)
+        
+        if not existing_folder.scalar_one_or_none():
+            raise HTTPException(
+                status_code=404, 
+                detail="The target path does not exist"
+            )
+
+    # Create the asset path
+    file_extension = os.path.splitext(file_name)[1]
+    db_file_path = os.path.join(path.lstrip("/"), f"{file_id}{file_extension}").replace("\\", "/")
+
+    # Create new asset
+    new_asset = Asset(
+        user_id=user_id,
+        org_id=org_id,
+        id=file_id,
+        name=file_name,
+        is_folder=False,
+        path=db_file_path,
+        url=url,
+        mime_type=mime_type,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+        file_size=file_size
+    )
+    
+    db.add(new_asset)
+    await db.commit()
+    await db.refresh(new_asset)
+    
+    return new_asset
