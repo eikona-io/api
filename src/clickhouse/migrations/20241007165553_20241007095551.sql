@@ -1,0 +1,4 @@
+-- Create "log_entries" table
+CREATE TABLE `default`.`log_entries` (`event_id` UUID, `run_id` UUID, `workflow_id` UUID, `machine_id` UUID, `timestamp` DateTime64(3), `log_level` Enum8('debug', 'info', 'warning', 'error', 'ws_event', 'builder'), `message` String) ENGINE = MergeTree PRIMARY KEY (`run_id`, `timestamp`) SETTINGS index_granularity = 8192;
+-- Create "workflow_events" table
+CREATE TABLE `default`.`workflow_events` (`user_id` String, `org_id` Nullable(String), `machine_id` UUID, `gpu_event_id` Nullable(UUID), `workflow_id` UUID, `workflow_version_id` Nullable(UUID), `run_id` UUID, `timestamp` DateTime64(3), `log_type` Enum8('input', 'not-started', 'queued', 'started', 'running', 'executing', 'uploading', 'success', 'failed', 'timeout', 'cancelled', 'output', 'ws-event'), `progress` Float32, `node_class` String) ENGINE = MergeTree PRIMARY KEY (`workflow_id`, `run_id`, `user_id`) SETTINGS index_granularity = 8192;
