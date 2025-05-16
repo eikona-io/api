@@ -2081,3 +2081,78 @@ async def get_customer_plan_cached_5_seconds(user_id_or_org_id: str):
     with logfire.span("get_customer_plan"):
         return await get_customer_plan_v2(user_id_or_org_id)
 
+@router.patch("/platform/seats")
+async def update_seats(
+    request: Request,
+):
+    plan = request.state.current_user["plan"]
+    if plan is None or plan == "free":
+        raise HTTPException(
+            status_code=401, detail="Unauthorized"
+        )
+
+    org_id = request.state.current_user["org_id"]
+    if not org_id:
+        raise HTTPException(
+            status_code=403, detail="This is only available for organizations"
+        )
+    
+    # Extract plan type from the full plan name
+    plan_type = plan.split("_")[0] if "_" in plan else plan
+    
+    # Creator plans don't need seat updates
+    if plan_type == "creator":
+        return {"status": "success", "message": "No seat update needed for creator plan"}
+    
+    # Set minimum seats based on plan type
+    minimum_seats = 10 if plan_type == "business" else 4  # 4 for deployment plans
+    
+    async with aiohttp.ClientSession() as session:
+        headers = {
+            "Authorization": f"Bearer {os.getenv('CLERK_SECRET_KEY')}",
+            "Content-Type": "application/json",
+        }
+
+        # Get current organization data
+        async with session.get(
+            f"https://api.clerk.com/v1/organizations/{org_id}", headers=headers
+        ) as response:
+            if response.status != 200:
+                raise HTTPException(
+                    status_code=response.status,
+                    detail=f"Failed to fetch organization data from Clerk: {await response.text()}",
+                )
+
+            org_data = await response.json()
+            current_max_seats = org_data["max_allowed_memberships"]
+            
+            # Don't update if current max is 0 (unlimited) or already meets minimum
+            if current_max_seats == 0 or current_max_seats >= minimum_seats:
+                return {
+                    "status": "success", 
+                    "message": "No update needed, seats already sufficient",
+                    "current_seats": "unlimited" if current_max_seats == 0 else current_max_seats
+                }
+            
+            # Update seats to minimum required for plan
+            async with session.patch(
+                f"https://api.clerk.com/v1/organizations/{org_id}",
+                headers=headers,
+                json={"max_allowed_memberships": minimum_seats}
+            ) as response:
+                if response.status != 200:
+                    raise HTTPException(
+                        status_code=response.status, 
+                        detail=f"Failed to update organization data: {await response.text()}"
+                    )
+                
+                result = {
+                    "status": "success",
+                    "message": f"Updated seats from {current_max_seats} to {minimum_seats}",
+                    "previous_seats": current_max_seats,
+                    "new_seats": minimum_seats,
+                }
+                
+                logfire.info(f"Seats updated from org_id {org_id}", extra=result)
+                
+                return result
