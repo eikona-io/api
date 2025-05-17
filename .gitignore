@@ -2,7 +2,7 @@
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 
 tunnel_url.txt
-clickhouse/
+/clickhouse/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
