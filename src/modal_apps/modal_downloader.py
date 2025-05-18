@@ -157,7 +157,7 @@ async def modal_download_file_task(
         else:
             raise ValueError(f"Unsupported upload_type: {upload_type}")
 
-        volume = Volume.lookup(volume_name, create_if_missing=True)
+        volume = Volume.from_name(volume_name, create_if_missing=True)
 
         with volume.batch_upload() as batch:
             batch.put_file(downloaded_path, full_path)
