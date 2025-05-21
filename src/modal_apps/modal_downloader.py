@@ -11,6 +11,8 @@ from huggingface_hub import snapshot_download, HfApi, hf_hub_download
 from huggingface_hub.utils import RepositoryNotFoundError, RevisionNotFoundError
 from pathlib import Path
 
+# deploy command: modal deploy modal_downloader.py::modal_downloader_app
+
 modal_downloader_app = App("volume-operations")
 
 image = Image.debian_slim().pip_install(
@@ -157,7 +159,7 @@ async def modal_download_file_task(
         else:
             raise ValueError(f"Unsupported upload_type: {upload_type}")
 
-        volume = Volume.lookup(volume_name, create_if_missing=True)
+        volume = Volume.from_name(volume_name, create_if_missing=True)
 
         with volume.batch_upload() as batch:
             batch.put_file(downloaded_path, full_path)
