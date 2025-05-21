@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel
 import os
 from api.models import UserSettings
@@ -46,7 +47,7 @@ class S3Config(BaseModel):
     access_key: str
     secret_key: str
     is_custom: bool
-    session_token: str
+    session_token: Optional[str] = None
 
 
 async def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
