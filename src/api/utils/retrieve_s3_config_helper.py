@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 import os
 from api.models import UserSettings
+from api.routes.utils import get_assumed_role_credentials
 
 global_bucket = os.getenv("SPACES_BUCKET_V2")
 global_region = os.getenv("SPACES_REGION_V2")
@@ -15,15 +16,17 @@ class S3Config(BaseModel):
     access_key: str
     secret_key: str
     is_custom: bool
+    session_token: str
 
 
-def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
+async def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
     public = True
     bucket = global_bucket
     region = global_region
     access_key = global_access_key
     secret_key = global_secret_key
     is_custom = False
+    session_token = None
     
     if user_settings is not None:
         if user_settings.output_visibility == "private":
@@ -35,6 +38,14 @@ def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
             access_key = user_settings.s3_access_key_id
             secret_key = user_settings.s3_secret_access_key
             is_custom = True
+            
+        if user_settings.assumed_role_arn:
+            credentials = await get_assumed_role_credentials(user_settings.assumed_role_arn)
+            
+            access_key = credentials['access_key']
+            secret_key = credentials['secret_key']
+            session_token = credentials['session_token']
+            # expiration = credentials['expiration']
 
     return S3Config(
         public=public,
@@ -43,4 +54,5 @@ def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
         access_key=access_key,
         secret_key=secret_key,
         is_custom=is_custom,
+        session_token=session_token,
     )
