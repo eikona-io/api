@@ -41,10 +41,8 @@ from uuid import UUID
 import random
 from cryptography.fernet import Fernet
 import base64
-import google.auth
-from google.auth.transport import requests
 import boto3
-import time
+
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
 ALGORITHM = "HS256"
@@ -495,32 +493,6 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
         await redis.set(redis_key, json.dumps(plan_data))
 
     return JSONResponse(content=user_settings.to_dict())
-
-async def get_assumed_role_credentials(assumed_role_arn: str):
-    # This should apply cache if the expiration is not expired
-    
-    credentials, project = google.auth.default()
-    request = requests.Request()
-    credentials.refresh(request)
-    id_token = credentials.id_token
-    
-    sts_client = boto3.client('sts')
-    response = sts_client.assume_role_with_web_identity(
-        RoleArn=assumed_role_arn,
-        RoleSessionName='comfydeploy-session',
-        WebIdentityToken=id_token
-    ) 
-    credentials = response['Credentials']
-    expiration_time = time.mktime(
-        time.strptime(credentials['Expiration'], "%Y-%m-%dT%H:%M:%S%Z")
-    )
-    credentials = {
-        "access_key": credentials['AccessKeyId'],
-        "secret_key": credentials['SecretAccessKey'],
-        "session_token": credentials['SessionToken'],
-        "expiration": expiration_time
-    }
-    return credentials
 
 async def get_user_settings(request: Request, db: AsyncSession):
     user_query = select(UserSettings).apply_org_check(request).order_by(UserSettings.created_at.desc()).limit(1)

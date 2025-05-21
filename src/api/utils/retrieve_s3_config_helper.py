@@ -1,12 +1,42 @@
 from pydantic import BaseModel
 import os
 from api.models import UserSettings
-from api.routes.utils import get_assumed_role_credentials
+import base64
+import google.auth
+from google.auth.transport import requests
+import boto3
+import time
 
 global_bucket = os.getenv("SPACES_BUCKET_V2")
 global_region = os.getenv("SPACES_REGION_V2")
 global_access_key = os.getenv("SPACES_KEY_V2")
 global_secret_key = os.getenv("SPACES_SECRET_V2")
+
+async def get_assumed_role_credentials(assumed_role_arn: str):
+    # This should apply cache if the expiration is not expired
+    
+    credentials, project = google.auth.default()
+    request = requests.Request()
+    credentials.refresh(request)
+    id_token = credentials.id_token
+    
+    sts_client = boto3.client('sts')
+    response = sts_client.assume_role_with_web_identity(
+        RoleArn=assumed_role_arn,
+        RoleSessionName='comfydeploy-session',
+        WebIdentityToken=id_token
+    ) 
+    credentials = response['Credentials']
+    expiration_time = time.mktime(
+        time.strptime(credentials['Expiration'], "%Y-%m-%dT%H:%M:%S%Z")
+    )
+    credentials = {
+        "access_key": credentials['AccessKeyId'],
+        "secret_key": credentials['SecretAccessKey'],
+        "session_token": credentials['SessionToken'],
+        "expiration": expiration_time
+    }
+    return credentials
 
 
 class S3Config(BaseModel):
