@@ -18,7 +18,7 @@ global_secret_key = os.getenv("SPACES_SECRET_V2")
 async def get_assumed_role_credentials(assumed_role_arn: str):
     # Get an ID token with a specific audience
     request = google.auth.transport.requests.Request()
-    audience = "aws-federation"  # This should match the accounts.google.com:aud in IAM role trust policy
+    audience = "sts.amazonaws.com" # This should match the accounts.google.com:aud in IAM role trust policy
     id_token = google.oauth2.id_token.fetch_id_token(request, audience)
     
     sts_client = boto3.client('sts')
