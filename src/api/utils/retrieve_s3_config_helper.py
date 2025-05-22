@@ -41,14 +41,16 @@ async def get_assumed_role_credentials(assumed_role_arn: str, region: str):
             WebIdentityToken=id_token
         )
         
+        logfire.info("Assume role with web identity response", extra={"response": response})
+        
         credentials = response['Credentials']
         # Use datetime instead of time.strptime to avoid timezone issues
-        expiration_time = parser.isoparse(credentials['Expiration']).timestamp()
+        # expiration_time = parser.isoparse(credentials['Expiration']).timestamp()
         credentials = {
             "access_key": credentials['AccessKeyId'],
             "secret_key": credentials['SecretAccessKey'],
             "session_token": credentials['SessionToken'],
-            "expiration": expiration_time
+            # "expiration": expiration_time
         }
         return credentials
 
