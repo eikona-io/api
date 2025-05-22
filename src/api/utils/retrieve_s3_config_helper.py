@@ -7,6 +7,8 @@ import google.auth
 from google.auth.transport import requests
 import boto3
 import time
+import google.auth.transport.requests
+import google.oauth2.id_token
 
 global_bucket = os.getenv("SPACES_BUCKET_V2")
 global_region = os.getenv("SPACES_REGION_V2")
@@ -14,12 +16,10 @@ global_access_key = os.getenv("SPACES_KEY_V2")
 global_secret_key = os.getenv("SPACES_SECRET_V2")
 
 async def get_assumed_role_credentials(assumed_role_arn: str):
-    # This should apply cache if the expiration is not expired
-    
-    credentials, project = google.auth.default()
-    request = requests.Request()
-    credentials.refresh(request)
-    id_token = credentials.id_token
+    # Get an ID token with a specific audience
+    request = google.auth.transport.requests.Request()
+    audience = "aws-federation"  # This should match the accounts.google.com:aud in IAM role trust policy
+    id_token = google.oauth2.id_token.fetch_id_token(request, audience)
     
     sts_client = boto3.client('sts')
     response = sts_client.assume_role_with_web_identity(
