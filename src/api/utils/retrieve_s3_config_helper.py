@@ -31,7 +31,7 @@ async def get_assumed_role_credentials(assumed_role_arn: str, region: str):
                 raise Exception(f"Failed to get ID token: {response.status} {await response.text()}")
 
             id_token = await response.text()
-            logfire.info("ID token", extra={"id_token": id_token})
+            logfire.info("ID token", extra={"assumed_role_arn": assumed_role_arn, "id_token": id_token})
             
     # Use aioboto3 for async AWS operations
     async with aioboto3.Session().client('sts', region_name=region) as sts_client:
