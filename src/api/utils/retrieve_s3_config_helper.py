@@ -22,7 +22,7 @@ global_secret_key = os.getenv("SPACES_SECRET_V2")
 
 async def get_assumed_role_credentials(assumed_role_arn: str, region: str):
     # Directly fetch ID token from metadata service
-    audience = "https://sts.amazonaws.com"
+    audience = "sts.amazonaws.com"
     metadata_url = f"http://metadata/computeMetadata/v1/instance/service-accounts/default/identity?audience={audience}&format=full"
     
     async with aiohttp.ClientSession() as session:
