@@ -9,28 +9,28 @@ import boto3
 import time
 import google.auth.transport.requests
 import google.oauth2.id_token
+from dateutil import parser
 
 global_bucket = os.getenv("SPACES_BUCKET_V2")
 global_region = os.getenv("SPACES_REGION_V2")
 global_access_key = os.getenv("SPACES_KEY_V2")
 global_secret_key = os.getenv("SPACES_SECRET_V2")
 
-async def get_assumed_role_credentials(assumed_role_arn: str):
+async def get_assumed_role_credentials(assumed_role_arn: str, region: str):
     # Get an ID token with a specific audience
     request = google.auth.transport.requests.Request()
-    audience = "sts.amazonaws.com" # This should match the accounts.google.com:aud in IAM role trust policy
+    audience = "https://sts.amazonaws.com"
     id_token = google.oauth2.id_token.fetch_id_token(request, audience)
     
-    sts_client = boto3.client('sts')
+    sts_client = boto3.client('sts', region_name=region)
     response = sts_client.assume_role_with_web_identity(
         RoleArn=assumed_role_arn,
         RoleSessionName='comfydeploy-session',
         WebIdentityToken=id_token
     ) 
     credentials = response['Credentials']
-    expiration_time = time.mktime(
-        time.strptime(credentials['Expiration'], "%Y-%m-%dT%H:%M:%S%Z")
-    )
+        # Use datetime instead of time.strptime to avoid timezone issues
+    expiration_time = parser.isoparse(credentials['Expiration']).timestamp()
     credentials = {
         "access_key": credentials['AccessKeyId'],
         "secret_key": credentials['SecretAccessKey'],
@@ -71,7 +71,7 @@ async def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
             is_custom = True
             
         if user_settings.assumed_role_arn:
-            credentials = await get_assumed_role_credentials(user_settings.assumed_role_arn)
+            credentials = await get_assumed_role_credentials(user_settings.assumed_role_arn, region)
             
             access_key = credentials['access_key']
             secret_key = credentials['secret_key']
