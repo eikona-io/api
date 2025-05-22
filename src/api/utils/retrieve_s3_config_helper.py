@@ -5,7 +5,6 @@ from api.models import UserSettings
 import base64
 import google.auth
 from google.auth.transport import requests
-import google.oauth2.id_token
 import boto3
 import time
 
@@ -20,15 +19,13 @@ async def get_assumed_role_credentials(assumed_role_arn: str):
     credentials, project = google.auth.default()
     request = requests.Request()
     credentials.refresh(request)
-    
-    # Get an ID token from the credentials
-    id_token_creds = google.oauth2.id_token.fetch_id_token(request, "https://sts.amazonaws.com")
+    id_token = credentials.id_token
     
     sts_client = boto3.client('sts')
     response = sts_client.assume_role_with_web_identity(
         RoleArn=assumed_role_arn,
         RoleSessionName='comfydeploy-session',
-        WebIdentityToken=id_token_creds
+        WebIdentityToken=id_token
     ) 
     credentials = response['Credentials']
     expiration_time = time.mktime(
