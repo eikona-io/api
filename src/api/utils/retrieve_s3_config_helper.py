@@ -187,13 +187,13 @@ async def retrieve_s3_config(user_settings: UserSettings) -> S3Config:
             secret_key = user_settings.s3_secret_access_key
             is_custom = True
             
-        if user_settings.assumed_role_arn:
-            credentials = await get_assumed_role_credentials(user_settings.assumed_role_arn, region)
-            
-            access_key = credentials['access_key']
-            secret_key = credentials['secret_key']
-            session_token = credentials['session_token']
-            # expiration = credentials['expiration']
+            if user_settings.assumed_role_arn:
+                credentials = await get_assumed_role_credentials(user_settings.assumed_role_arn, region)
+                
+                access_key = credentials['access_key']
+                secret_key = credentials['secret_key']
+                session_token = credentials['session_token']
+                # expiration = credentials['expiration']
 
     return S3Config(
         public=public,
