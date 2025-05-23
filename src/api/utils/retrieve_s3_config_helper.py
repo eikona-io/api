@@ -40,7 +40,7 @@ async def _fetch_assumed_role_credentials(assumed_role_arn: str, region: str) ->
                 raise Exception(f"Failed to get ID token: {response.status} {await response.text()}")
 
             id_token = await response.text()
-            logfire.info("ID token", extra={"assumed_role_arn": assumed_role_arn, "id_token": id_token})
+            logfire.info("ID token obtained", extra={"assumed_role_arn": assumed_role_arn})
             
     # Use aioboto3 for async AWS operations
     async with aioboto3.Session().client('sts', region_name=region) as sts_client:
@@ -50,7 +50,10 @@ async def _fetch_assumed_role_credentials(assumed_role_arn: str, region: str) ->
             WebIdentityToken=id_token
         )
         
-        logfire.info("Assume role with web identity response", extra={"response": response})
+        logfire.info("Assume role with web identity successful", extra={
+            "assumed_role_arn": assumed_role_arn,
+            "role_session_name": "comfydeploy-session"
+        })
         
         credentials = response['Credentials']
         
