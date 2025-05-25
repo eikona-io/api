@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from typing import Optional
@@ -64,13 +65,14 @@ logtail_source_token = os.getenv("LOGTAIL_SOURCE_TOKEN")
 
 if logtail_host and logtail_source_token:
     handler = LogtailHandler(
-        source_token=logtail_source_token, 
+        source_token=logtail_source_token,
         host=logtail_host,
     )
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     logger.handlers = []
     logger.addHandler(handler)
+
 
 class NullPropagator(TextMapPropagator):
     def extract(self, *args, **kwargs):
@@ -90,7 +92,7 @@ logfire.configure(
     service_name="comfydeploy-api",
     # additional_span_processors=[span_processor]
 )
-    
+
 logging.basicConfig(level=logging.INFO)
 
 # logger = logging.getLogger(__name__)
@@ -157,18 +159,24 @@ app.add_middleware(SubscriptionMiddleware)
 app.add_middleware(AuthMiddleware)
 
 # Get frontend URL from environment variable, default to localhost:3000 for development
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3001")
+
+allow_origins = []
+
+if os.getenv("ENV") == "development":
+    allow_origins.append("http://localhost:3001")
+else:
+    allow_origins.extend(
+        [
+            # Production
+            "https://app.comfydeploy.com",
+            # Staging
+            "https://staging.app.comfydeploy.com",
+        ]
+    )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        FRONTEND_URL,
-        "https://*.comfydeploy.com",
-        "https://app.comfydeploy.com",
-        "https://staging.app.comfydeploy.com",
-        "https://comfydeploy.com",
-        "https://www.comfydeploy.com"
-    ],  # Allow all subdomains of comfydeploy.com
+    allow_origins=allow_origins,  # Allow all subdomains of comfydeploy.com
     allow_credentials=True,  # Allow credentials (cookies)
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
@@ -178,6 +186,3 @@ logfire.instrument_fastapi(app)
 logfire.instrument_sqlalchemy(
     engine=engine.sync_engine,
 )
-
-
-
