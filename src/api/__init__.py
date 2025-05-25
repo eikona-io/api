@@ -156,10 +156,17 @@ app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 app.add_middleware(SubscriptionMiddleware)
 app.add_middleware(AuthMiddleware)
 
+# Get frontend URL from environment variable, default to localhost:3000 for development
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3001")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=False,
+    allow_origins=[
+        FRONTEND_URL,
+        "https://*.comfydeploy.com",
+        "https://comfydeploy.com"
+    ],  # Allow all subdomains of comfydeploy.com
+    allow_credentials=True,  # Allow credentials (cookies)
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )

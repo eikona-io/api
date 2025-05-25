@@ -7,6 +7,7 @@ import asyncio
 import logfire
 
 from api.models import UserSettings
+from api.utils.multi_level_cache import multi_level_cached
 from api.utils.retrieve_s3_config_helper import retrieve_s3_config, S3Config
 # from src.modal_apps.image_optimizer import optimize_image
 from .utils import (
@@ -17,6 +18,7 @@ from .utils import (
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 import modal
+from api.utils.s3_client import S3ClientManager
 
 router = APIRouter()
 
@@ -72,8 +74,8 @@ async def optimize_image_on_demand(
             return await get_optimized_image_response(s3_config, optimized_key, user_settings, cache)
         
         # Check if original image exists
-        if not await check_s3_object_exists(s3_config, s3_key):
-            raise HTTPException(status_code=404, detail="Original image not found")
+        # if not await check_s3_object_exists(s3_config, s3_key):
+        #     raise HTTPException(status_code=404, detail="Original image not found")
             
         # Check if original image is public
         is_public = await check_s3_object_public(s3_config, s3_key)
@@ -206,32 +208,45 @@ async def get_optimized_image_response(
     cache_duration: int = 86400  # Default cache duration of 24 hours (in seconds)
 ):
     """Return appropriate response for optimized image"""
+
+    # Determine content type based on file extension
+    content_type = "image/webp"  # default
+    if optimized_key.endswith(".jpg") or optimized_key.endswith(".jpeg"):
+        content_type = "image/jpeg"
+    elif optimized_key.endswith(".png"):
+        content_type = "image/png"
+    elif optimized_key.endswith(".gif"):
+        content_type = "image/gif"
+    elif optimized_key.endswith(".avif"):
+        content_type = "image/avif"
     
     # Create response headers with cache control
     headers = {
         "Cache-Control": f"public, max-age={cache_duration}, stale-while-revalidate=60",
-        "Vary": "Accept-Encoding"
+        "Vary": "Accept-Encoding",
+        "Content-Type": content_type,
+        "Content-Disposition": "inline"
     }
     
     # Check if the optimized image is public
-    is_public = await check_s3_object_public(s3_config, optimized_key)
+    # is_public = await check_s3_object_public(s3_config, optimized_key)
     
-    if is_public:
-        # Public object - return direct URL
-        public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
-        return RedirectResponse(url=public_url, status_code=302, headers=headers)
-    else:
+    # if is_public:
+    #     # Public object - return direct URL
+    #     public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
+    #     return RedirectResponse(url=public_url, status_code=302, headers=headers)
+    # else:
         # Private object - return presigned URL
-        presigned_url = generate_presigned_download_url(
-            bucket=s3_config.bucket,
-            object_key=optimized_key,
-            region=s3_config.region,
-            access_key=s3_config.access_key,
-            secret_key=s3_config.secret_key,
-            session_token=s3_config.session_token,
-            expiration=3600  # 1 hour
-        )
-        return RedirectResponse(url=presigned_url, status_code=302, headers=headers)
+    presigned_url = generate_presigned_download_url(
+        bucket=s3_config.bucket,
+        object_key=optimized_key,
+        region=s3_config.region,
+        access_key=s3_config.access_key,
+        secret_key=s3_config.secret_key,
+        session_token=s3_config.session_token,
+        expiration=3600  # 1 hour
+    )
+    return RedirectResponse(url=presigned_url, status_code=302, headers=headers)
 
 
 async def get_fallback_response(
@@ -245,26 +260,28 @@ async def get_fallback_response(
     return await get_optimized_image_response(s3_config, s3_key, user_settings, cache_duration)
 
 
+@multi_level_cached(
+    key_prefix="s3_object_exists",
+    # Time for local memory cache to refresh from redis
+    ttl_seconds=300,
+    # Time for redis to refresh from source (autumn)
+    redis_ttl_seconds=300,
+    version="1.0",
+    key_builder=lambda config, s3_key: f"s3_object_exists:{s3_key}",
+)
 async def check_s3_object_exists(s3_config: S3Config, s3_key: str) -> bool:
     """Check if S3 object exists"""
-    import aioboto3
     from botocore.exceptions import ClientError
     
-    try:
-        session = aioboto3.Session()
-        async with session.client(
-            's3',
-            region_name=s3_config.region,
-            aws_access_key_id=s3_config.access_key,
-            aws_secret_access_key=s3_config.secret_key,
-            aws_session_token=s3_config.session_token
-        ) as s3:
-            await s3.head_object(Bucket=s3_config.bucket, Key=s3_key)
-            return True
-    except ClientError as e:
-        if e.response['Error']['Code'] == '404':
-            return False
-        raise
+    with logfire.span("check_s3_object_exists", extra={"s3_key": s3_key}):
+        try:
+            async with await S3ClientManager.get_s3_client(s3_config) as s3:
+                await s3.head_object(Bucket=s3_config.bucket, Key=s3_key)
+                return True
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                return False
+            raise
 
 
 async def check_s3_object_public(s3_config: S3Config, s3_key: str) -> bool:
@@ -272,27 +289,28 @@ async def check_s3_object_public(s3_config: S3Config, s3_key: str) -> bool:
     import aioboto3
     from botocore.exceptions import ClientError
     
-    try:
-        session = aioboto3.Session()
-        async with session.client(
-            's3',
-            region_name=s3_config.region,
-            aws_access_key_id=s3_config.access_key,
-            aws_secret_access_key=s3_config.secret_key,
-            aws_session_token=s3_config.session_token
-        ) as s3:
-            # Get object ACL
-            acl = await s3.get_object_acl(Bucket=s3_config.bucket, Key=s3_key)
-            
-            # Check if there's a public read grant
-            for grant in acl.get('Grants', []):
-                grantee = grant.get('Grantee', {})
-                if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and grant.get('Permission') in ['READ', 'READ_ACP']:
-                    return True
+    with logfire.span("check_s3_object_public", extra={"s3_key": s3_key}):
+        try:
+            session = aioboto3.Session()
+            async with session.client(
+                's3',
+                region_name=s3_config.region,
+                aws_access_key_id=s3_config.access_key,
+                aws_secret_access_key=s3_config.secret_key,
+                aws_session_token=s3_config.session_token
+            ) as s3:
+                # Get object ACL
+                acl = await s3.get_object_acl(Bucket=s3_config.bucket, Key=s3_key)
+                
+                # Check if there's a public read grant
+                for grant in acl.get('Grants', []):
+                    grantee = grant.get('Grantee', {})
+                    if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and grant.get('Permission') in ['READ', 'READ_ACP']:
+                        return True
+                return False
+        except ClientError as e:
+            logfire.error("Failed to check object ACL", extra={
+                "s3_key": s3_key,
+                "error": str(e)
+            })
             return False
-    except ClientError as e:
-        logfire.error("Failed to check object ACL", extra={
-            "s3_key": s3_key,
-            "error": str(e)
-        })
-        return False
