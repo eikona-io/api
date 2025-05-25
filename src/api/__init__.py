@@ -164,7 +164,10 @@ app.add_middleware(
     allow_origins=[
         FRONTEND_URL,
         "https://*.comfydeploy.com",
+        "https://app.comfydeploy.com",
+        "https://staging.app.comfydeploy.com",
         "https://comfydeploy.com"
+        "https://www.comfydeploy.com"
     ],  # Allow all subdomains of comfydeploy.com
     allow_credentials=True,  # Allow credentials (cookies)
     allow_methods=["*"],  # Allows all methods
