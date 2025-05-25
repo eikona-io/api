@@ -74,6 +74,11 @@ async def optimize_image_on_demand(
         # Check if original image exists
         if not await check_s3_object_exists(s3_config, s3_key):
             raise HTTPException(status_code=404, detail="Original image not found")
+            
+        # Check if original image is public
+        is_public = await check_s3_object_public(s3_config, s3_key)
+        if is_public:
+            transform_config["is_public"] = True
         
         # Trigger optimization asynchronously
         await trigger_image_optimization(s3_config, s3_key, optimized_key, transform_config)
@@ -81,7 +86,8 @@ async def optimize_image_on_demand(
         logfire.info("Triggered image optimization", extra={
             "s3_key": s3_key,
             "optimized_key": optimized_key,
-            "transformations": transformations
+            "transformations": transformations,
+            "is_public": is_public
         })
         
         # Return URL to optimized image (will be ready shortly)
@@ -156,6 +162,10 @@ async def trigger_image_optimization(
     """Trigger Modal optimization in background"""
     
     try:
+        # Add public flag to transform_config if original image is public
+        if s3_config.public:
+            transform_config["is_public"] = True
+        
         # Generate presigned URLs for Modal (5 minutes expiry)
         input_url = generate_presigned_download_url(
             bucket=s3_config.bucket,
@@ -175,9 +185,10 @@ async def trigger_image_optimization(
             secret_key=s3_config.secret_key,
             session_token=s3_config.session_token,
             expiration=300,
-            http_method="PUT"
+            http_method="PUT",
+            public=transform_config["is_public"]
         )
-        
+
         optimize_image = modal.Function.from_name("image-optimizer", "optimize_image")
         
         # Call Modal function asynchronously (fire and forget)
@@ -206,12 +217,15 @@ async def get_optimized_image_response(
         "Vary": "Accept-Encoding"
     }
     
-    if s3_config.public:
-        # Public bucket - return direct URL
+    # Check if the optimized image is public
+    is_public = await check_s3_object_public(s3_config, optimized_key)
+    
+    if is_public:
+        # Public object - return direct URL
         public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
         return RedirectResponse(url=public_url, status_code=302, headers=headers)
     else:
-        # Private bucket - return presigned URL
+        # Private object - return presigned URL
         presigned_url = generate_presigned_download_url(
             bucket=s3_config.bucket,
             object_key=optimized_key,
@@ -255,3 +269,34 @@ async def check_s3_object_exists(s3_config: S3Config, s3_key: str) -> bool:
         if e.response['Error']['Code'] == '404':
             return False
         raise
+
+
+async def check_s3_object_public(s3_config: S3Config, s3_key: str) -> bool:
+    """Check if S3 object is publicly accessible"""
+    import aioboto3
+    from botocore.exceptions import ClientError
+    
+    try:
+        session = aioboto3.Session()
+        async with session.client(
+            's3',
+            region_name=s3_config.region,
+            aws_access_key_id=s3_config.access_key,
+            aws_secret_access_key=s3_config.secret_key,
+            aws_session_token=s3_config.session_token
+        ) as s3:
+            # Get object ACL
+            acl = await s3.get_object_acl(Bucket=s3_config.bucket, Key=s3_key)
+            
+            # Check if there's a public read grant
+            for grant in acl.get('Grants', []):
+                grantee = grant.get('Grantee', {})
+                if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and grant.get('Permission') in ['READ', 'READ_ACP']:
+                    return True
+            return False
+    except ClientError as e:
+        logfire.error("Failed to check object ACL", extra={
+            "s3_key": s3_key,
+            "error": str(e)
+        })
+        return False
