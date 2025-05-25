@@ -230,22 +230,23 @@ async def get_optimized_image_response(
     
     # Check if the optimized image is public
     # is_public = await check_s3_object_public(s3_config, optimized_key)
+    is_public = s3_config.public
     
-    # if is_public:
-    #     # Public object - return direct URL
-    #     public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
-    #     return RedirectResponse(url=public_url, status_code=302, headers=headers)
-    # else:
+    if is_public:
+        # Public object - return direct URL
+        public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
+        return RedirectResponse(url=public_url, status_code=302, headers=headers)
+    else:
         # Private object - return presigned URL
-    presigned_url = generate_presigned_download_url(
-        bucket=s3_config.bucket,
-        object_key=optimized_key,
-        region=s3_config.region,
-        access_key=s3_config.access_key,
-        secret_key=s3_config.secret_key,
-        session_token=s3_config.session_token,
-        expiration=3600  # 1 hour
-    )
+        presigned_url = generate_presigned_download_url(
+            bucket=s3_config.bucket,
+            object_key=optimized_key,
+            region=s3_config.region,
+            access_key=s3_config.access_key,
+            secret_key=s3_config.secret_key,
+            session_token=s3_config.session_token,
+            expiration=3600  # 1 hour
+        )
     return RedirectResponse(url=presigned_url, status_code=302, headers=headers)
 
 
