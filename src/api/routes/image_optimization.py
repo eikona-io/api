@@ -162,10 +162,6 @@ async def trigger_image_optimization(
     """Trigger Modal optimization in background"""
     
     try:
-        # Add public flag to transform_config if original image is public
-        if s3_config.public:
-            transform_config["is_public"] = True
-        
         # Generate presigned URLs for Modal (5 minutes expiry)
         input_url = generate_presigned_download_url(
             bucket=s3_config.bucket,

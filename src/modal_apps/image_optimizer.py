@@ -4,9 +4,14 @@ import aiohttp
 import asyncio
 import io
 import hashlib
+import logging
 
 # Create the Modal app
 app = modal.App("image-optimizer")
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Define image with dependencies
 image = modal.Image.debian_slim().pip_install([
@@ -41,8 +46,7 @@ async def optimize_image(
     Download image from input_url, optimize it, upload to output_url
     """
     try:
-        import logfire
-        logfire.info("Starting image optimization", extra={
+        logger.info("Starting image optimization", extra={
             "has_input_url": bool(input_url),
             "has_output_url": bool(output_url),
             "config": optimization_config
@@ -57,11 +61,11 @@ async def optimize_image(
         optimized_size = len(optimized_data)
         
         # Upload optimized image
-        await upload_image(optimized_data, output_url)
+        await upload_image(optimized_data, output_url, optimization_config)
         
         compression_ratio = optimized_size / original_size if original_size > 0 else 1.0
         
-        logfire.info("Image optimization completed", extra={
+        logger.info("Image optimization completed", extra={
             "original_size": original_size,
             "optimized_size": optimized_size,
             "compression_ratio": compression_ratio
@@ -75,8 +79,7 @@ async def optimize_image(
         }
         
     except Exception as e:
-        import logfire
-        logfire.error("Image optimization failed", extra={
+        logger.error("Image optimization failed", extra={
             "error": str(e),
             "config": optimization_config
         })
@@ -95,10 +98,14 @@ async def download_image(url: str) -> bytes:
             return await response.read()
 
 
-async def upload_image(data: bytes, url: str) -> None:
+async def upload_image(data: bytes, url: str, config: Dict[str, Any]) -> None:
     """Upload optimized image to presigned URL"""
+    headers = {}
+    if config.get('is_public', False):
+        headers['x-amz-acl'] = 'public-read'
+    
     async with aiohttp.ClientSession() as session:
-        async with session.put(url, data=data) as response:
+        async with session.put(url, data=data, headers=headers) as response:
             if response.status not in [200, 201]:
                 raise Exception(f"Failed to upload image: {response.status}")
 
