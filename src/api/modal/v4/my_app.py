@@ -1990,6 +1990,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     secrets=[modal.Secret.from_dict(secrets)],
     cpu=cpu,
     memory=memory,
+    restrict_modal_access=True,
 )
 @modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
 class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
@@ -2243,6 +2244,7 @@ async def get_file_tree(path="/"):
     secrets=[modal.Secret.from_dict(secrets)],
     cpu=cpu,
     memory=memory,
+    restrict_modal_access=True,
 )
 @modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
 class ComfyDeployRunner(BaseComfyDeployRunner):
