@@ -1443,21 +1443,21 @@ class BaseComfyDeployRunner:
             #         pass
 
         # commit by default so commit after the workflow is executed
-        if (self.private_volume is None):
-            self.private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
-        self.private_volume.commit()
+        # if (self.private_volume is None):
+        #     self.private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
+        private_volume.commit()
         return result
 
     async def handle_container_enter_before_comfy(self):
         # Make sure that the ComfyUI API is available
         print("comfy-modal - check server")
         
-        if (self.private_volume is None):
-            self.private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
+        # if (self.private_volume is None):
+        # private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
 
         # reload volumes
         await public_model_volume.reload.aio()
-        await self.private_volume.reload.aio()
+        await private_volume.reload.aio()
 
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
