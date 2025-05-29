@@ -160,7 +160,7 @@ async def get_downloading_models(request: Request, db: AsyncSession):
         .where(
             ModelDB.deleted == False,
             ModelDB.download_progress != 100,
-            ModelDB.status != "failed",
+            ModelDB.status.notin_(["failed", "cancelled"]),
             ModelDB.created_at > datetime.now() - timedelta(hours=24),
         )
     )
@@ -427,6 +427,45 @@ async def remove_file(request: Request, body: RemovePath, db: AsyncSession = Dep
 
     volume.remove_file(body.path, recursive=True)
     return {"deleted_path": body.path}
+
+
+@router.delete("/file/{file_id}/cancel")
+async def cancel_file_download(
+    request: Request,
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a downloading model and update its status to cancelled"""
+    current_user = request.state.current_user
+    user_id = current_user["user_id"]
+    org_id = current_user["org_id"] if "org_id" in current_user else None
+
+    # Find the model record
+    model_query = (
+        select(ModelDB)
+        .apply_org_check(request)
+        .where(ModelDB.id == file_id, ~ModelDB.deleted)
+    )
+    result = await db.execute(model_query)
+    model = result.scalar_one_or_none()
+    
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    model_status_query = (
+        update(ModelDB)
+        .where(ModelDB.id == file_id)
+        .values(
+            status="cancelled",
+            updated_at=datetime.now(),
+        )
+    )
+    
+    await db.execute(model_status_query)
+    await db.commit()
+    
+    
+    return {"success": True, "message": "Download cancelled successfully"}
 
 
 async def handle_file_download(
