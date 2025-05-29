@@ -691,7 +691,7 @@ async def get_workflows_gallery(
     JOIN 
         filtered_runs ON output.run_id = filtered_runs.id
     WHERE
-        output.data ?| ARRAY['images', 'gifs', 'mesh']
+        output.data ?| ARRAY['images', 'gifs', 'mesh', 'files']
     ORDER BY 
         output.created_at DESC
     LIMIT :limit
