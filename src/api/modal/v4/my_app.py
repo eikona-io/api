@@ -1,31 +1,25 @@
+# This will be str replaced
+from cd_config import config
+
 import gc
 import logging
 import threading
-from cd_config import config
 import modal
-from time import time
+import time
 from modal import (
     Image,
     App,
     enter,
     exit,
 )
-from typing import Optional, Annotated, cast
+from typing import Optional, cast
 import json
 import urllib.request
 import urllib.parse
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, Request, HTTPException, WebSocket
-from fastapi import UploadFile, Form
-from pathlib import Path
-from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from volume_setup import (
-    volumes,
-    PRIVATE_BASEMODEL_DIR_SYM,
-    PUBLIC_BASEMODEL_DIR,
-    public_model_volume,
-)
+from fastapi import HTTPException, WebSocket
+import modal
+import os
 from datetime import datetime, timezone
 import aiohttp
 from aiohttp import TCPConnector
@@ -33,13 +27,26 @@ import os
 import uuid
 from enum import Enum
 import asyncio
-import time
 from collections import deque
-import shutil
 from contextlib import contextmanager
 from io import StringIO
 
-import logging
+public_model_volume = modal.Volume.from_name(config["public_model_volume"], create_if_missing=True)
+private_volume = modal.Volume.from_name(config["private_model_volume"], create_if_missing=True)
+
+PUBLIC_BASEMODEL_DIR = "/public_models"
+PRIVATE_BASEMODEL_DIR_SYM = "/private_models"
+
+volumes = {
+    PUBLIC_BASEMODEL_DIR: public_model_volume,
+    PRIVATE_BASEMODEL_DIR_SYM: private_volume,
+}
+
+# NOTE: long/specific name to avoid conflicts in the ComfyUI model directory
+# Required because we can only symlink to the volume path, which doesn't exist during image build
+INPUT_DIR = f"{PRIVATE_BASEMODEL_DIR_SYM}/comfydeploy-comfyui-inputs"
+OUTPUT_DIR = f"{PRIVATE_BASEMODEL_DIR_SYM}/comfydeploy-comfyui-outputs"
+
 logger = logging.getLogger(__name__)
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
@@ -91,231 +98,6 @@ print(f"CPU: {cpu}, Memory: {memory}")
 logger = logging.getLogger(__name__)
 
 # print(base_docker_image, python_version, prestart_command, global_extra_args)
-
-
-async def get_static_assets(
-    get_object_info=True,
-    get_filename_list_cache=True,
-    get_extensions=True,
-    upload_extensions=True,
-):
-    import aioboto3
-    import asyncio
-
-    # print(f"aioboto3 version: {aioboto3.__version__}")
-    # print(f"asyncio version: {asyncio.__version__}")
-    # print(f"boto3 version: {boto3.__version__}")
-
-    import json
-    import subprocess
-
-    bucket_name = "comfydeploy-fe-js-assets"
-    import io
-
-    directory_path = "/comfyui/models"
-    if os.path.exists(directory_path):
-        directory_contents = os.listdir(directory_path)
-        directory_path = "/comfyui/models/ipadapter"
-        print(directory_contents)
-        if os.path.exists(directory_path):
-            directory_contents = os.listdir(directory_path)
-            print(directory_contents)
-    else:
-        print(f"Directory {directory_path} does not exist.")
-
-    # Read and write the main.py file
-    main_py_path = "/comfyui/main.py"
-
-    # Read the contents of main.py
-    with open(main_py_path, "r") as file:
-        main_py_contents = file.read()
-        original_main_py_contents = main_py_contents
-
-    # Write a simple modification to main.py
-    with open(main_py_path, "w") as file:
-        main_py_contents = main_py_contents.replace(
-            "import folder_paths",
-            """
-import folder_paths
-
-original_get_filename_list = folder_paths.get_filename_list
-
-# Redefine get_filename_list
-def get_filename_list(filename):
-    # some nodes break when we try to replace the filename list so instead let them do their output
-    if filename == "VHS_video_formats":
-        return original_get_filename_list(filename)
-    return ["__"+filename+"__"]
-
-# Override the original get_filename_list with the new one
-folder_paths.get_filename_list = get_filename_list
-                                 """,
-        )
-        print("Updated main.py with an additional comment")
-        file.write(main_py_contents)
-
-    # print(main_py_contents)
-
-    server_process = await asyncio.subprocess.create_subprocess_shell(
-        comfyui_cmd(cpu=True if gpu_param is None else False),
-        cwd="/comfyui",
-    )
-
-    ok = await check_server(
-        f"http://{COMFY_HOST}",
-        COMFY_API_AVAILABLE_MAX_RETRIES,
-        COMFY_API_AVAILABLE_INTERVAL_MS,
-    )
-
-    print("ok: ", ok)
-
-    async def fetch_from_comfy(url_path, is_json=True):
-        full_url = f"http://{COMFY_HOST}/{url_path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(full_url) as response:
-                # print("response: ", response)
-                if response.status == 200:
-                    if is_json:
-                        res = await response.json()
-                    else:
-                        res = await response.text()
-                    return res
-                else:
-                    print(f"Failed to retrieve {url_path}")
-                    return None
-
-    object_info = None
-
-    print("get_object_info")
-
-    if get_object_info:
-        object_info = await fetch_from_comfy("object_info")
-
-    # print("object_info: ", object_info)
-    # if get_object_info:
-    #     json_file_path = "/comfyui/object_info_temp.json"
-    #     subprocess.run(
-    #         ["python", "/comfyui/static_fe_object_info_script.py", json_file_path],
-    #         check=True,
-    #     )
-    #     with open(json_file_path, "r") as json_file:
-    #         object_info = json.load(json_file)
-
-    filename_list_cache = None
-
-    # this popultes our filename_list_cache
-    if get_filename_list_cache:
-        await fetch_from_comfy("object_info")
-        filename_list_cache = await fetch_from_comfy(
-            "comfyui-deploy/filename_list_cache"
-        )
-
-    ext_map = {}
-    if get_extensions:
-        extension_list = await fetch_from_comfy("extensions")
-
-        async def fetch_extension(ext_path):
-            ext_path = ext_path.lstrip("/")
-            js_file = await fetch_from_comfy(ext_path, False)
-            return ext_path, js_file
-
-        # Fetch all extensions concurrently
-        results = await asyncio.gather(
-            *[fetch_extension(ext_path) for ext_path in extension_list]
-        )
-
-        # Populate ext_map with the results
-        ext_map = dict(results)
-
-    if upload_extensions:
-        import re
-
-        async def upload_to_s3(ext_map, bucket_name, parent_path=""):
-            async with aioboto3.Session().client(
-                "s3",
-            ) as s3:
-                tasks = []
-                for ext_path, js_file in ext_map.items():
-                    # Read the content of the JavaScript file
-                    js_content = js_file
-
-                    if js_file is None:
-                        print(f"js_file is None for {ext_path}")
-                        continue
-
-                    import_pattern = (
-                        r'(import.*from\s*["\'])(\.\.\/\.\.\/)([^"\']+)(["\'])'
-                    )
-
-                    js_content = re.sub(
-                        import_pattern,
-                        lambda m: f"{m.group(1)}../../{m.group(2)}{m.group(3)}{m.group(4)}",
-                        js_content,
-                    )
-
-                    full_key_path = (
-                        f"{parent_path}/{ext_path}" if parent_path else ext_path
-                    )
-                    tasks.append(
-                        s3.put_object(
-                            Bucket=bucket_name,
-                            Key=full_key_path,
-                            Body=io.BytesIO(js_content.encode()),
-                            ContentType="application/javascript",
-                        )
-                    )
-                # Add task to upload extension-list.json
-                if extension_list is not None:
-                    extension_list_key = (
-                        f"{parent_path}/extension-list.json"
-                        if parent_path
-                        else "extension-list.json"
-                    )
-                    tasks.append(
-                        s3.put_object(
-                            Bucket=bucket_name,
-                            Key=extension_list_key,
-                            Body=json.dumps(extension_list).encode(),
-                            ContentType="application/json",
-                        )
-                    )
-
-                # Add task to upload object_info.json
-                if object_info is not None:
-                    object_info_key = (
-                        f"{parent_path}/object_info.json"
-                        if parent_path
-                        else "object_info.json"
-                    )
-                    tasks.append(
-                        s3.put_object(
-                            Bucket=bucket_name,
-                            Key=object_info_key,
-                            Body=json.dumps(object_info).encode(),
-                            ContentType="application/json",
-                        )
-                    )
-
-                print("tasks: Uploading")
-                await asyncio.gather(*tasks)
-                print("tasks: Uploaded")
-
-        await upload_to_s3(
-            ext_map, bucket_name, config.get("machine_hash", config["machine_id"])
-        )
-
-    # Reset the file
-    with open(main_py_path, "w") as file:
-        file.write(original_main_py_contents)
-
-    server_process.terminate()
-
-    # return {
-    #     "object_info": json.dumps(object_info),
-    #     "filename_list_cache": filename_list_cache,
-    #     "extensions": extension_list,
-    # }
-
 
 dockerfile_image = None
 
@@ -889,6 +671,10 @@ async def delete_session(
         raise
 
 class BaseComfyDeployRunner:
+    _is_workspace: bool = False
+    _gpu: str | None = None
+    _session_id: str | None = None
+    
     machine_logs = []
     last_sent_log_index = 0
 
@@ -909,7 +695,7 @@ class BaseComfyDeployRunner:
         print(f"comfy-modal - cleanup")
 
         await sync_report_gpu_event(
-            self.gpu_event_id, self.is_workspace, self.gpu, self.user_id, self.org_id
+            self.gpu_event_id, self._is_workspace, self._gpu, self.user_id, self.org_id
         )
         self.stdout_task.cancel()
         self.stderr_task.cancel()
@@ -934,36 +720,19 @@ class BaseComfyDeployRunner:
         print(f"comfy-modal - cleanup done")
         if not soft_exit:
             os._exit(0)
-
-    def __init__(
-        self,
-        volume_name: Optional[str] = None,
-        mountIO: Optional[bool] = False,
-        is_workspace: Optional[bool] = False,
-        user_id: Optional[str] = None,
-        org_id: Optional[str] = None,
-        gpu: Optional[str] = None,
-        timeout: Optional[int] = None,
-        session_id: Optional[str] = None,
-        workspace_tunnel: Optional[bool] = False,
-    ) -> None:
-        if volume_name is None:
-            volume_name = config["private_model_volume"]
-        self.private_volume = modal.Volume.lookup(volume_name, create_if_missing=True)
-        self.mountIO = mountIO
-        self.is_workspace = is_workspace
-        self.user_id = user_id
-        self.org_id = org_id
-        self.gpu = gpu
-        self.timeout = timeout
-        self.cold_start_queue = deque()
-        self.log_queues = deque()
-        self.workspace_tunnel = workspace_tunnel
-        self.session_id = session_id
-        self.gpu_event_id = None
-
-    # self.log_task = None
-
+    
+    org_id: str = None
+    user_id: str = None
+    mountIO: bool = False
+    volume_name: str = config["private_model_volume"]
+    private_volume = None
+    timeout: int = None
+    # workspace_tunnel: bool = modal.parameter(default=False)
+    
+    cold_start_queue = deque()
+    log_queues = deque()
+    gpu_event_id = None
+    
     async def process_log_queue(self):
         try:
             while True:
@@ -974,7 +743,7 @@ class BaseComfyDeployRunner:
                         run_id=self.current_input.prompt_id
                         if self.current_input
                         else None,
-                        session_id=self.session_id,
+                        session_id=self._session_id,
                         logs=logs,
                         status_endpoint=self.status_endpoint,
                     )
@@ -987,7 +756,7 @@ class BaseComfyDeployRunner:
                     if logs:
                         await self.send_log_batch(
                             run_id=input.prompt_id,
-                            session_id=self.session_id,
+                            session_id=self._session_id,
                             logs=logs,
                             status_endpoint=input.status_endpoint,
                         )
@@ -1361,15 +1130,15 @@ class BaseComfyDeployRunner:
             await delete_session(update_endpoint, session_id)
             raise Exception("Previous session exhausted, please start a new one.")
 
-        if self.is_workspace and not self.gpu_event_id and session_id:
+        if self._is_workspace and not self.gpu_event_id and session_id:
             print("creating gpu event id")
-            self.session_id = session_id
+            self._session_id = session_id
             if self.container_start_time is None:
                 self.container_start_time = datetime.now(timezone.utc)
             self.gpu_event_id = await sync_report_gpu_event(
                 event_id=None,
-                is_workspace= self.is_workspace,
-                gpu=self.gpu,
+                is_workspace= self._is_workspace,
+                gpu=self._gpu,
                 user_id=self.user_id,
                 org_id=self.org_id,
                 session_id=str(session_id),
@@ -1383,7 +1152,7 @@ class BaseComfyDeployRunner:
         self.session_timeout = timeout * 60
         # print("status_endpoint", status_endpoint)
 
-        task = asyncio.create_task(check_for_timeout(update_endpoint, self.session_id))
+        task = asyncio.create_task(check_for_timeout(update_endpoint, self._session_id))
 
         try:
             async for event in check_server_with_log(
@@ -1674,16 +1443,21 @@ class BaseComfyDeployRunner:
             #         pass
 
         # commit by default so commit after the workflow is executed
-        self.private_volume.commit()
+        # if (self.private_volume is None):
+        #     self.private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
+        private_volume.commit()
         return result
 
     async def handle_container_enter_before_comfy(self):
         # Make sure that the ComfyUI API is available
         print("comfy-modal - check server")
+        
+        # if (self.private_volume is None):
+        # private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
 
         # reload volumes
         await public_model_volume.reload.aio()
-        await self.private_volume.reload.aio()
+        await private_volume.reload.aio()
 
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
@@ -1710,15 +1484,15 @@ class BaseComfyDeployRunner:
 
         self.container_start_time = datetime.now(timezone.utc)
 
-        if not self.is_workspace:
+        if not self._is_workspace:
             print("setting up gpu event id")
             self.gpu_event_id = await sync_report_gpu_event(
                 None,
-                self.is_workspace,
-                self.gpu,
+                self._is_workspace,
+                self._gpu,
                 self.user_id,
                 self.org_id,
-                self.session_id,
+                self._session_id,
             )
 
         print("setting up timeout")
@@ -1735,7 +1509,7 @@ class BaseComfyDeployRunner:
         print("comfy-modal - cleanup")
 
         await sync_report_gpu_event(
-            self.gpu_event_id, self.is_workspace, self.gpu, self.user_id, self.org_id
+            self.gpu_event_id, self._is_workspace, self._gpu, self.user_id, self.org_id
         )
         self.log_task.cancel()
 
@@ -1835,6 +1609,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     def prompt_worker(self, q, server):
         import execution
         import comfy
+        import time
 
         e = execution.PromptExecutor(server)
         self.__class__.prompt_executor = e
@@ -1842,6 +1617,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         last_gc_collect = 0
         need_gc = False
         gc_collect_interval = 10.0
+        current_time = time.perf_counter()  # Initialize current_time
 
         while True:
             timeout = 1000.0
@@ -2174,8 +1950,63 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         # pr.print_stats()
 
+    def load_args(self):
+        from comfy.cli_args import args
+
+        args.disable_metadata = disable_metadata
+        args.port = 8188
+        args.enable_cors_header = "*"
+
+        args.input_directory = input_directory
+        args.preview_method = "auto"
+        # args.extra_model_paths_config = extra_model_path_config
+
+        # args.output_directory = output_directory
+        # args.temp_directory = temp_directory
+
+        if self._gpu == "CPU":
+            args.cpu = True
+        else:
+            args.cpu = False
+        
+
+    @modal.exit()
+    async def exit(self):
+        print("Exiting ComfyUI")
+        root_logger = logging.getLogger()
+        root_logger.removeHandler(self.log_handler)
+        await self.handle_container_exit()
+
+
+@app.cls(
+    image=target_image,
+    # will be overridden by the run function
+    gpu=None,
+    volumes=volumes,
+    timeout=(config["run_timeout"] + 20),
+    scaledown_window=config["idle_timeout"],
+    max_containers=config["concurrency_limit"],
+    enable_memory_snapshot=True,
+    secrets=[modal.Secret.from_dict(secrets)],
+    cpu=cpu,
+    memory=memory,
+    # restrict_modal_access=True,
+)
+@modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
+class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
+    
+    is_workspace: bool = modal.parameter(default=False)
+    gpu: str = modal.parameter(default="")
+    session_id: str = modal.parameter(default="")
+    
     @modal.enter(snap=False)
     async def launch_comfy_background(self):
+        self._is_workspace = self.is_workspace
+        if self.gpu != "":
+            self._gpu = self.gpu
+        if self.session_id != "":
+            self._session_id = self.session_id
+        
         await self.handle_container_enter_before_comfy()
         await self.handle_container_enter()
 
@@ -2234,36 +2065,6 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         # self.loading_time["warmup_workflow_runtime"] = (
         #     workflow_end_time - workflow_start_time
         # )
-
-    def load_args(self):
-        from comfy.cli_args import args
-
-        args.disable_metadata = disable_metadata
-        args.port = 8188
-        args.enable_cors_header = "*"
-
-        args.input_directory = input_directory
-        args.preview_method = "auto"
-        # args.extra_model_paths_config = extra_model_path_config
-
-        # args.output_directory = output_directory
-        # args.temp_directory = temp_directory
-
-        if self.gpu == "CPU":
-            args.cpu = True
-        else:
-            args.cpu = False
-        
-
-    @modal.exit()
-    async def exit(self):
-        print("Exiting ComfyUI")
-        root_logger = logging.getLogger()
-        root_logger.removeHandler(self.log_handler)
-        await self.handle_container_exit()
-
-
-class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
     
     @contextmanager
     def force_cpu_during_snapshot(self):
@@ -2357,22 +2158,6 @@ class _ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             print(f"\nGPUs available: {torch.cuda.is_available()}")
 
 
-@app.cls(
-    image=target_image,
-    # will be overridden by the run function
-    gpu=None,
-    volumes=volumes,
-    timeout=(config["run_timeout"] + 20),
-    container_idle_timeout=config["idle_timeout"],
-    allow_concurrent_inputs=config["allow_concurrent_inputs"],
-    concurrency_limit=config["concurrency_limit"],
-    enable_memory_snapshot=True,
-    secrets=[modal.Secret.from_dict(secrets)],
-    cpu=cpu,
-    memory=memory,
-)
-class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunnerOptimizedImports):
-    pass
 
 @app.function(
     image=target_image,
@@ -2454,20 +2239,32 @@ async def get_file_tree(path="/"):
     gpu=None,
     volumes=volumes,
     timeout=(config["run_timeout"] + 20),
-    container_idle_timeout=config["idle_timeout"],
-    allow_concurrent_inputs=config["allow_concurrent_inputs"],
-    concurrency_limit=config["concurrency_limit"],
+    scaledown_window=config["idle_timeout"],
+    max_containers=config["concurrency_limit"],
     secrets=[modal.Secret.from_dict(secrets)],
     cpu=cpu,
     memory=memory,
+    # restrict_modal_access=True,
 )
+@modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
 class ComfyDeployRunner(BaseComfyDeployRunner):
+    
+    is_workspace: bool = modal.parameter(default=False)
+    gpu: str = modal.parameter(default="")
+    session_id: str = modal.parameter(default="")
+    
     @enter()
     async def setup(self):
+        self._is_workspace = self.is_workspace
+        if self.gpu != "":
+            self._gpu = self.gpu
+        if self.session_id != "":
+            self._session_id = self.session_id
+        
         await self.handle_container_enter_before_comfy()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self.gpu == "CPU"),
+            comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",

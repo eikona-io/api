@@ -1,5 +1,7 @@
 version = 1
 requires-python = "==3.12.0"
+resolution-markers = [
+]
 
 [[package]]
 name = "aioboto3"
@@ -201,7 +203,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.26.0" },
     { name = "logfire", extras = ["fastapi"], specifier = "==3.5.3" },
     { name = "logtail-python", specifier = ">=0.3.3" },
-    { name = "modal", specifier = "==0.72.33" },
+    { name = "modal", specifier = "==1.0.1" },
     { name = "nanoid", specifier = ">=2.0.0" },
     { name = "opentelemetry-instrumentation-asyncio", specifier = ">=0.47b0" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.47b0" },
@@ -355,14 +357,14 @@ wheels = [
 
 [[package]]
 name = "click"
-version = "8.2.1"
+version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/6c/8ca2efa64cf75a977a0d7fac081354553ebe483345c734fb6b6515d96bbc/click-8.2.1.tar.gz", hash = "sha256:27c491cc05d968d271d5a1db13e3b5a184636d9d930f148c50b038f0d0646202", size = 286342 }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/32/10bb5764d90a8eee674e9dc6f4db6a0ab47c8c4d0d83c27f7c39ac415a4d/click-8.2.1-py3-none-any.whl", hash = "sha256:61a3265b914e850b85317d0b3109c7f8cd35a670f963866005d6ef1d5175a12b", size = 102215 },
+    { url = "https://files.pythonhosted.org/packages/7e/d4/7ebdbd03970677812aac39c869717059dbb71a4cfc033ca6e5221787892c/click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2", size = 98188 },
 ]
 
 [[package]]
@@ -467,14 +469,14 @@ wheels = [
 
 [[package]]
 name = "discord-py"
-version = "2.5.2"
+version = "2.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/dd/5817c7af5e614e45cdf38cbf6c3f4597590c442822a648121a34dee7fa0f/discord_py-2.5.2.tar.gz", hash = "sha256:01cd362023bfea1a4a1d43f5280b5ef00cad2c7eba80098909f98bf28e578524", size = 1054879 }
+sdist = { url = "https://files.pythonhosted.org/packages/02/96/5c5e57ea6b68f96c5c72067c24ce06974316b4df661036876a21217364b4/discord_py-2.5.1.tar.gz", hash = "sha256:59a2e1a3bee90d45ab2cee1abf2fefbb3f4ca5124cb4290702f08e6c54282f64", size = 1054895 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/57/a8/dc908a0fe4cd7e3950c9fa6906f7bf2e5d92d36b432f84897185e1b77138/discord_py-2.5.2-py3-none-any.whl", hash = "sha256:81f23a17c50509ffebe0668441cb80c139e74da5115305f70e27ce821361295a", size = 1155105 },
+    { url = "https://files.pythonhosted.org/packages/e4/8b/d1e9e96b026885b169122046eac6e6fe204a086709370cc5a41cc77128b1/discord_py-2.5.1-py3-none-any.whl", hash = "sha256:4d997eb3ffc1e204499fb7099c433ff177cfec5785fe7198708c30a0a21b810d", size = 1155097 },
 ]
 
 [[package]]
@@ -959,13 +961,12 @@ wheels = [
 
 [[package]]
 name = "modal"
-version = "0.72.33"
+version = "1.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "certifi" },
     { name = "click" },
-    { name = "fastapi" },
     { name = "grpclib" },
     { name = "protobuf" },
     { name = "rich" },
@@ -977,8 +978,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "watchfiles" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/29/b6a5254f5043dbf32a4483063148657bc03fb25ed8214f38d24f8637a58f/modal-1.0.1.tar.gz", hash = "sha256:f2f76d8342562c53add77e0d47af0b78b84f9020e03d9f8c214887e02823251b", size = 505141 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/f0/fdc0eb55812dfe772ec73683a5e1b1f7a85187ff3b3bf6d4f45b60f4c23b/modal-0.72.33-py3-none-any.whl", hash = "sha256:ce8ac919c4ae81563ea8a122b1d9cd23c98335b2795b82cb16b9fe96c3d9fd4b", size = 521661 },
+    { url = "https://files.pythonhosted.org/packages/fa/21/100632fc356ee80806577a4920147d773fa0d07de62c3bc0d0620a185f8c/modal-1.0.1-py3-none-any.whl", hash = "sha256:651b21d720096db055882748e28a511cb9123f7597823bba12ab983d70a97656", size = 573170 },
 ]
 
 [[package]]
@@ -1410,14 +1412,14 @@ wheels = [
 
 [[package]]
 name = "pytest-asyncio"
-version = "0.26.0"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/c4/453c52c659521066969523e87d85d54139bbd17b78f09532fb8eb8cdb58e/pytest_asyncio-0.26.0.tar.gz", hash = "sha256:c4df2a697648241ff39e7f0e4a73050b03f123f760673956cf0d72a4990e312f", size = 54156 }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/d4/14f53324cb1a6381bef29d698987625d80052bb33932d8e7cbf9b337b17c/pytest_asyncio-1.0.0.tar.gz", hash = "sha256:d15463d13f4456e1ead2594520216b225a16f781e144f8fdf6c5bb4667c48b3f", size = 46960 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/7f/338843f449ace853647ace35870874f69a764d251872ed1b4de9f234822c/pytest_asyncio-0.26.0-py3-none-any.whl", hash = "sha256:7b51ed894f4fbea1340262bdae5135797ebbe21d8638978e35d31c6d19f72fb0", size = 19694 },
+    { url = "https://files.pythonhosted.org/packages/30/05/ce271016e351fddc8399e546f6e23761967ee09c8c568bbfbecb0c150171/pytest_asyncio-1.0.0-py3-none-any.whl", hash = "sha256:4f024da9f1ef945e680dc68610b52550e36590a67fd31bb3b4943979a1f90ef3", size = 15976 },
 ]
 
 [[package]]
