@@ -30,6 +30,7 @@ import asyncio
 from collections import deque
 from contextlib import contextmanager
 from io import StringIO
+from urllib.parse import urlparse
 
 public_model_volume = modal.Volume.from_name(config["public_model_volume"], create_if_missing=True)
 private_volume = modal.Volume.from_name(config["private_model_volume"], create_if_missing=True)
@@ -56,6 +57,8 @@ deploy_test = config["deploy_test"] == "True"
 print("Builder Version: 4")
 print("Builder Deps: ", os.getenv("MODAL_IMAGE_BUILDER_VERSION"))
 print("Modal Version: ", modal.__version__)
+
+API_KEY_COMFY_ORG_SECRET = modal.Secret.from_dict({"API_KEY_COMFY_ORG": config["auth_token"]})
 
 app = App(name=config["name"])
 
@@ -153,6 +156,10 @@ temp_directory = "/private_models"
 
 extra_model_path_config = "/comfyui/extra_model_paths.yaml"
 
+# Parse base URL from gpu_event_callback_url
+parsed_url = urlparse(config["gpu_event_callback_url"])
+base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
 def comfyui_cmd(
     cpu: bool = False,
     extra_args: Optional[str] = None,
@@ -184,6 +191,8 @@ def comfyui_cmd(
         cmd = f"{prestart_command} && {cmd}"
 
     cmd += " --disable-metadata" if disable_metadata else ""
+    
+    cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
 
     print("Actual file command: ", cmd)
 
@@ -1987,7 +1996,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
     enable_memory_snapshot=True,
-    secrets=[modal.Secret.from_dict(secrets)],
+    secrets=[modal.Secret.from_dict(secrets), API_KEY_COMFY_ORG_SECRET],
     cpu=cpu,
     memory=memory,
     # restrict_modal_access=True,
@@ -2241,7 +2250,7 @@ async def get_file_tree(path="/"):
     timeout=(config["run_timeout"] + 20),
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
-    secrets=[modal.Secret.from_dict(secrets)],
+    secrets=[modal.Secret.from_dict(secrets), API_KEY_COMFY_ORG_SECRET],
     cpu=cpu,
     memory=memory,
     # restrict_modal_access=True,

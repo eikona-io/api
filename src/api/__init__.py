@@ -25,6 +25,7 @@ from api.routes import (
     workflows,
     machines,
     comfy_node,
+    comfy_proxy,
     deployments,
     runs,
     session,
@@ -120,6 +121,7 @@ api_router.include_router(machines.public_router)
 api_router.include_router(log.router)
 api_router.include_router(volumes.router)
 api_router.include_router(comfy_node.router)
+api_router.include_router(comfy_proxy.router)
 api_router.include_router(deployments.router)
 api_router.include_router(session.router)
 api_router.include_router(session.beta_router)

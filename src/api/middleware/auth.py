@@ -161,7 +161,10 @@ async def get_current_user(request: Request):
 
     # Check for Authorization header
     auth_header = request.headers.get("Authorization")
-
+    
+    # For proxy to comfy.org
+    comfy_api_key = request.headers.get("x-api-key")
+    
     token = None
     if session_token:
         token = session_token
@@ -169,6 +172,8 @@ async def get_current_user(request: Request):
         token = cd_token
     elif auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
+    elif comfy_api_key:
+        token = comfy_api_key
     else:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 
