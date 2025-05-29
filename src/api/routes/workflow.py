@@ -694,8 +694,11 @@ async def get_workflows_gallery(
     }
 
     if origin:
-        raw_query += " AND run.origin = :origin"
-        params["origin"] = origin
+        if origin == "not-api":
+            raw_query += " AND (run.origin IS NULL OR run.origin != 'api')"
+        else:
+            raw_query += " AND run.origin = :origin"
+            params["origin"] = origin
     
     if user_id:
         raw_query += " AND run.user_id = :filter_user_id"
