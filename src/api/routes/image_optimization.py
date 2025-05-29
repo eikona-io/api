@@ -31,7 +31,7 @@ async def optimize_image_on_demand(
     # cache: int = Query(86400, description="Cache duration in seconds"),
     db: AsyncSession = Depends(get_db)
 ):
-    cache = 86400
+    cache = 3600
     """
     On-demand image optimization with Cloudflare-like URL structure
     

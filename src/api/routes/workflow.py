@@ -650,13 +650,17 @@ async def get_workflows_gallery(
     workflow_id: str,
     limit: int = 100,
     offset: int = 0,
+    origin: Optional[str] = None,
+    user_id: Optional[str] = None,
+    file_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     current_user = request.state.current_user
-    user_id = current_user["user_id"]
+    current_user_id = current_user["user_id"]
     org_id = current_user.get("org_id")
 
-    raw_query = text("""
+    # Build the base query
+    raw_query = """
     WITH filtered_runs AS (
         SELECT 
             run.id, 
@@ -664,7 +668,9 @@ async def get_workflows_gallery(
             run.ended_at, 
             run.queued_at, 
             run.created_at,
-            run.org_id
+            run.org_id,
+            run.user_id,
+            run.origin
         FROM 
             comfyui_deploy.workflow_runs AS run
         JOIN 
@@ -675,12 +681,36 @@ async def get_workflows_gallery(
             AND workflow.deleted = false
             AND (
                 (CAST(:org_id AS TEXT) IS NOT NULL AND run.org_id = CAST(:org_id AS TEXT))
-                OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:user_id AS TEXT))
+                OR (CAST(:org_id AS TEXT) IS NULL AND run.org_id IS NULL AND run.user_id = CAST(:current_user_id AS TEXT))
             )
+    """
+
+    params = {
+        "workflow_id": workflow_id,
+        "limit": limit,
+        "offset": offset,
+        "org_id": org_id,
+        "current_user_id": current_user_id,
+    }
+
+    if origin:
+        if origin == "not-api":
+            raw_query += " AND (run.origin IS NULL OR run.origin != 'api')"
+        else:
+            raw_query += " AND run.origin = :origin"
+            params["origin"] = origin
+    
+    if user_id:
+        raw_query += " AND run.user_id = :filter_user_id"
+        params["filter_user_id"] = user_id
+
+    raw_query += """
     )
     SELECT
         output.id as output_id,
         filtered_runs.id as run_id,
+        filtered_runs.user_id,
+        filtered_runs.origin,
         output.data,
         output.node_meta,
         (EXTRACT(EPOCH FROM filtered_runs.ended_at) - EXTRACT(EPOCH FROM filtered_runs.started_at)) AS run_duration,
@@ -691,22 +721,28 @@ async def get_workflows_gallery(
     JOIN 
         filtered_runs ON output.run_id = filtered_runs.id
     WHERE
-        output.data ?| ARRAY['images', 'gifs', 'mesh', 'files']
+    """
+
+    if file_type:
+        if file_type == "image":
+            raw_query += " output.data ?| ARRAY['images']"
+        elif file_type == "video":
+            raw_query += " output.data ?| ARRAY['gifs']"
+        else:
+            raw_query += " output.data ?| ARRAY['images', 'gifs', 'mesh', 'files']"
+    else:
+        raw_query += " output.data ?| ARRAY['images', 'gifs', 'mesh', 'files']"
+
+    raw_query += """
     ORDER BY 
         output.created_at DESC
     LIMIT :limit
     OFFSET :offset
-    """)
+    """
 
     result = await db.execute(
-        raw_query,
-        {
-            "workflow_id": workflow_id,
-            "limit": limit,
-            "offset": offset,
-            "org_id": org_id,
-            "user_id": user_id,
-        },
+        text(raw_query),
+        params,
     )
 
     outputs = [dict(row._mapping) for row in result.fetchall()]
