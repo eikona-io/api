@@ -159,5 +159,32 @@ class AuthMiddleware(BaseHTTPMiddleware):
         
         if request.state.current_user is None:
             raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        if self.should_check_scopes(request):
+            await self.check_token_scopes(request)
         # print("User authenticated and added to request state")  # Test print
         # logger.info("Added current_user to request state")
+        
+    def should_check_scopes(self, request: Request) -> bool:
+        """Check if we need to validate scopes for this request"""
+        user_data = request.state.current_user
+        return user_data.get("token_type") == "machine" and user_data.get("scopes") is not None
+    
+    async def check_token_scopes(self, request: Request):
+        """Validate that the token has permission to access the requested endpoint"""
+        user_data = request.state.current_user
+        scopes = user_data.get("scopes", [])
+        path = request.url.path
+        
+        if scopes is None:
+            return
+        
+        # Check if the current path matches any of the allowed scopes
+        for scope in scopes:
+            if path.startswith(scope):
+                return
+        
+        raise HTTPException(
+            status_code=403, 
+            detail="Token does not have permission to access this endpoint"
+        )

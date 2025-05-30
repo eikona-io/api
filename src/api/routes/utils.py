@@ -100,6 +100,34 @@ def generate_persistent_token(user_id: str, org_id: Optional[str] = None) -> str
     )
 
 
+def generate_machine_token(user_id: str, org_id: Optional[str] = None) -> str:
+    """
+    Generate a scoped JWT token for machine authentication with limited endpoint access.
+    
+    Args:
+        user_id (str): The user ID to include in the token.
+        org_id (Optional[str]): The organization ID to include in the token, if any.
+    
+    Returns:
+        str: The generated JWT token with machine scopes.
+    """
+    payload = {
+        "user_id": user_id,
+        "token_type": "machine",
+        "scopes": [
+            "/api/machine-built",
+            "/api/gpu_event", 
+            "/api/update-run",
+            "/api/file-upload"
+        ]
+    }
+    
+    if org_id:
+        payload["org_id"] = org_id
+    
+    return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
+
+
 Base = declarative_base()
 
 T = TypeVar("T")

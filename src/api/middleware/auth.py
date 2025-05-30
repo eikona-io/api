@@ -21,6 +21,10 @@ CLERK_PUBLIC_JWT_KEY = os.getenv("CLERK_PUBLIC_JWT_KEY")
 async def parse_jwt(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        if "scopes" not in payload:
+            payload["scopes"] = None  # Full access for backward compatibility
+        if "token_type" not in payload:
+            payload["token_type"] = "user"  # Default to user token
         return payload
     except JWTError:
         return None
