@@ -7,7 +7,7 @@ from api.middleware.subscriptionMiddleware import SubscriptionMiddleware
 from sqlalchemy import select
 
 from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import JSONResponse  # Import JSONResponse from here
+from fastapi.responses import JSONResponse, RedirectResponse  # Add RedirectResponse import
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -109,6 +109,17 @@ oauth2_scheme = OAuth2PasswordBearer(
 )
 
 app.webhooks.include_router(run.webhook_router)
+
+# Add proxy redirect route - this needs to be added before the api_router include
+@app.api_route("/proxy/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+async def proxy_redirect(path: str):
+    """Redirect /proxy requests to /api/comfy-org/proxy/ for ComfyUI compatibility"""
+    return RedirectResponse(url=f"/api/comfy-org/proxy/{path}", status_code=307)
+
+@app.api_route("/proxy", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+async def proxy_redirect_base():
+    """Redirect base /proxy requests to /api/comfy-org/proxy/ for ComfyUI compatibility"""
+    return RedirectResponse(url="/api/comfy-org/proxy/", status_code=307)
 
 # Include routers
 api_router.include_router(run.router)
