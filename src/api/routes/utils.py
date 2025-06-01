@@ -116,9 +116,11 @@ def generate_machine_token(user_id: str, org_id: Optional[str] = None) -> str:
         "token_type": "machine",
         "scopes": [
             "/api/machine-built",
-            "/api/gpu_event", 
-            "/api/update-run",
-            "/api/file-upload"
+            "/api/gpu_event",
+            "/api/update-run", 
+            "/api/file-upload",
+            "/api/comfy-org/*",
+            "/proxy/*"
         ]
     }
     

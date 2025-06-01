@@ -164,7 +164,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             await self.check_token_scopes(request)
         # print("User authenticated and added to request state")  # Test print
         # logger.info("Added current_user to request state")
-        
+    
+    # Currently only machine tokens are going to be checked
     def should_check_scopes(self, request: Request) -> bool:
         """Check if we need to validate scopes for this request"""
         user_data = request.state.current_user
@@ -179,9 +180,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if scopes is None:
             return
         
-        # Check if the current path matches any of the allowed scopes
+        # Check if the current path matches any of the allowed scope patterns
         for scope in scopes:
-            if path.startswith(scope):
+            if fnmatch(path, scope):
                 return
         
         raise HTTPException(

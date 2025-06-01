@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager  # noqa: E402
 from api.models import User  # noqa: E402
 import os
 import json
-from api.routes.utils import generate_persistent_token  # noqa: E402
+from api.routes.utils import generate_persistent_token, generate_machine_token  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession  # noqa: E402
 from sqlalchemy.pool import AsyncAdaptedQueuePool  # noqa: E402
@@ -80,6 +80,21 @@ async def test_client(app, user):
     )
     yield client
     await client.aclose()
+
+
+@asynccontextmanager
+async def get_machine_test_client(app, user, org_id=None):
+    """Helper function to create a new client instance with machine token"""
+    machine_token = generate_machine_token(user.id, org_id)
+    client = AsyncClient(
+        base_url=app + "/api",
+        headers={"Authorization": f"Bearer {machine_token}"},
+        timeout=120.0,
+    )
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 basic_workflow_json = """

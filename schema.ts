@@ -757,6 +757,10 @@ export const deploymentsRelations = relations(deploymentsTable, ({ one }) => ({
     }),
 }));
 
+export const scopes = z.array(z.string());
+
+export const apiKeyTokenType = pgEnum("api_key_token_type", ["user", "machine", "scoped"]);
+
 export const apiKeyTable = dbSchema.table("api_keys", {
     id: uuid("id").primaryKey().defaultRandom().notNull(),
     key: text("key").notNull().unique(),
@@ -770,6 +774,8 @@ export const apiKeyTable = dbSchema.table("api_keys", {
     revoked: boolean("revoked").default(false).notNull(),
     created_at: timestamp("created_at").defaultNow().notNull(),
     updated_at: timestamp("updated_at").defaultNow().notNull(),
+    scopes: jsonb("scopes").$type<z.infer<typeof scopes>>(),
+    token_type: apiKeyTokenType("token_type").default("user").notNull(),
 });
 
 export const userUsageTable = dbSchema.table("user_usage", {
