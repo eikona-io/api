@@ -205,6 +205,7 @@ async def upload_file(
                     region,
                     access_key,
                     secret_key,
+                    session_token,
                     expiration=3600,  # Set expiration to 1 hour
                 )
 
@@ -480,6 +481,7 @@ async def upload_asset_file(
                     region,
                     access_key,
                     secret_key,
+                    session_token,
                     expiration=3600,
                 )
             
