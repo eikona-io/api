@@ -115,7 +115,6 @@ def generate_machine_token(user_id: str, org_id: Optional[str] = None) -> str:
         "user_id": user_id,
         "token_type": "machine",
         "scopes": [
-            "/api/machine-built",
             "/api/gpu_event",
             "/api/update-run", 
             "/api/file-upload",

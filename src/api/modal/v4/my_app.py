@@ -87,6 +87,13 @@ disable_metadata = config["disable_metadata"] == "True"
 print("disable_metadata: ", disable_metadata)
 secrets = config["secrets"]
 
+contain_custom_comfyui_api_org = secrets.get("API_KEY_COMFY_ORG", "False") != "False"
+
+# Create conditional secrets list based on whether user has their own ComfyUI API organization key
+base_secrets = [modal.Secret.from_dict(secrets)]
+if not contain_custom_comfyui_api_org:
+    base_secrets.append(API_KEY_COMFY_ORG_SECRET)
+
 # --- CPU/MEMORY resource config ---
 cpu_request = config["cpu_request"]
 cpu_limit = config["cpu_limit"]
@@ -192,7 +199,9 @@ def comfyui_cmd(
 
     cmd += " --disable-metadata" if disable_metadata else ""
     
-    cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
+    # Only add custom proxy if user doesn't have their own ComfyUI API organization key
+    if not contain_custom_comfyui_api_org:
+        cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
 
     print("Actual file command: ", cmd)
 
@@ -1996,7 +2005,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
     enable_memory_snapshot=True,
-    secrets=[modal.Secret.from_dict(secrets), API_KEY_COMFY_ORG_SECRET],
+    secrets=base_secrets,
     cpu=cpu,
     memory=memory,
     # restrict_modal_access=True,
@@ -2250,7 +2259,7 @@ async def get_file_tree(path="/"):
     timeout=(config["run_timeout"] + 20),
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
-    secrets=[modal.Secret.from_dict(secrets), API_KEY_COMFY_ORG_SECRET],
+    secrets=base_secrets,
     cpu=cpu,
     memory=memory,
     # restrict_modal_access=True,
