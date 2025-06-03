@@ -35,6 +35,7 @@ RUN uv sync --dev
 COPY package.json /app/
 RUN bun install
 COPY migrate.mts /app/
+COPY migrate-clickhouse.mts /app/
 
 COPY tests/ /app/tests/
 
