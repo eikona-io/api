@@ -2324,11 +2324,10 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
         hasAPINode = self.has_api_node()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU"),
+            comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU", hasAPINode=hasAPINode),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
-            hasAPINode=hasAPINode,
         )
 
         self.stdout_task = asyncio.create_task(
