@@ -1232,7 +1232,7 @@ class BaseComfyDeployRunner:
         import os
         
         # Create the directory if it doesn't exist
-        options_dir = "/comfyui/comfy"
+        options_dir = "/comfyui/"
         # os.makedirs(options_dir, exist_ok=True)
         
         # Create the options.py file with the specified content
