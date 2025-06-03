@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from api.utils.retrieve_s3_config_helper import retrieve_s3_config
+from api.utils.retrieve_s3_config_helper import retrieve_s3_config, S3Config
 from upstash_redis.asyncio import Redis
 import logging
-from typing import Any, Literal, Self, TypeVar, Tuple, Union
+from typing import Any, Literal, Self, TypeVar, Tuple, Union, Dict
 from api.routes.types import WorkflowRunOutputModel
 from fastapi import Request
 import logfire
@@ -42,6 +42,7 @@ import random
 from cryptography.fernet import Fernet
 import base64
 import boto3
+import re
 
 # Get JWT secret from environment variable
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -910,6 +911,93 @@ async def execute_with_org_check(
 
     print(sql)
     return await db.execute(text(sql), execute_params)
+
+
+def is_s3_url(url: str) -> bool:
+    """Check if a URL is an S3 URL"""
+    if not isinstance(url, str) or not url.startswith("http"):
+        return False
+    
+    try:
+        parsed = urlparse(url)
+        # Check for common S3 URL patterns
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+        return (
+            ".s3." in hostname and "amazonaws.com" in hostname
+        ) or (
+            "s3." in hostname and "amazonaws.com" in hostname
+        ) or hostname.endswith(".amazonaws.com")
+    except:
+        return False
+
+
+def extract_s3_info_from_url(url: str) -> tuple[str, str]:
+    """Extract bucket and object key from S3 URL"""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        path = parsed.path.lstrip("/")
+        
+        if ".s3." in hostname and "amazonaws.com" in hostname:
+            # Format: bucket.s3.region.amazonaws.com/key
+            bucket = hostname.split(".")[0]
+            object_key = path
+        elif "s3." in hostname and "amazonaws.com" in hostname:
+            # Format: s3.region.amazonaws.com/bucket/key
+            path_parts = path.split("/", 1)
+            bucket = path_parts[0] if path_parts else ""
+            object_key = path_parts[1] if len(path_parts) > 1 else ""
+        else:
+            # Fallback pattern
+            bucket = hostname.split(".")[0] if hostname else ""
+            object_key = path
+            
+        return bucket, object_key
+    except:
+        return "", ""
+
+
+def is_private_s3_url(url: str, user_s3_config) -> bool:
+    """Check if S3 URL is from a private bucket that requires credentials"""
+    if not is_s3_url(url):
+        return False
+    
+    bucket, _ = extract_s3_info_from_url(url)
+    
+    # Check if it's our configured private bucket
+    if user_s3_config and not user_s3_config.public:
+        return bucket == user_s3_config.bucket
+    
+    return False
+
+
+async def process_inputs_s3_urls(inputs: Dict[str, Any], user_s3_config) -> Dict[str, Any]:
+    """
+    Recursively process inputs and replace private S3 URLs with temporary access URLs
+    """
+    if not user_s3_config:
+        return inputs
+    
+    def process_value(value: Any) -> Any:
+        if isinstance(value, str) and is_private_s3_url(value, user_s3_config):
+            # Replace with temporary access URL
+            temp_url = get_temporary_download_url(
+                url=value,
+                region=user_s3_config.region,
+                access_key=user_s3_config.access_key,
+                secret_key=user_s3_config.secret_key,
+                session_token=user_s3_config.session_token or "",
+                expiration=3600  # 1 hour expiration
+            )
+            return temp_url if temp_url else value
+        elif isinstance(value, dict):
+            return {k: process_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [process_value(item) for item in value]
+        else:
+            return value
+    
+    return process_value(inputs)
 
 
 class SecretManager:
