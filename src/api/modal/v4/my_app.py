@@ -2321,7 +2321,7 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
         
         await self.handle_container_enter_before_comfy()
         
-        hasAPINode = await self.has_api_node()
+        hasAPINode = self.has_api_node()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
             comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU"),
