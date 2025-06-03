@@ -1190,8 +1190,8 @@ async def _create_run(
         await db.commit()
         await db.refresh(new_run)
 
-        print("data", data)
-        print("GPU EVENT ID", data.gpu_event_id)
+        # print("data", data)
+        # print("GPU EVENT ID", data.gpu_event_id)
         
         try:
             # backward compatibility for old comfyui custom nodes
@@ -1207,51 +1207,61 @@ async def _create_run(
                             if node.get("class_type") == "ComfyUIDeployExternalText":
                                 node["inputs"]["default_value"] = inputs[key]
 
-            # Process S3 URLs in ComfyUIDeployExternalImage nodes
+            # Process S3 URLs in ComfyUIDeployExternalImage nodes for both workflow_api_raw and workflow_api
             if workflow_api:
                 try:
                     user_settings = await get_user_settings(request, db)
                     if user_settings:
                         s3_config = await retrieve_s3_config(user_settings)
                         if s3_config and not s3_config.public:
-                            # Process ComfyUIDeployExternalImage nodes for S3 URLs
-                            for node_id, node in workflow_api.items():
-                                if node.get("class_type") == "ComfyUIDeployExternalImage":
-                                    node_inputs = node.get("inputs", {})
-                                    
-                                    # Check default_value_url field
-                                    if "default_value_url" in node_inputs and node_inputs["default_value_url"]:
-                                        url = node_inputs["default_value_url"]
-                                        if isinstance(url, str) and is_private_s3_url(url, s3_config):
-                                            temp_url = get_temporary_download_url(
-                                                url=url,
-                                                region=s3_config.region,
-                                                access_key=s3_config.access_key,
-                                                secret_key=s3_config.secret_key,
-                                                session_token=s3_config.session_token or "",
-                                                expiration=3600  # 1 hour expiration
-                                            )
-                                            if temp_url:
-                                                node_inputs["default_value_url"] = temp_url
-                                                logger.info(f"Replaced S3 URL in ComfyUIDeployExternalImage node {node_id}")
-                                    
-                                    # Also check if the input_id value from inputs contains S3 URLs
-                                    input_id = node_inputs.get("input_id")
-                                    if input_id and inputs and input_id in inputs:
-                                        input_value = inputs[input_id]
-                                        if isinstance(input_value, str) and is_private_s3_url(input_value, s3_config):
-                                            temp_url = get_temporary_download_url(
-                                                url=input_value,
-                                                region=s3_config.region,
-                                                access_key=s3_config.access_key,
-                                                secret_key=s3_config.secret_key,
-                                                session_token=s3_config.session_token or "",
-                                                expiration=3600  # 1 hour expiration
-                                            )
-                                            if temp_url:
-                                                # Update the input_id field in the node
-                                                node_inputs["input_id"] = temp_url
-                                                logger.info(f"Replaced S3 URL in ComfyUIDeployExternalImage node {node_id} input_id")
+                            # Helper function to process S3 URLs in a workflow
+                            def process_s3_urls_in_workflow(workflow_data):
+                                for node_id, node in workflow_data.items():
+                                    if node.get("class_type") == "ComfyUIDeployExternalImage":
+                                        # Ensure inputs exists and get reference
+                                        if "inputs" not in node:
+                                            node["inputs"] = {}
+                                        
+                                        # Check default_value_url field
+                                        if "default_value_url" in node["inputs"] and node["inputs"]["default_value_url"]:
+                                            url = node["inputs"]["default_value_url"]
+                                            if isinstance(url, str) and is_private_s3_url(url, s3_config):
+                                                temp_url = get_temporary_download_url(
+                                                    url=url,
+                                                    region=s3_config.region,
+                                                    access_key=s3_config.access_key,
+                                                    secret_key=s3_config.secret_key,
+                                                    session_token=s3_config.session_token or "",
+                                                    expiration=3600  # 1 hour expiration
+                                                )
+                                                if temp_url:
+                                                    node["inputs"]["default_value_url"] = temp_url
+                                                    logger.info(f"Replaced S3 URL in ComfyUIDeployExternalImage node {node_id}")
+                                        
+                                        # Also check if the input_id value from inputs contains S3 URLs
+                                        input_id = node["inputs"].get("input_id")
+                                        if input_id and inputs and input_id in inputs:
+                                            input_value = inputs[input_id]
+                                            if isinstance(input_value, str) and is_private_s3_url(input_value, s3_config):
+                                                temp_url = get_temporary_download_url(
+                                                    url=input_value,
+                                                    region=s3_config.region,
+                                                    access_key=s3_config.access_key,
+                                                    secret_key=s3_config.secret_key,
+                                                    session_token=s3_config.session_token or "",
+                                                    expiration=3600  # 1 hour expiration
+                                                )
+                                                if temp_url:
+                                                    # Update the input_id field in the node directly
+                                                    node["inputs"]["input_id"] = temp_url
+                                                    logger.info(f"Replaced S3 URL in ComfyUIDeployExternalImage node {node_id} input_id")
+                            
+                            # Process both workflow_api_raw and workflow_api
+                            print("Processing S3 URLs in workflow_api_raw")
+                            process_s3_urls_in_workflow(workflow_api_raw)
+                            print("Processing S3 URLs in workflow_api")
+                            process_s3_urls_in_workflow(workflow_api)
+                            
                 except Exception as e:
                     logger.warning(f"Failed to process S3 URLs in ComfyUIDeployExternalImage nodes: {str(e)}")
                     # Continue without processing - don't fail the run
