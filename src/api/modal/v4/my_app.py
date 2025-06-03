@@ -202,7 +202,7 @@ def comfyui_cmd(
     # Only add custom proxy if user doesn't have their own ComfyUI API organization key
     if not contain_custom_comfyui_api_org:
         cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
-
+        
     print("Actual file command: ", cmd)
 
     return cmd
@@ -1225,6 +1225,32 @@ class BaseComfyDeployRunner:
     async def close_container(self):
         await self.timeout_and_exit(0, True)
 
+    def hijack_argparse(self):
+        """
+        Hijack the argparse module to disable the args_parsing flag
+        """
+        import os
+        
+        # Create the directory if it doesn't exist
+        options_dir = "/comfyui/comfy"
+        # os.makedirs(options_dir, exist_ok=True)
+        
+        # Create the options.py file with the specified content
+        options_file_path = os.path.join(options_dir, "options.py")
+        options_content = """args_parsing = False
+
+def enable_args_parsing(enable=True):
+    global args_parsing
+    # To ensure that the args_parsing flag always is set to False
+    args_parsing = False
+"""
+        
+        with open(options_file_path, 'w') as f:
+            f.write(options_content)
+        
+        print(f"Created options file at: {options_file_path}")
+        
+
     def disable_customnodes(self, nodes_to_disable: list[str]):
         """
         Disable specified custom nodes by renaming their directories
@@ -1479,6 +1505,7 @@ class BaseComfyDeployRunner:
 
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
+        self.hijack_argparse()
 
         # directory_path = "/comfyui/models"
         # if os.path.exists(directory_path):
