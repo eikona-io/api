@@ -172,6 +172,7 @@ def comfyui_cmd(
     extra_args: Optional[str] = None,
     mountIO: bool = False,
     dontCreateFolders: bool = False,
+    hasAPINode: bool = False,
 ):
     if not dontCreateFolders:
         if not os.path.exists(input_directory):
@@ -200,7 +201,7 @@ def comfyui_cmd(
     cmd += " --disable-metadata" if disable_metadata else ""
     
     # Only add custom proxy if user doesn't have their own ComfyUI API organization key
-    if not contain_custom_comfyui_api_org:
+    if not contain_custom_comfyui_api_org and hasAPINode:
         cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
         
     print("Actual file command: ", cmd)
@@ -703,6 +704,9 @@ class BaseComfyDeployRunner:
 
     session_timeout = 0
     start_time = time.time()
+    
+    def has_api_node(self):
+        return os.path.exists("/comfyui/comfy_api_nodes")
 
     async def timeout_and_exit(self, timeout_seconds: int, soft_exit: bool = False):
         import os
@@ -1225,34 +1229,34 @@ class BaseComfyDeployRunner:
     async def close_container(self):
         await self.timeout_and_exit(0, True)
 
-    def hijack_argparse(self):
-        """
-        Hijack the argparse module to disable the args_parsing flag
-        """
-        import os
+#     def hijack_argparse(self):
+#         """
+#         Hijack the argparse module to disable the args_parsing flag
+#         """
+#         import os
         
-        # Create the directory if it doesn't exist
-        options_dir = "/comfyui/comfy/"
-        # os.makedirs(options_dir, exist_ok=True)
+#         # Create the directory if it doesn't exist
+#         options_dir = "/comfyui/comfy/"
+#         # os.makedirs(options_dir, exist_ok=True)
         
-        # Create the options.py file with the specified content
-        options_file_path = os.path.join(options_dir, "options.py")
-        options_content = """args_parsing = False
+#         # Create the options.py file with the specified content
+#         options_file_path = os.path.join(options_dir, "options.py")
+#         options_content = """args_parsing = False
 
-def enable_args_parsing(enable=True):
-    global args_parsing
-    # To ensure that the args_parsing flag always is set to False
-    args_parsing = False
-"""
+# def enable_args_parsing(enable=True):
+#     global args_parsing
+#     # To ensure that the args_parsing flag always is set to False
+#     args_parsing = False
+# """
 
-        try:
-            with open(options_file_path, 'w') as f:
-                f.write(options_content)
-        except Exception as e:
-            print(f"Failed to create options file at: {options_file_path}")
-            print(f"Error: {e}")
+#         try:
+#             with open(options_file_path, 'w') as f:
+#                 f.write(options_content)
+#         except Exception as e:
+#             print(f"Failed to create options file at: {options_file_path}")
+#             print(f"Error: {e}")
         
-        print(f"Created options file at: {options_file_path}")
+#         print(f"Created options file at: {options_file_path}")
         
 
     def disable_customnodes(self, nodes_to_disable: list[str]):
@@ -1509,7 +1513,7 @@ def enable_args_parsing(enable=True):
 
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
-        self.hijack_argparse()
+        # self.hijack_argparse()
 
         # directory_path = "/comfyui/models"
         # if os.path.exists(directory_path):
@@ -2017,6 +2021,11 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             args.cpu = True
         else:
             args.cpu = False
+            
+        # Only add custom proxy if user doesn't have their own ComfyUI API organization key
+        if not contain_custom_comfyui_api_org and self.has_api_node():
+            args.comfy_api_base = f'{base_url}/api/comfy-org/'
+            
         
 
     @modal.exit()
@@ -2311,12 +2320,15 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
             self._session_id = self.session_id
         
         await self.handle_container_enter_before_comfy()
+        
+        hasAPINode = await self.has_api_node()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
             comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
+            hasAPINode=hasAPINode,
         )
 
         self.stdout_task = asyncio.create_task(
