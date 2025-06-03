@@ -1244,9 +1244,13 @@ def enable_args_parsing(enable=True):
     # To ensure that the args_parsing flag always is set to False
     args_parsing = False
 """
-        
-        with open(options_file_path, 'w') as f:
-            f.write(options_content)
+
+        try:
+            with open(options_file_path, 'w') as f:
+                f.write(options_content)
+        except Exception as e:
+            print(f"Failed to create options file at: {options_file_path}")
+            print(f"Error: {e}")
         
         print(f"Created options file at: {options_file_path}")
         
