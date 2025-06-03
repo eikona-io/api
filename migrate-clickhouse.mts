@@ -22,7 +22,7 @@ interface MigrationFile {
   content: string;
 }
 
-async function executeClickHouseQuery(query: string): Promise<any> {
+async function executeClickHouseQuery(query: string, allowErrors: string[] = []): Promise<any> {
   const url = new URL(CLICKHOUSE_URL);
   url.searchParams.set("user", CLICKHOUSE_USER);
   url.searchParams.set("password", CLICKHOUSE_PASSWORD);
@@ -40,10 +40,45 @@ async function executeClickHouseQuery(query: string): Promise<any> {
 
   if (!response.ok) {
     const errorText = await response.text();
+    
+    // Check if this is an allowed error (like column already exists/doesn't exist)
+    for (const allowedError of allowErrors) {
+      if (errorText.includes(allowedError)) {
+        console.log(`⚠️  Ignoring expected error: ${allowedError}`);
+        return "";
+      }
+    }
+    
     throw new Error(`ClickHouse query failed: ${response.status} ${response.statusText}\n${errorText}`);
   }
 
   return response.text();
+}
+
+async function columnExists(table: string, column: string): Promise<boolean> {
+  try {
+    const result = await executeClickHouseQuery(`
+      SELECT name FROM system.columns 
+      WHERE table = '${table}' AND database = '${CLICKHOUSE_DATABASE}' AND name = '${column}'
+    `);
+    return result.trim() !== "";
+  } catch (error) {
+    console.log(`Warning: Could not check if column exists: ${error}`);
+    return false;
+  }
+}
+
+async function tableExists(table: string): Promise<boolean> {
+  try {
+    const result = await executeClickHouseQuery(`
+      SELECT name FROM system.tables 
+      WHERE database = '${CLICKHOUSE_DATABASE}' AND name = '${table}'
+    `);
+    return result.trim() !== "";
+  } catch (error) {
+    console.log(`Warning: Could not check if table exists: ${error}`);
+    return false;
+  }
 }
 
 async function createMigrationsTable(): Promise<void> {
@@ -129,6 +164,9 @@ async function runMigrations(): Promise<void> {
     // Create migrations table if it doesn't exist
     await createMigrationsTable();
 
+    const tables = await executeClickHouseQuery("SHOW TABLES");
+    console.log(tables);
+
     // Get already applied migrations
     const appliedMigrations = await getAppliedMigrations();
     console.log(`Found ${appliedMigrations.size} already applied migrations`);
@@ -136,6 +174,8 @@ async function runMigrations(): Promise<void> {
     // Get all migration files
     const migrationFiles = await getMigrationFiles();
     console.log(`Found ${migrationFiles.length} migration files`);
+
+    // console.log(migrationFiles);
 
     let appliedCount = 0;
 
@@ -149,19 +189,36 @@ async function runMigrations(): Promise<void> {
 
       console.log(`🔄 Applying migration: ${migration.filename}`);
 
-      // Split content by semicolon and execute each statement
-      const statements = migration.content
-        .split(";")
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith("--"));
+      // Split content by lines first, then reconstruct statements
+      const lines = migration.content
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.length > 0 && !line.startsWith("--"));
+      
+      // Reconstruct statements by joining lines until we hit a semicolon
+      const statements: string[] = [];
+      let currentStatement = "";
+      
+      for (const line of lines) {
+        currentStatement += line + " ";
+        if (line.endsWith(";")) {
+          statements.push(currentStatement.trim().slice(0, -1)); // Remove trailing semicolon
+          currentStatement = "";
+        }
+      }
+      
+      // Add any remaining statement (in case last statement doesn't end with semicolon)
+      if (currentStatement.trim()) {
+        statements.push(currentStatement.trim());
+      }
 
       for (const statement of statements) {
+        // console.log(statement);
         if (statement.trim()) {
           await executeClickHouseQuery(statement);
         }
       }
 
-      // Mark as applied
       await markMigrationAsApplied(migrationId);
       appliedCount++;
       console.log(`✅ Successfully applied migration: ${migration.filename}`);
