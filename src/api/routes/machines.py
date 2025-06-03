@@ -38,7 +38,7 @@ from .types import (
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .utils import generate_persistent_token, select, SecretManager
+from .utils import generate_persistent_token, generate_machine_token, select, SecretManager
 from sqlalchemy import func, text
 from fastapi.responses import JSONResponse
 
@@ -592,7 +592,7 @@ async def create_serverless_machine(
 
     volumes = await retrieve_model_volumes(request, db)
     # docker_commands = generate_all_docker_commands(machine)
-    machine_token = generate_persistent_token(user_id, org_id)
+    machine_token = generate_machine_token(user_id, org_id)
 
     secrets = await get_machine_secrets(db=db, machine_id=machine.id)
 
@@ -1249,7 +1249,7 @@ async def update_serverless_machine(
             # Prepare build parameters
             volumes = await retrieve_model_volumes(request, db)
             docker_commands = generate_all_docker_commands(machine)
-            machine_token = generate_persistent_token(user_id, org_id)
+            machine_token = generate_machine_token(user_id, org_id)
             secrets = await get_machine_secrets(db=db, machine_id=machine.id)
 
             params = BuildMachineItem(
@@ -1324,7 +1324,7 @@ async def redeploy_machine(
     org_id = current_user["org_id"] if "org_id" in current_user else None
 
     volumes = await retrieve_model_volumes(request, db)
-    machine_token = generate_persistent_token(user_id, org_id)
+    machine_token = generate_machine_token(user_id, org_id)
     secrets = await get_machine_secrets(db=db, machine_id=machine.id)
     
     params = BuildMachineItem(
@@ -1374,7 +1374,7 @@ async def redeploy_machine_internal(
         machine = machine.scalars().first()
         # volumes = await retrieve_model_volumes(request, db)
         volume_name = "models_" + machine.org_id if machine.org_id else machine.user_id
-        machine_token = generate_persistent_token(machine.user_id, machine.org_id)
+        machine_token = generate_machine_token(machine.user_id, machine.org_id)
         secrets = await get_machine_secrets(db=db, machine_id=machine.id)
         machine_version = await db.execute(
             select(MachineVersion).where(
@@ -1431,7 +1431,7 @@ async def redeploy_machine_deployment_internal(
         volume_name = (
             "models_" + deployment.org_id if deployment.org_id else deployment.user_id
         )
-        machine_token = generate_persistent_token(deployment.user_id, deployment.org_id)
+        machine_token = generate_machine_token(deployment.user_id, deployment.org_id)
         secrets = await get_machine_secrets(db=db, machine_id=deployment.machine_id)
         machine_version = await db.execute(
             select(MachineVersion).where(

@@ -30,6 +30,7 @@ import asyncio
 from collections import deque
 from contextlib import contextmanager
 from io import StringIO
+from urllib.parse import urlparse
 
 public_model_volume = modal.Volume.from_name(config["public_model_volume"], create_if_missing=True)
 private_volume = modal.Volume.from_name(config["private_model_volume"], create_if_missing=True)
@@ -57,6 +58,8 @@ print("Builder Version: 4")
 print("Builder Deps: ", os.getenv("MODAL_IMAGE_BUILDER_VERSION"))
 print("Modal Version: ", modal.__version__)
 
+API_KEY_COMFY_ORG_SECRET = modal.Secret.from_dict({"API_KEY_COMFY_ORG": config["auth_token"]})
+
 app = App(name=config["name"])
 
 skip_static_assets = config["skip_static_assets"]
@@ -83,6 +86,13 @@ disable_metadata = config["disable_metadata"] == "True"
 
 print("disable_metadata: ", disable_metadata)
 secrets = config["secrets"]
+
+contain_custom_comfyui_api_org = secrets.get("API_KEY_COMFY_ORG", "False") != "False"
+
+# Create conditional secrets list based on whether user has their own ComfyUI API organization key
+base_secrets = [modal.Secret.from_dict(secrets)]
+if not contain_custom_comfyui_api_org:
+    base_secrets.append(API_KEY_COMFY_ORG_SECRET)
 
 # --- CPU/MEMORY resource config ---
 cpu_request = config["cpu_request"]
@@ -153,11 +163,16 @@ temp_directory = "/private_models"
 
 extra_model_path_config = "/comfyui/extra_model_paths.yaml"
 
+# Parse base URL from gpu_event_callback_url
+parsed_url = urlparse(config["gpu_event_callback_url"])
+base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
 def comfyui_cmd(
     cpu: bool = False,
     extra_args: Optional[str] = None,
     mountIO: bool = False,
     dontCreateFolders: bool = False,
+    hasAPINode: bool = False,
 ):
     if not dontCreateFolders:
         if not os.path.exists(input_directory):
@@ -184,7 +199,11 @@ def comfyui_cmd(
         cmd = f"{prestart_command} && {cmd}"
 
     cmd += " --disable-metadata" if disable_metadata else ""
-
+    
+    # Only add custom proxy if user doesn't have their own ComfyUI API organization key
+    if not contain_custom_comfyui_api_org and hasAPINode:
+        cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
+        
     print("Actual file command: ", cmd)
 
     return cmd
@@ -685,6 +704,9 @@ class BaseComfyDeployRunner:
 
     session_timeout = 0
     start_time = time.time()
+    
+    def has_api_node(self):
+        return os.path.exists("/comfyui/comfy_api_nodes")
 
     async def timeout_and_exit(self, timeout_seconds: int, soft_exit: bool = False):
         import os
@@ -1207,6 +1229,36 @@ class BaseComfyDeployRunner:
     async def close_container(self):
         await self.timeout_and_exit(0, True)
 
+#     def hijack_argparse(self):
+#         """
+#         Hijack the argparse module to disable the args_parsing flag
+#         """
+#         import os
+        
+#         # Create the directory if it doesn't exist
+#         options_dir = "/comfyui/comfy/"
+#         # os.makedirs(options_dir, exist_ok=True)
+        
+#         # Create the options.py file with the specified content
+#         options_file_path = os.path.join(options_dir, "options.py")
+#         options_content = """args_parsing = False
+
+# def enable_args_parsing(enable=True):
+#     global args_parsing
+#     # To ensure that the args_parsing flag always is set to False
+#     args_parsing = False
+# """
+
+#         try:
+#             with open(options_file_path, 'w') as f:
+#                 f.write(options_content)
+#         except Exception as e:
+#             print(f"Failed to create options file at: {options_file_path}")
+#             print(f"Error: {e}")
+        
+#         print(f"Created options file at: {options_file_path}")
+        
+
     def disable_customnodes(self, nodes_to_disable: list[str]):
         """
         Disable specified custom nodes by renaming their directories
@@ -1461,6 +1513,7 @@ class BaseComfyDeployRunner:
 
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
+        # self.hijack_argparse()
 
         # directory_path = "/comfyui/models"
         # if os.path.exists(directory_path):
@@ -1968,6 +2021,11 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             args.cpu = True
         else:
             args.cpu = False
+            
+        # Only add custom proxy if user doesn't have their own ComfyUI API organization key
+        if not contain_custom_comfyui_api_org and self.has_api_node():
+            args.comfy_api_base = f'{base_url}/api/comfy-org/'
+            
         
 
     @modal.exit()
@@ -1987,7 +2045,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
     enable_memory_snapshot=True,
-    secrets=[modal.Secret.from_dict(secrets)],
+    secrets=base_secrets,
     cpu=cpu,
     memory=memory,
     # restrict_modal_access=True,
@@ -2241,7 +2299,7 @@ async def get_file_tree(path="/"):
     timeout=(config["run_timeout"] + 20),
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
-    secrets=[modal.Secret.from_dict(secrets)],
+    secrets=base_secrets,
     cpu=cpu,
     memory=memory,
     # restrict_modal_access=True,
@@ -2262,9 +2320,11 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
             self._session_id = self.session_id
         
         await self.handle_container_enter_before_comfy()
+        
+        hasAPINode = self.has_api_node()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU"),
+            comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU", hasAPINode=hasAPINode),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",

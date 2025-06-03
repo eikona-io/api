@@ -21,6 +21,10 @@ CLERK_PUBLIC_JWT_KEY = os.getenv("CLERK_PUBLIC_JWT_KEY")
 async def parse_jwt(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        if "scopes" not in payload:
+            payload["scopes"] = None  # Full access for backward compatibility
+        if "token_type" not in payload:
+            payload["token_type"] = "user"  # Default to user token
         return payload
     except JWTError:
         return None
@@ -161,7 +165,10 @@ async def get_current_user(request: Request):
 
     # Check for Authorization header
     auth_header = request.headers.get("Authorization")
-
+    
+    # For proxy to comfy.org
+    comfy_api_key = request.headers.get("x-api-key")
+    
     token = None
     if session_token:
         token = session_token
@@ -169,6 +176,8 @@ async def get_current_user(request: Request):
         token = cd_token
     elif auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
+    elif comfy_api_key:
+        token = comfy_api_key
     else:
         raise HTTPException(status_code=401, detail="Invalid or missing token")
 

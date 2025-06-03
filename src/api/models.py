@@ -280,6 +280,12 @@ class APIKey(SerializableMixin, Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     org_id = Column(String)
     revoked = Column(Boolean, nullable=False, default=False)
+    scopes = Column(JSON, nullable=True)  # New field for storing endpoint permissions
+    token_type = Column(
+        Enum("user", "machine", "scoped", name="api_key_token_type"),
+        nullable=False,
+        default="user"
+    )  # New field to distinguish token types
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
