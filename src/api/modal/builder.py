@@ -133,6 +133,8 @@ class GPUType(str, Enum):
     A100_80GB = "A100-80GB"
     H100 = "H100"
     L4 = "L4"
+    H200 = "H200"
+    B200 = "B200"
 
 
 class BuildMachineItem(BaseModel):
