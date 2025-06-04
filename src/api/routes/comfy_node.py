@@ -8,16 +8,14 @@ from datetime import timedelta
 from fastapi.responses import JSONResponse, FileResponse
 import modal
 import json
+import asyncio
+from urllib.parse import urlparse
 from api.utils.multi_level_cache import multi_level_cached
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Comfy Node"])
-
-
-import asyncio
-from urllib.parse import urlparse
 
 
 async def extract_repo_name(repo_url: str) -> str:

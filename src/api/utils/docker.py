@@ -52,7 +52,7 @@ def comfyui_cmd(
     if install_latest_comfydeploy:
         cmd += "cd ./custom_nodes/comfyui-deploy && git pull --ff-only && cd - && "
     
-    cmd += f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
+    cmd += "python main.py --dont-print-server --enable-cors-header --listen --port 8188"
     
     cmd += f" --input-directory {intputs_folder}"
     

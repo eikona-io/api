@@ -42,7 +42,7 @@ def comfyui_cmd(
     extra_args: Optional[str] = None,
 ):
     cmd = (
-        f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
+        "python main.py --dont-print-server --enable-cors-header --listen --port 8188"
     )
     if cpu:
         cmd += " --cpu"
