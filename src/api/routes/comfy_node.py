@@ -8,6 +8,7 @@ from datetime import timedelta
 from fastapi.responses import JSONResponse, FileResponse
 import modal
 import json
+from api.utils.multi_level_cache import multi_level_cached
 
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,13 @@ async def _get_commit_sha_for_tag_with_headers(repo_name: str, tag: str) -> str 
         logger.error(f"Error fetching commit SHA for tag {tag}: {str(e)}")
         return None
 
+@multi_level_cached(key_prefix="comfyui_deploy_hash", ttl_seconds=3600, redis_ttl_seconds=21600)
+async def get_latest_comfydeploy_hash():
+    """Fetch the latest commit hash from ComfyUI-Deploy repository"""
+    git_url = "https://github.com/bennykok/comfyui-deploy"
+    branch_info = await _get_branch_info(git_url)
+    return branch_info["commit"]["sha"] if branch_info else None
+
 @router.get("/comfyui-versions", response_model=Dict[str, Any])
 async def get_comfyui_versions(request: Request):
     git_url = "https://github.com/comfyanonymous/ComfyUI"
@@ -152,6 +160,17 @@ async def get_comfyui_versions(request: Request):
     }
     
     return JSONResponse(content=response)
+
+@router.get("/latest-hashes", response_model=Dict[str, str])
+async def get_latest_hashes():
+    """Return latest hashes for ComfyUI and ComfyUI-Deploy"""
+    comfyui_versions = await get_comfyui_versions(Request())
+    comfydeploy_hash = await get_latest_comfydeploy_hash()
+    
+    return JSONResponse(content={
+        "comfyui_hash": comfyui_versions["latest"]["sha"],
+        "comfydeploy_hash": comfydeploy_hash
+    })
 
 @router.get("/custom-node-list")
 async def get_nodes_json():
