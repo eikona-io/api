@@ -12,6 +12,12 @@ import email
 from email.message import EmailMessage
 import io
 import base64
+import random
+import mimetypes
+from pydantic import BaseModel, Field
+from typing import Optional
+from .utils import generate_presigned_url
+from api.utils.storage_helper import get_s3_config
 
 import logfire
 logger = logging.getLogger(__name__)
@@ -19,6 +25,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Comfy Proxy"])
 
 COMFY_API_KEY = os.getenv("COMFY_API_KEY")
+
+# Utility functions copied from files.py
+def custom_nanoid(size=16):
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    return "".join(random.choice(alphabet) for _ in range(size))
+
+prefixes = {
+    "img": "img",
+    "zip": "zip", 
+    "vid": "vid",
+    "audio": "audio",
+    "file": "file",
+    "folder": "folder"
+}
+
+def get_id_prefix_from_type(mime_type: str):
+    if mime_type.startswith("video/"):
+        return "vid"
+    elif mime_type.startswith("audio/"):
+        return "audio"
+    elif mime_type.startswith("image/"):
+        return "img"
+    elif mime_type.startswith("application/zip"):
+        return "zip"
+    else:
+        return "file"
+
+def new_id(prefix):
+    return f"{prefixes[prefix]}_{custom_nanoid(16)}"
+
+# Pydantic models
+class UploadRequest(BaseModel):
+    file_name: str = Field(..., description="Filename to upload")
+    content_type: Optional[str] = Field(
+        None,
+        description="Mime type of the file. For example: image/png, image/jpeg, video/mp4, etc.",
+    )
+
+class UploadResponse(BaseModel):
+    download_url: str = Field(..., description="URL to GET uploaded file")
+    upload_url: str = Field(..., description="URL to PUT file to upload")
 
 def check_enterprise_plan(request: Request):
     """Check if user is on enterprise plan"""
@@ -38,6 +85,63 @@ def check_enterprise_plan(request: Request):
         )
     
     return True
+
+@router.post("/comfy-org/customers/storage", response_model=UploadResponse)
+async def get_comfy_org_upload_url(
+    request: Request,
+    file_name: str,
+    content_type: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get presigned upload URL for Comfy.org storage with enterprise plan validation"""
+    
+    # Check enterprise plan
+    check_enterprise_plan(request)
+    
+    # Infer content type if not provided
+    if not content_type:
+        inferred_type, _ = mimetypes.guess_type(file_name)
+        content_type = inferred_type or "application/octet-stream"
+    
+    # Get S3 configuration
+    s3_config = await get_s3_config(request, db)
+    
+    # Generate file ID and object key
+    file_extension = os.path.splitext(file_name)[1]
+    file_id = new_id(get_id_prefix_from_type(content_type))
+    
+    # Use comfy-org specific path structure
+    object_key = f"comfy-org/{file_id}{file_extension}"
+    
+    # Generate presigned upload URL
+    upload_url = generate_presigned_url(
+        object_key=object_key,
+        expiration=3600,  # 1 hour
+        http_method="PUT",
+        content_type=content_type,
+        public=s3_config.public,
+        bucket=s3_config.bucket,
+        region=s3_config.region,
+        access_key=s3_config.access_key,
+        secret_key=s3_config.secret_key,
+        session_token=s3_config.session_token,
+    )
+    
+    # Generate download URL
+    download_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{object_key}"
+    
+    logfire.info("Generated Comfy.org upload URL", extra={
+        "file_name": file_name,
+        "content_type": content_type,
+        "file_id": file_id,
+        "object_key": object_key
+    })
+    
+    return UploadResponse(
+        upload_url=upload_url,
+        download_url=download_url
+    )
+
 
 @router.api_route("/comfy-org/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy_to_comfy_org(

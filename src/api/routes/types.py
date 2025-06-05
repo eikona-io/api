@@ -56,6 +56,8 @@ class MachineGPU(str, Enum):
     A100 = "A100"
     A100_80GB = "A100-80GB"
     H100 = "H100"
+    H200 = "H200"
+    B200 = "B200"
 
 def format_datetime(dt: Optional[datetime]) -> Optional[str]:
     print(dt)

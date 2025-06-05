@@ -1,10 +1,27 @@
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
+from api.routes.comfy_node import get_comfyui_versions_cached
+from api.routes.comfy_node import get_latest_comfydeploy_hash
 
-comfydeploy_hash = "c47865ec266daf924cc7ef19223e9cf70122eb41" 
-comfyui_hash = "158419f3a0017c2ce123484b14b6c527716d6ec8"
+comfydeploy_hash = "7b734c415aabd51b8bb8fad9fd719055b5ba359d" 
+comfyui_hash = "094306b626e9cf505690c5d8b445032b3b8a36fa"
 # https://github.com/ltdrdata/ComfyUI-Manager/commit/fd2d285af5ae257a4d1f3c1146981ce41ac5adf5
 comfyuimanager_hash = "fd2d285af5ae257a4d1f3c1146981ce41ac5adf5"
+
+async def get_dynamic_comfyui_hash():
+    """Get latest ComfyUI hash dynamically"""
+    try:
+        versions = await get_comfyui_versions_cached()
+        return versions["latest"]["sha"]
+    except Exception:
+        return comfyui_hash  # fallback to hardcoded
+
+async def get_dynamic_comfydeploy_hash():
+    """Get latest ComfyUI-Deploy hash dynamically"""
+    try:
+        return await get_latest_comfydeploy_hash()
+    except Exception:
+        return comfydeploy_hash  # fallback to hardcoded
 
 def extract_hash(dependency_string):
     parts = dependency_string.split("@")
