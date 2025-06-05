@@ -158,6 +158,9 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
     steps = data.docker_command_steps
     comfy_ui_override = None
     
+    # Get dynamic ComfyUI hash for use as default
+    dynamic_comfyui_hash = await get_dynamic_comfyui_hash()
+    
     if steps:
         # print("steps",steps)
         steps = DockerSteps(**steps) if isinstance(steps, dict) else steps
@@ -192,10 +195,13 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
         )
         docker_commands = generate_docker_commands(deps)
     
+    # Determine which ComfyUI version to use
+    comfyui_version_to_use = dynamic_comfyui_hash if data.comfyui_version == comfyui_hash else data.comfyui_version
+    
     if data.comfyui_version:
         if not deps:
             deps = DependencyGraph(
-                comfyui=data.comfyui_version,
+                comfyui=comfyui_version_to_use,
                 models={},
                 missing_nodes=[],
                 custom_nodes={},
@@ -204,7 +210,7 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
         else:
             # Convert deps to DependencyGraph if it's still a dict
             deps = DependencyGraph(**deps) if isinstance(deps, dict) else deps
-            deps.comfyui = data.comfyui_version
+            deps.comfyui = comfyui_version_to_use
     
     if docker_commands and data.extra_docker_commands:
         for extra_command in data.extra_docker_commands:
@@ -215,6 +221,16 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
     
     # if not docker_commands:
     #     raise ValueError("No docker commands")
+    
+    # Ensure deps exists with the correct ComfyUI version
+    if not deps:
+        deps = DependencyGraph(
+            comfyui=dynamic_comfyui_hash,
+            models={},
+            missing_nodes=[],
+            custom_nodes={},
+            files={}
+        )
     
     enable_uv = False
     docker_commands = [[y.replace("python -m pip install", "uv pip install") if enable_uv else y for y in x] for x in docker_commands]

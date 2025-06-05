@@ -168,6 +168,9 @@ async def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
     deps = data.dependencies
     docker_commands = None
     steps = data.docker_command_steps
+    
+    # Get dynamic ComfyUI hash for use as default
+    dynamic_comfyui_hash = await get_dynamic_comfyui_hash()
 
     if steps:
         steps = DockerSteps(**steps) if isinstance(steps, dict) else steps
@@ -208,17 +211,20 @@ async def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
         )
         docker_commands = generate_docker_commands(deps)
 
+    # Determine which ComfyUI version to use
+    comfyui_version_to_use = dynamic_comfyui_hash if data.comfyui_version == comfyui_hash else data.comfyui_version
+    
     if data.comfyui_version:
         if not deps:
             deps = DependencyGraph(
-                comfyui=data.comfyui_version,
+                comfyui=comfyui_version_to_use,
                 models={},
                 missing_nodes=[],
                 custom_nodes={},
                 files={},
             )
         else:
-            deps.comfyui = data.comfyui_version
+            deps.comfyui = comfyui_version_to_use
 
     if docker_commands and data.extra_docker_commands:
         for extra_command in data.extra_docker_commands:
@@ -229,6 +235,16 @@ async def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
 
     # if not docker_commands:
     #     raise ValueError("No docker commands")
+
+    # Ensure deps exists with the correct ComfyUI version
+    if not deps:
+        deps = DependencyGraph(
+            comfyui=dynamic_comfyui_hash,
+            models={},
+            missing_nodes=[],
+            custom_nodes={},
+            files={}
+        )
 
     enable_uv = False
     docker_commands = [
