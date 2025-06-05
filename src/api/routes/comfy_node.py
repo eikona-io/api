@@ -8,6 +8,7 @@ from datetime import timedelta
 from fastapi.responses import JSONResponse, FileResponse
 import modal
 import json
+from api.utils.multi_level_cache import multi_level_cached
 
 
 logger = logging.getLogger(__name__)
@@ -108,8 +109,15 @@ async def _get_commit_sha_for_tag_with_headers(repo_name: str, tag: str) -> str 
         logger.error(f"Error fetching commit SHA for tag {tag}: {str(e)}")
         return None
 
-@router.get("/comfyui-versions", response_model=Dict[str, Any])
-async def get_comfyui_versions(request: Request):
+@multi_level_cached(
+    key_prefix="comfyui_versions",
+    ttl_seconds=300,  # Cache in local memory for 5 minutes
+    redis_ttl_seconds=1800,  # Cache in Redis for 30 minutes
+    version="1.0",
+    key_builder=lambda: "comfyui_versions"  # Simple static key since no parameters
+)
+async def get_comfyui_versions_cached():
+    """Get ComfyUI versions with multi-level caching."""
     git_url = "https://github.com/comfyanonymous/ComfyUI"
     repo_name = await extract_repo_name(git_url)
     
@@ -151,7 +159,31 @@ async def get_comfyui_versions(request: Request):
         ]
     }
     
-    return JSONResponse(content=response)
+    return response
+
+@multi_level_cached(key_prefix="comfyui_deploy_hash", ttl_seconds=3600, redis_ttl_seconds=21600)
+async def get_latest_comfydeploy_hash():
+    """Fetch the latest commit hash from ComfyUI-Deploy repository"""
+    git_url = "https://github.com/bennykok/comfyui-deploy"
+    branch_info = await _get_branch_info(git_url)
+    return branch_info["commit"]["sha"] if branch_info else None
+
+@router.get("/latest-hashes", response_model=Dict[str, str])
+async def get_latest_hashes():
+    """Return latest hashes for ComfyUI and ComfyUI-Deploy"""
+    comfyui_versions = await get_comfyui_versions_cached()
+    comfydeploy_hash = await get_latest_comfydeploy_hash()
+    
+    return JSONResponse(content={
+        "comfyui_hash": comfyui_versions["latest"]["sha"],
+        "comfydeploy_hash": comfydeploy_hash
+    })
+
+@router.get("/comfyui-versions", response_model=Dict[str, Any])
+async def get_comfyui_versions(request: Request):
+    """API endpoint to get ComfyUI versions."""
+    result = await get_comfyui_versions_cached()
+    return JSONResponse(content=result)
 
 @router.get("/custom-node-list")
 async def get_nodes_json():
