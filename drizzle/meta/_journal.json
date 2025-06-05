@@ -1366,6 +1366,13 @@
       "when": 1748755948363,
       "tag": "0194_woozy_the_executioner",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1749021467878,
+      "tag": "0195_elite_red_wolf",
+      "breakpoints": true
     }
   ]
 }

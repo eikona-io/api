@@ -120,7 +120,11 @@ def generate_machine_token(user_id: str, org_id: Optional[str] = None) -> str:
             "/api/update-run", 
             "/api/file-upload",
             "/api/comfy-org/*",
-            "/proxy/*"
+            "/api/session/callback*",
+            
+            # Backward compatibility for ComfyOrg API
+            "/proxy/*",
+            "/customers/storage"
         ]
     }
     

@@ -664,6 +664,7 @@ async def run_model(
     workflow_run,
     background_tasks,
     client: AsyncClient,
+    user_settings=None,
 ):
     run_id = params.get("prompt_id")
     model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
@@ -783,7 +784,9 @@ async def run_model(
     #     update_status(run_id, "uploading", background_tasks, client, workflow_run)
 
     async with get_db_context() as db:
-        user_settings = await get_user_settings(request, db)
+        # user_settings is passed as parameter to avoid duplicate DB calls
+        if user_settings is None:
+            user_settings = await get_user_settings(request, db)
 
         # if model.is_comfyui:
     # output_query = (
@@ -978,6 +981,9 @@ async def _create_run(
     # if exceed_spend_limit:
     #     raise HTTPException(status_code=400, detail="Spend limit reached")
 
+    # Get user settings once at the beginning to avoid multiple DB calls
+    user_settings = await get_user_settings(request, db)
+
     if (
         data.batch_number is not None
         and data.batch_number > 1
@@ -1117,7 +1123,6 @@ async def _create_run(
     # Process S3 URLs in inputs - check for private S3 URLs and replace with temporary access URLs
     if hasattr(data, 'inputs') and data.inputs:
         try:
-            user_settings = await get_user_settings(request, db)
             if user_settings:
                 s3_config = await retrieve_s3_config(user_settings)
                 if s3_config and not s3_config.public:
@@ -1210,7 +1215,6 @@ async def _create_run(
             # Process S3 URLs in ComfyUIDeployExternalImage nodes for both workflow_api_raw and workflow_api
             if workflow_api:
                 try:
-                    user_settings = await get_user_settings(request, db)
                     if user_settings:
                         s3_config = await retrieve_s3_config(user_settings)
                         if s3_config and not s3_config.public:
@@ -1267,7 +1271,7 @@ async def _create_run(
                     # Continue without processing - don't fail the run
                     pass
 
-            # print("workflow_api", workflow_api)
+            print("workflow_api", workflow_api)
 
             params = {
                 "prompt_id": str(new_run.id),
@@ -1372,6 +1376,7 @@ async def _create_run(
                         workflow_run=new_run,
                         background_tasks=background_tasks,
                         client=client,
+                        user_settings=user_settings,
                     )
 
             if data.execution_mode == "async":
