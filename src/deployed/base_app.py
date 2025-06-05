@@ -12,6 +12,7 @@ import deployed.checkpoint_pickle
 
 from deployed.comfy_utils import (
     Input,
+    generate_modal_image,
     queue_workflow,
     start_comfy,
     wait_for_completion,

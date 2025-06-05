@@ -191,7 +191,7 @@ async def wait_for_completion(prompt_id: str):
         # return {"error": f"Error waiting for image generation: {str(e)}"}
 
 
-async def generate_modal_image(
+def generate_modal_image(
     dependencies: Optional[Union[List[str], DepsBody]] = Field(
         None,
         description="The dependencies to use, either as a DepsBody or a list of shorthand strings",
@@ -242,9 +242,9 @@ async def generate_modal_image(
             #         )
             #     )
             deps_body = DepsBody(docker_command_steps=steps)
-            converted = await generate_all_docker_commands(deps_body)
+            converted = generate_all_docker_commands(deps_body)
         else:
-            converted = await generate_all_docker_commands(dependencies)
+            converted = generate_all_docker_commands(dependencies)
 
         docker_commands = converted.docker_commands
         if docker_commands is not None:

@@ -3,23 +3,6 @@ from pydantic import BaseModel
 
 comfydeploy_hash = "7b734c415aabd51b8bb8fad9fd719055b5ba359d" 
 comfyui_hash = "094306b626e9cf505690c5d8b445032b3b8a36fa"
-
-async def get_dynamic_comfyui_hash():
-    """Get latest ComfyUI hash dynamically"""
-    try:
-        from api.routes.comfy_node import get_comfyui_versions
-        versions = await get_comfyui_versions()
-        return versions["latest"]["sha"]
-    except Exception:
-        return comfyui_hash  # fallback to hardcoded
-
-async def get_dynamic_comfydeploy_hash():
-    """Get latest ComfyUI-Deploy hash dynamically"""
-    try:
-        from api.routes.comfy_node import get_latest_comfydeploy_hash
-        return await get_latest_comfydeploy_hash()
-    except Exception:
-        return comfydeploy_hash  # fallback to hardcoded
 # https://github.com/ltdrdata/ComfyUI-Manager/commit/fd2d285af5ae257a4d1f3c1146981ce41ac5adf5
 comfyuimanager_hash = "fd2d285af5ae257a4d1f3c1146981ce41ac5adf5"
 
@@ -51,7 +34,7 @@ def comfyui_cmd(
     if install_latest_comfydeploy:
         cmd += "cd ./custom_nodes/comfyui-deploy && git pull --ff-only && cd - && "
     
-    cmd += "python main.py --dont-print-server --enable-cors-header --listen --port 8188"
+    cmd += f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
     
     cmd += f" --input-directory {intputs_folder}"
     
@@ -151,14 +134,11 @@ class DockerCommandResponse(BaseModel):
     docker_commands: List[List[str]]
     # deps: DependencyGraph
     
-async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = False) -> DockerCommandResponse:
+def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = False) -> DockerCommandResponse:
     deps = data.dependencies if hasattr(data, 'dependencies') else None
     docker_commands = []
     steps = data.docker_command_steps
     comfy_ui_override = None
-    
-    # Get dynamic ComfyUI hash for use as default
-    dynamic_comfyui_hash = await get_dynamic_comfyui_hash()
     
     if steps:
         # print("steps",steps)
@@ -194,13 +174,10 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
         )
         docker_commands = generate_docker_commands(deps)
     
-    # Determine which ComfyUI version to use
-    comfyui_version_to_use = dynamic_comfyui_hash if data.comfyui_version == comfyui_hash else data.comfyui_version
-    
     if data.comfyui_version:
         if not deps:
             deps = DependencyGraph(
-                comfyui=comfyui_version_to_use,
+                comfyui=data.comfyui_version,
                 models={},
                 missing_nodes=[],
                 custom_nodes={},
@@ -209,7 +186,7 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
         else:
             # Convert deps to DependencyGraph if it's still a dict
             deps = DependencyGraph(**deps) if isinstance(deps, dict) else deps
-            deps.comfyui = comfyui_version_to_use
+            deps.comfyui = data.comfyui_version
     
     if docker_commands and data.extra_docker_commands:
         for extra_command in data.extra_docker_commands:
@@ -220,16 +197,6 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
     
     # if not docker_commands:
     #     raise ValueError("No docker commands")
-    
-    # Ensure deps exists with the correct ComfyUI version
-    if not deps:
-        deps = DependencyGraph(
-            comfyui=dynamic_comfyui_hash,
-            models={},
-            missing_nodes=[],
-            custom_nodes={},
-            files={}
-        )
     
     enable_uv = False
     docker_commands = [[y.replace("python -m pip install", "uv pip install") if enable_uv else y for y in x] for x in docker_commands]
@@ -264,12 +231,11 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
     )
     
     if not has_deploy_node:
-        comfydeploy_dynamic_hash = await get_dynamic_comfydeploy_hash()
         docker_commands.append([
             "WORKDIR /comfyui/custom_nodes",
             "RUN git clone https://github.com/bennykok/comfyui-deploy --recursive",
             "WORKDIR /comfyui/custom_nodes/comfyui-deploy",
-            f"RUN git reset --hard {comfydeploy_dynamic_hash}",
+            f"RUN git reset --hard {comfydeploy_hash}",
             "RUN if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi",
             "RUN if [ -f install.py ]; then python install.py || echo 'install script failed'; fi",
         ])

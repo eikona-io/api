@@ -8,14 +8,15 @@ from datetime import timedelta
 from fastapi.responses import JSONResponse, FileResponse
 import modal
 import json
-import asyncio
-from urllib.parse import urlparse
-from api.utils.multi_level_cache import multi_level_cached
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Comfy Node"])
+
+
+import asyncio
+from urllib.parse import urlparse
 
 
 async def extract_repo_name(repo_url: str) -> str:
@@ -107,16 +108,8 @@ async def _get_commit_sha_for_tag_with_headers(repo_name: str, tag: str) -> str 
         logger.error(f"Error fetching commit SHA for tag {tag}: {str(e)}")
         return None
 
-@multi_level_cached(key_prefix="comfyui_deploy_hash", ttl_seconds=3600, redis_ttl_seconds=21600)
-async def get_latest_comfydeploy_hash():
-    """Fetch the latest commit hash from ComfyUI-Deploy repository"""
-    git_url = "https://github.com/bennykok/comfyui-deploy"
-    branch_info = await _get_branch_info(git_url)
-    return branch_info["commit"]["sha"] if branch_info else None
-
-@multi_level_cached(key_prefix="comfyui_versions", ttl_seconds=3600, redis_ttl_seconds=21600)
-async def _get_comfyui_versions():
-    """Fetch ComfyUI versions with caching"""
+@router.get("/comfyui-versions", response_model=Dict[str, Any])
+async def get_comfyui_versions(request: Request):
     git_url = "https://github.com/comfyanonymous/ComfyUI"
     repo_name = await extract_repo_name(git_url)
     
@@ -127,7 +120,7 @@ async def _get_comfyui_versions():
     )
     
     if branch_info is None:
-        return None
+        raise HTTPException(status_code=404, detail="Branch information not found")
     
     # Take only the 3 most recent releases
     recent_releases = releases[:3] if releases else []
@@ -158,27 +151,7 @@ async def _get_comfyui_versions():
         ]
     }
     
-    return response
-
-@router.get("/comfyui-versions", response_model=Dict[str, Any])
-async def get_comfyui_versions(request: Request):
-    versions_data = await _get_comfyui_versions()
-    
-    if versions_data is None:
-        raise HTTPException(status_code=404, detail="Branch information not found")
-    
-    return JSONResponse(content=versions_data)
-
-@router.get("/latest-hashes", response_model=Dict[str, str])
-async def get_latest_hashes():
-    """Return latest hashes for ComfyUI and ComfyUI-Deploy"""
-    comfyui_versions = await get_comfyui_versions(Request())
-    comfydeploy_hash = await get_latest_comfydeploy_hash()
-    
-    return JSONResponse(content={
-        "comfyui_hash": comfyui_versions["latest"]["sha"],
-        "comfydeploy_hash": comfydeploy_hash
-    })
+    return JSONResponse(content=response)
 
 @router.get("/custom-node-list")
 async def get_nodes_json():
