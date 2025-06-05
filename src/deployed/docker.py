@@ -4,6 +4,24 @@ from pydantic import BaseModel
 comfydeploy_hash = "7b734c415aabd51b8bb8fad9fd719055b5ba359d"
 comfyui_hash = "094306b626e9cf505690c5d8b445032b3b8a36fa"
 
+async def get_dynamic_comfyui_hash():
+    """Get latest ComfyUI hash dynamically"""
+    try:
+        from api.routes.comfy_node import get_comfyui_versions
+        from fastapi import Request
+        versions = await get_comfyui_versions(Request())
+        return versions["latest"]["sha"]
+    except Exception:
+        return comfyui_hash  # fallback to hardcoded
+
+async def get_dynamic_comfydeploy_hash():
+    """Get latest ComfyUI-Deploy hash dynamically"""
+    try:
+        from api.routes.comfy_node import get_latest_comfydeploy_hash
+        return await get_latest_comfydeploy_hash()
+    except Exception:
+        return comfydeploy_hash  # fallback to hardcoded
+
 
 def extract_hash(dependency_string):
     parts = dependency_string.split("@")
@@ -24,7 +42,7 @@ def comfyui_cmd(
     extra_args: Optional[str] = None,
 ):
     cmd = (
-        f"python main.py --dont-print-server --enable-cors-header --listen --port 8188"
+        "python main.py --dont-print-server --enable-cors-header --listen --port 8188"
     )
     if cpu:
         cmd += " --cpu"
@@ -146,7 +164,7 @@ class DockerCommandResponse(BaseModel):
     # deps: DependencyGraph
 
 
-def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
+async def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
     deps = data.dependencies
     docker_commands = None
     steps = data.docker_command_steps
@@ -250,12 +268,13 @@ def generate_all_docker_commands(data: DepsBody) -> DockerCommandResponse:
         )
         for step in steps.steps
     ):
+        comfydeploy_dynamic_hash = await get_dynamic_comfydeploy_hash()
         docker_commands.append(
             [
                 "WORKDIR /comfyui/custom_nodes",
                 "RUN git clone https://github.com/bennykok/comfyui-deploy --recursive",
                 "WORKDIR /comfyui/custom_nodes/comfyui-deploy",
-                f"RUN git reset --hard {comfydeploy_hash}",
+                f"RUN git reset --hard {comfydeploy_dynamic_hash}",
                 "RUN if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi",
                 "RUN if [ -f install.py ]; then python install.py || echo 'install script failed'; fi",
             ]
