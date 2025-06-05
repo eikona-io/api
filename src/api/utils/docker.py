@@ -8,8 +8,7 @@ async def get_dynamic_comfyui_hash():
     """Get latest ComfyUI hash dynamically"""
     try:
         from api.routes.comfy_node import get_comfyui_versions
-        from fastapi import Request
-        versions = await get_comfyui_versions(Request())
+        versions = await get_comfyui_versions()
         return versions["latest"]["sha"]
     except Exception:
         return comfyui_hash  # fallback to hardcoded

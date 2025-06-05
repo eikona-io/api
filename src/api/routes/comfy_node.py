@@ -114,8 +114,9 @@ async def get_latest_comfydeploy_hash():
     branch_info = await _get_branch_info(git_url)
     return branch_info["commit"]["sha"] if branch_info else None
 
-@router.get("/comfyui-versions", response_model=Dict[str, Any])
-async def get_comfyui_versions(request: Request):
+@multi_level_cached(key_prefix="comfyui_versions", ttl_seconds=3600, redis_ttl_seconds=21600)
+async def _get_comfyui_versions():
+    """Fetch ComfyUI versions with caching"""
     git_url = "https://github.com/comfyanonymous/ComfyUI"
     repo_name = await extract_repo_name(git_url)
     
@@ -126,7 +127,7 @@ async def get_comfyui_versions(request: Request):
     )
     
     if branch_info is None:
-        raise HTTPException(status_code=404, detail="Branch information not found")
+        return None
     
     # Take only the 3 most recent releases
     recent_releases = releases[:3] if releases else []
@@ -157,7 +158,16 @@ async def get_comfyui_versions(request: Request):
         ]
     }
     
-    return JSONResponse(content=response)
+    return response
+
+@router.get("/comfyui-versions", response_model=Dict[str, Any])
+async def get_comfyui_versions(request: Request):
+    versions_data = await _get_comfyui_versions()
+    
+    if versions_data is None:
+        raise HTTPException(status_code=404, detail="Branch information not found")
+    
+    return JSONResponse(content=versions_data)
 
 @router.get("/latest-hashes", response_model=Dict[str, str])
 async def get_latest_hashes():
