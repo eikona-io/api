@@ -168,14 +168,24 @@ async def get_latest_comfydeploy_hash():
     branch_info = await _get_branch_info(git_url)
     return branch_info["commit"]["sha"] if branch_info else None
 
-@router.get("/latest-hashes", response_model=Dict[str, str])
+@router.get("/latest-hashes", response_model=Dict[str, Any])
 async def get_latest_hashes():
-    """Return latest hashes for ComfyUI and ComfyUI-Deploy"""
+    """Return latest hashes and release info for ComfyUI and ComfyUI-Deploy"""
     comfyui_versions = await get_comfyui_versions_cached()
     comfydeploy_hash = await get_latest_comfydeploy_hash()
     
+    # Get latest release info if available
+    latest_release = None
+    comfyui_hash = comfyui_versions["latest"]["sha"]  # Default to main branch
+    
+    if comfyui_versions.get("releases") and len(comfyui_versions["releases"]) > 0:
+        latest_release = comfyui_versions["releases"][0]
+        # Use the latest release commit SHA as the main hash
+        comfyui_hash = latest_release["value"]
+    
     return JSONResponse(content={
-        "comfyui_hash": comfyui_versions["latest"]["sha"],
+        "comfyui_hash": comfyui_hash,
+        "comfyui_latest_release": latest_release,
         "comfydeploy_hash": comfydeploy_hash
     })
 
