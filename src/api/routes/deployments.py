@@ -51,6 +51,7 @@ ENVIRONMENT_TTL_MAP = {
     "production": PRODUCTION_TTL_HOURS,
 }
 
+
 class GPUType(str, Enum):
     CPU = "CPU"
     T4 = "T4"
@@ -60,6 +61,8 @@ class GPUType(str, Enum):
     A100 = "A100"
     A100_80GB = "A100-80GB"
     H100 = "H100"
+    H200 = "H200"
+    B200 = "B200"
 
 
 class DeploymentCreate(BaseModel):
@@ -431,7 +434,7 @@ async def get_deployments(
             .where(Workflow.deleted == False)
             .order_by(Deployment.updated_at.desc())
         )
-        
+
         if is_fluid:
             query = query.where(Deployment.modal_image_id.is_not(None))
         else:
@@ -451,7 +454,9 @@ async def get_deployments(
         for idx, deployment in enumerate(deployments):
             deployment_dict = deployment.to_dict()
 
-            workflow_api = deployment.version.workflow_api if deployment.version else None
+            workflow_api = (
+                deployment.version.workflow_api if deployment.version else None
+            )
             inputs = get_inputs_from_workflow_api(workflow_api)
 
             workflow = deployment.version.workflow if deployment.version else None
@@ -464,7 +469,9 @@ async def get_deployments(
                 deployment_dict["output_types"] = outputs
 
             if deployment.environment == "public-share" and deployment.share_slug:
-                dub_link_tasks[idx] = asyncio.create_task(get_dub_link(deployment.share_slug))
+                dub_link_tasks[idx] = asyncio.create_task(
+                    get_dub_link(deployment.share_slug)
+                )
 
             deployments_data.append(deployment_dict)
 
@@ -560,7 +567,7 @@ async def get_featured_deployments(
     for deployment in deployments:
         deployment_dict = deployment.to_dict()
 
-        if deployment.version and hasattr(deployment.version, 'workflow'):
+        if deployment.version and hasattr(deployment.version, "workflow"):
             deployment_dict["workflow"]["workflow"] = deployment.version.workflow
 
         deployments_data.append(deployment_dict)
@@ -594,7 +601,9 @@ async def deactivate_deployment(
         if not deployment:
             raise HTTPException(status_code=404, detail="Deployment not found")
 
-        deactivated = await _deactivate_deployment_internal(request, deployment, db, check_active_runs=True)
+        deactivated = await _deactivate_deployment_internal(
+            request, deployment, db, check_active_runs=True
+        )
         if not deactivated:
             raise HTTPException(
                 status_code=400,
@@ -617,7 +626,7 @@ async def _deactivate_deployment_internal(
     request: Request,
     deployment: Deployment,
     db: AsyncSession,
-    check_active_runs: bool = True
+    check_active_runs: bool = True,
 ) -> Optional[dict]:
     """Internal function to deactivate a deployment, returns the deactivated deployment dict if successful"""
     try:
@@ -628,12 +637,16 @@ async def _deactivate_deployment_internal(
                 .select_from(WorkflowRun)
                 .where(
                     WorkflowRun.deployment_id == deployment.id,
-                    WorkflowRun.status.not_in(["success", "failed", "timeout", "cancelled"]),
+                    WorkflowRun.status.not_in(
+                        ["success", "failed", "timeout", "cancelled"]
+                    ),
                 )
             )
 
             if active_runs_count > 0:
-                logger.info(f"Skipping deployment {deployment.id} with {active_runs_count} active runs")
+                logger.info(
+                    f"Skipping deployment {deployment.id} with {active_runs_count} active runs"
+                )
                 return None
 
         if deployment.modal_app_id:
@@ -653,11 +666,13 @@ async def _deactivate_deployment_internal(
                     f"Error stopping modal app for deployment {deployment.id}: {str(e)}"
                 )
                 return None
-        
+
         return True
 
     except Exception as e:
-        logger.error(f"Error in internal deactivation for deployment {deployment.id}: {e}")
+        logger.error(
+            f"Error in internal deactivation for deployment {deployment.id}: {e}"
+        )
         return None
 
 
@@ -739,7 +754,7 @@ async def delete_deployment(
             select(Deployment)
             .where(
                 Deployment.id == deployment_id,
-                Deployment.environment.in_(["public-share", "private-share"]) 
+                Deployment.environment.in_(["public-share", "private-share"]),
             )
             .apply_org_check(request)
         )
@@ -749,10 +764,10 @@ async def delete_deployment(
 
         if not deployment:
             raise HTTPException(
-                status_code=404, 
-                detail="Share deployment not found or you can only delete share deployments"
+                status_code=404,
+                detail="Share deployment not found or you can only delete share deployments",
             )
-        
+
         await deactivate_deployment(request, deployment_id, db)
 
         # Delete the deployment
