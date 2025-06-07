@@ -32,8 +32,12 @@ from contextlib import contextmanager
 from io import StringIO
 from urllib.parse import urlparse
 
-public_model_volume = modal.Volume.from_name(config["public_model_volume"], create_if_missing=True)
-private_volume = modal.Volume.from_name(config["private_model_volume"], create_if_missing=True)
+public_model_volume = modal.Volume.from_name(
+    config["public_model_volume"], create_if_missing=True
+)
+private_volume = modal.Volume.from_name(
+    config["private_model_volume"], create_if_missing=True
+)
 
 PUBLIC_BASEMODEL_DIR = "/public_models"
 PRIVATE_BASEMODEL_DIR_SYM = "/private_models"
@@ -58,7 +62,9 @@ print("Builder Version: 4")
 print("Builder Deps: ", os.getenv("MODAL_IMAGE_BUILDER_VERSION"))
 print("Modal Version: ", modal.__version__)
 
-API_KEY_COMFY_ORG_SECRET = modal.Secret.from_dict({"API_KEY_COMFY_ORG": config["auth_token"]})
+API_KEY_COMFY_ORG_SECRET = modal.Secret.from_dict(
+    {"API_KEY_COMFY_ORG": config["auth_token"]}
+)
 
 app = App(name=config["name"])
 
@@ -101,7 +107,11 @@ memory_request = config["memory_request"]
 memory_limit = config["memory_limit"]
 
 cpu = (cpu_request, cpu_limit) if cpu_request and cpu_limit else cpu_request or None
-memory = (memory_request, memory_limit) if memory_request and memory_limit else memory_request or None
+memory = (
+    (memory_request, memory_limit)
+    if memory_request and memory_limit
+    else memory_request or None
+)
 print(f"CPU: {cpu}, Memory: {memory}")
 # --- END CPU/MEMORY resource config ---
 
@@ -167,6 +177,7 @@ extra_model_path_config = "/comfyui/extra_model_paths.yaml"
 parsed_url = urlparse(config["gpu_event_callback_url"])
 base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
 
+
 def comfyui_cmd(
     cpu: bool = False,
     extra_args: Optional[str] = None,
@@ -199,11 +210,11 @@ def comfyui_cmd(
         cmd = f"{prestart_command} && {cmd}"
 
     cmd += " --disable-metadata" if disable_metadata else ""
-    
+
     # Only add custom proxy if user doesn't have their own ComfyUI API organization key
     if not contain_custom_comfyui_api_org and hasAPINode:
         cmd += f' --comfy-api-base "{base_url}/api/comfy-org/"'
-        
+
     print("Actual file command: ", cmd)
 
     return cmd
@@ -358,6 +369,7 @@ class GPUEventType(str, Enum):
 
 environment = config.get("environment", None)
 
+
 async def sync_report_gpu_event(
     event_id: str | None,
     is_workspace: bool = False,
@@ -387,7 +399,9 @@ async def sync_report_gpu_event(
     # Prepare the body with the current timestamp and optional instance_id
     body = {
         "machine_id": machine_id,
-        "timestamp": custom_timestamp.isoformat() if custom_timestamp is not None else datetime.now(timezone.utc).isoformat(),
+        "timestamp": custom_timestamp.isoformat()
+        if custom_timestamp is not None
+        else datetime.now(timezone.utc).isoformat(),
         "gpuType": gpu_type if gpu is None else gpu,
         "eventType": event_type.value,
         "gpu_provider": "modal",
@@ -442,6 +456,8 @@ class GPUType(str, Enum):
     A100_80GB = "A100-80GB"
     H100 = "H100"
     L4 = "L4"
+    H200 = "H200"
+    B200 = "B200"
 
 
 class OverrideInput(BaseModel):
@@ -524,15 +540,18 @@ import pickle
 
 load = pickle.load
 
+
 class Empty:
     pass
 
+
 class Unpickler(pickle.Unpickler):
     def find_class(self, module, name):
-        #TODO: safe unpickle
+        # TODO: safe unpickle
         if module.startswith("pytorch_lightning"):
             return Empty
         return super().find_class(module, name)
+
 
 async def wait_for_server(
     url=f"http://{COMFY_HOST}", delay=50, logs=[], last_sent_log_index=-1
@@ -571,6 +590,7 @@ async def wait_for_server(
         # Wait for the specified delay before retrying
         await asyncio.sleep(delay / 1000)
 
+
 async def send_log_async(
     update_endpoint: str, session_id: uuid.UUID, machine_id: str, log_message: str
 ):
@@ -600,9 +620,7 @@ def send_log_entry(
     )
 
 
-async def check_for_timeout(
-    update_endpoint: str, session_id: str
-):
+async def check_for_timeout(update_endpoint: str, session_id: str):
     max_retries = 5
     base_delay = 1  # seconds
     try:
@@ -635,9 +653,13 @@ async def check_for_timeout(
                             else:
                                 logger.warning(f"Non-200 response: {response.status}")
                                 retry_count += 1
-                                await asyncio.sleep(base_delay * (2 ** (retry_count - 1)))
+                                await asyncio.sleep(
+                                    base_delay * (2 ** (retry_count - 1))
+                                )
                 except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    logger.warning(f"Timeout or connection error: {e}, retry {retry_count+1}/{max_retries}")
+                    logger.warning(
+                        f"Timeout or connection error: {e}, retry {retry_count + 1}/{max_retries}"
+                    )
                     retry_count += 1
                     await asyncio.sleep(base_delay * (2 ** (retry_count - 1)))
                 except Exception as e:
@@ -645,7 +667,9 @@ async def check_for_timeout(
                     retry_count += 1
                     await asyncio.sleep(base_delay * (2 ** (retry_count - 1)))
                 if retry_count >= max_retries:
-                    logger.error(f"Max retries reached for check_for_timeout (session {session_id})")
+                    logger.error(
+                        f"Max retries reached for check_for_timeout (session {session_id})"
+                    )
                     break
             await asyncio.sleep(1)
     except asyncio.CancelledError:
@@ -656,9 +680,7 @@ async def check_for_timeout(
         raise
 
 
-async def delete_session(
-    update_endpoint: str, session_id: str
-):
+async def delete_session(update_endpoint: str, session_id: str):
     try:
         while True:
             async with aiohttp.ClientSession() as client:
@@ -689,11 +711,12 @@ async def delete_session(
         logger.error(f"Error in timeout checker for session {session_id}: {str(e)}")
         raise
 
+
 class BaseComfyDeployRunner:
     _is_workspace: bool = False
     _gpu: str | None = None
     _session_id: str | None = None
-    
+
     machine_logs = []
     last_sent_log_index = 0
 
@@ -704,7 +727,7 @@ class BaseComfyDeployRunner:
 
     session_timeout = 0
     start_time = time.time()
-    
+
     def has_api_node(self):
         return os.path.exists("/comfyui/comfy_api_nodes")
 
@@ -742,7 +765,7 @@ class BaseComfyDeployRunner:
         print(f"comfy-modal - cleanup done")
         if not soft_exit:
             os._exit(0)
-    
+
     org_id: str = None
     user_id: str = None
     mountIO: bool = False
@@ -750,11 +773,11 @@ class BaseComfyDeployRunner:
     private_volume = None
     timeout: int = None
     # workspace_tunnel: bool = modal.parameter(default=False)
-    
+
     cold_start_queue = deque()
     log_queues = deque()
     gpu_event_id = None
-    
+
     async def process_log_queue(self):
         try:
             while True:
@@ -1145,10 +1168,17 @@ class BaseComfyDeployRunner:
         pass
 
     @modal.method()
-    async def create_tunnel(self, q, status_endpoint, timeout, session_id: str | None = None):
+    async def create_tunnel(
+        self, q, status_endpoint, timeout, session_id: str | None = None
+    ):
         update_endpoint = status_endpoint.split("/api/")[0]
         if self.current_tunnel_url == "exhausted":
-            send_log_entry(update_endpoint, session_id, config["machine_id"], "Previous session exhausted, please start a new one.")
+            send_log_entry(
+                update_endpoint,
+                session_id,
+                config["machine_id"],
+                "Previous session exhausted, please start a new one.",
+            )
             await delete_session(update_endpoint, session_id)
             raise Exception("Previous session exhausted, please start a new one.")
 
@@ -1159,7 +1189,7 @@ class BaseComfyDeployRunner:
                 self.container_start_time = datetime.now(timezone.utc)
             self.gpu_event_id = await sync_report_gpu_event(
                 event_id=None,
-                is_workspace= self._is_workspace,
+                is_workspace=self._is_workspace,
                 gpu=self._gpu,
                 user_id=self.user_id,
                 org_id=self.org_id,
@@ -1167,7 +1197,7 @@ class BaseComfyDeployRunner:
                 custom_timestamp=self.container_start_time,
             )
         print("gpu event id", self.gpu_event_id)
-        
+
         self.status_endpoint = status_endpoint
         self.start_time = time.time()
         # timeout input is in minutes, so we need to convert it to seconds
@@ -1188,7 +1218,7 @@ class BaseComfyDeployRunner:
         except asyncio.CancelledError:
             self.current_tunnel_url = "exhausted"
             print("cancelled")
-        
+
             # asyncio.create_task(q.put.aio(event))
 
         if self.current_tunnel_url != "":
@@ -1229,35 +1259,34 @@ class BaseComfyDeployRunner:
     async def close_container(self):
         await self.timeout_and_exit(0, True)
 
-#     def hijack_argparse(self):
-#         """
-#         Hijack the argparse module to disable the args_parsing flag
-#         """
-#         import os
-        
-#         # Create the directory if it doesn't exist
-#         options_dir = "/comfyui/comfy/"
-#         # os.makedirs(options_dir, exist_ok=True)
-        
-#         # Create the options.py file with the specified content
-#         options_file_path = os.path.join(options_dir, "options.py")
-#         options_content = """args_parsing = False
+    #     def hijack_argparse(self):
+    #         """
+    #         Hijack the argparse module to disable the args_parsing flag
+    #         """
+    #         import os
 
-# def enable_args_parsing(enable=True):
-#     global args_parsing
-#     # To ensure that the args_parsing flag always is set to False
-#     args_parsing = False
-# """
+    #         # Create the directory if it doesn't exist
+    #         options_dir = "/comfyui/comfy/"
+    #         # os.makedirs(options_dir, exist_ok=True)
 
-#         try:
-#             with open(options_file_path, 'w') as f:
-#                 f.write(options_content)
-#         except Exception as e:
-#             print(f"Failed to create options file at: {options_file_path}")
-#             print(f"Error: {e}")
-        
-#         print(f"Created options file at: {options_file_path}")
-        
+    #         # Create the options.py file with the specified content
+    #         options_file_path = os.path.join(options_dir, "options.py")
+    #         options_content = """args_parsing = False
+
+    # def enable_args_parsing(enable=True):
+    #     global args_parsing
+    #     # To ensure that the args_parsing flag always is set to False
+    #     args_parsing = False
+    # """
+
+    #         try:
+    #             with open(options_file_path, 'w') as f:
+    #                 f.write(options_content)
+    #         except Exception as e:
+    #             print(f"Failed to create options file at: {options_file_path}")
+    #             print(f"Error: {e}")
+
+    #         print(f"Created options file at: {options_file_path}")
 
     def disable_customnodes(self, nodes_to_disable: list[str]):
         """
@@ -1268,7 +1297,7 @@ class BaseComfyDeployRunner:
         import shutil
         from datetime import datetime
         import time
-        
+
         for node in nodes_to_disable:
             node_path = f"/comfyui/custom_nodes/{node}"
             node_disabled_path = f"/comfyui/custom_nodes/{node}.disabled"
@@ -1279,10 +1308,14 @@ class BaseComfyDeployRunner:
                     start_time = time.time()
                     shutil.move(node_path, node_disabled_path)
                     elapsed_time = time.time() - start_time
-                    print(f"[{timestamp}] Successfully disabled {node} (took {elapsed_time:.2f} seconds)")
+                    print(
+                        f"[{timestamp}] Successfully disabled {node} (took {elapsed_time:.2f} seconds)"
+                    )
                 except Exception as e:
                     elapsed_time = time.time() - start_time
-                    print(f"[{timestamp}] Failed to disable {node}: {e} (took {elapsed_time:.2f} seconds)")
+                    print(
+                        f"[{timestamp}] Failed to disable {node}: {e} (took {elapsed_time:.2f} seconds)"
+                    )
 
     @modal.method()
     async def increase_timeout(self, timeout):
@@ -1503,7 +1536,7 @@ class BaseComfyDeployRunner:
     async def handle_container_enter_before_comfy(self):
         # Make sure that the ComfyUI API is available
         print("comfy-modal - check server")
-        
+
         # if (self.private_volume is None):
         # private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
 
@@ -1575,9 +1608,11 @@ class BaseComfyDeployRunner:
         """
         # Create a StringIO object to capture logs
         log_stream = StringIO()
-        
+
         class DualHandler(logging.Handler):
-            def __init__(self, machine_logs, log_queues, cold_start_queue, *args, **kwargs):
+            def __init__(
+                self, machine_logs, log_queues, cold_start_queue, *args, **kwargs
+            ):
                 super().__init__(*args, **kwargs)
                 self.machine_logs = machine_logs
                 self.log_queues = log_queues
@@ -1587,19 +1622,18 @@ class BaseComfyDeployRunner:
                 try:
                     msg = self.format(record)
                     print(msg, flush=True)  # Print to stdout
-                    
-                    log_entry = {
-                        "logs": msg,
-                        "timestamp": time.time()
-                    }
-                    
+
+                    log_entry = {"logs": msg, "timestamp": time.time()}
+
                     # Add to machine logs
                     self.machine_logs.append(log_entry)
-                    
+
                     # Add to appropriate queue
-                    target_log = (self.log_queues[0]["logs"] 
-                                if self.log_queues is not None and len(self.log_queues) > 0 
-                                else self.cold_start_queue)
+                    target_log = (
+                        self.log_queues[0]["logs"]
+                        if self.log_queues is not None and len(self.log_queues) > 0
+                        else self.cold_start_queue
+                    )
                     target_log.append(log_entry)
                 except Exception as e:
                     print(f"Error in log handler: {e}")
@@ -1608,11 +1642,11 @@ class BaseComfyDeployRunner:
         handler = DualHandler(
             machine_logs=self.machine_logs,
             log_queues=self.log_queues,
-            cold_start_queue=self.cold_start_queue
+            cold_start_queue=self.cold_start_queue,
         )
-        
+
         # Set format
-        formatter = logging.Formatter('%(message)s')
+        formatter = logging.Formatter("%(message)s")
         handler.setFormatter(formatter)
 
         # Get the root logger and add our handler
@@ -1621,6 +1655,7 @@ class BaseComfyDeployRunner:
         root_logger.setLevel(logging.INFO)
 
         return handler
+
 
 class _ComfyDeployRunner(BaseComfyDeployRunner):
     workflow_api_raw = None
@@ -1754,7 +1789,9 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         utils.extra_config.load_extra_path_config(extra_model_path_config)
 
         # extra model paths
-        extra_model_paths_config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "extra_model_paths.yaml")
+        extra_model_paths_config_path = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "extra_model_paths.yaml"
+        )
         if os.path.isfile(extra_model_paths_config_path):
             utils.extra_config.load_extra_path_config(extra_model_paths_config_path)
 
@@ -1769,12 +1806,23 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             folder_paths.set_output_directory(output_dir)
 
         # These are the default folders that checkpoints, clip and vae models will be saved to when using CheckpointSave, etc.. nodes
-        folder_paths.add_model_folder_path("checkpoints", os.path.join(folder_paths.get_output_directory(), "checkpoints"))
-        folder_paths.add_model_folder_path("clip", os.path.join(folder_paths.get_output_directory(), "clip"))
-        folder_paths.add_model_folder_path("vae", os.path.join(folder_paths.get_output_directory(), "vae"))
-        folder_paths.add_model_folder_path("diffusion_models",
-                                        os.path.join(folder_paths.get_output_directory(), "diffusion_models"))
-        folder_paths.add_model_folder_path("loras", os.path.join(folder_paths.get_output_directory(), "loras"))
+        folder_paths.add_model_folder_path(
+            "checkpoints",
+            os.path.join(folder_paths.get_output_directory(), "checkpoints"),
+        )
+        folder_paths.add_model_folder_path(
+            "clip", os.path.join(folder_paths.get_output_directory(), "clip")
+        )
+        folder_paths.add_model_folder_path(
+            "vae", os.path.join(folder_paths.get_output_directory(), "vae")
+        )
+        folder_paths.add_model_folder_path(
+            "diffusion_models",
+            os.path.join(folder_paths.get_output_directory(), "diffusion_models"),
+        )
+        folder_paths.add_model_folder_path(
+            "loras", os.path.join(folder_paths.get_output_directory(), "loras")
+        )
 
         if args.input_directory:
             input_dir = os.path.abspath(args.input_directory)
@@ -1786,9 +1834,9 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             logging.info(f"Setting user directory to: {user_dir}")
             folder_paths.set_user_directory(user_dir)
 
-
     def execute_prestartup_script(self):
         import comfy.options
+
         comfy.options.enable_args_parsing()
 
         import os
@@ -1819,14 +1867,20 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
             for possible_module in possible_modules:
                 module_path = os.path.join(custom_node_path, possible_module)
-                if os.path.isfile(module_path) or module_path.endswith(".disabled") or module_path == "__pycache__":
+                if (
+                    os.path.isfile(module_path)
+                    or module_path.endswith(".disabled")
+                    or module_path == "__pycache__"
+                ):
                     continue
 
                 script_path = os.path.join(module_path, "prestartup_script.py")
                 if os.path.exists(script_path):
                     time_before = time.perf_counter()
                     success = execute_script(script_path)
-                    node_prestartup_times.append((time.perf_counter() - time_before, module_path, success))
+                    node_prestartup_times.append(
+                        (time.perf_counter() - time_before, module_path, success)
+                    )
         if len(node_prestartup_times) > 0:
             logging.info("\nPrestartup times for custom nodes:")
             for n in sorted(node_prestartup_times):
@@ -1852,10 +1906,13 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
             server_instance.send_sync("progress", progress, server_instance.client_id)
             if preview_image is not None:
-                server_instance.send_sync(BinaryEventTypes.UNENCODED_PREVIEW_IMAGE, preview_image, server_instance.client_id)
+                server_instance.send_sync(
+                    BinaryEventTypes.UNENCODED_PREVIEW_IMAGE,
+                    preview_image,
+                    server_instance.client_id,
+                )
 
         comfy.utils.set_progress_bar_global_hook(hook)
-
 
     async def start_native_comfy_server(self):
         self.log_handler = self.setup_native_logging()
@@ -1889,6 +1946,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         self.loading_time["import_comfy"] = time.time() - t
 
         from app.logger import setup_logger
+
         setup_logger()
 
         self.apply_custom_paths()
@@ -2021,12 +2079,10 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             args.cpu = True
         else:
             args.cpu = False
-            
+
         # Only add custom proxy if user doesn't have their own ComfyUI API organization key
         if not contain_custom_comfyui_api_org and self.has_api_node():
-            args.comfy_api_base = f'{base_url}/api/comfy-org/'
-            
-        
+            args.comfy_api_base = f"{base_url}/api/comfy-org/"
 
     @modal.exit()
     async def exit(self):
@@ -2052,11 +2108,10 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 )
 @modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
 class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
-    
     is_workspace: bool = modal.parameter(default=False)
     gpu: str = modal.parameter(default="")
     session_id: str = modal.parameter(default="")
-    
+
     @modal.enter(snap=False)
     async def launch_comfy_background(self):
         self._is_workspace = self.is_workspace
@@ -2064,7 +2119,7 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             self._gpu = self.gpu
         if self.session_id != "":
             self._session_id = self.session_id
-        
+
         await self.handle_container_enter_before_comfy()
         await self.handle_container_enter()
 
@@ -2123,7 +2178,7 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
         # self.loading_time["warmup_workflow_runtime"] = (
         #     workflow_end_time - workflow_start_time
         # )
-    
+
     @contextmanager
     def force_cpu_during_snapshot(self):
         import torch
@@ -2142,7 +2197,7 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             # Restore original implementations
             torch.cuda.is_available = original_is_available
             torch.cuda.current_device = original_current_device
-        
+
     @modal.enter(snap=True)
     async def load(self):
         with self.force_cpu_during_snapshot():
@@ -2154,11 +2209,11 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
 
             # Add the ComfyUI directory to the Python path
             comfy_path = Path("/comfyui")
-            
+
             print("\n=== Debug Information ===")
             print(f"Current working directory: {os.getcwd()}")
             print(f"Initial sys.path: {sys.path}")
-            
+
             # Check utils directory structure
             utils_path = comfy_path / "utils"
             print(f"\n=== Utils Directory Check ===")
@@ -2171,35 +2226,37 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
                 print(f"__init__.py exists: {init_file.exists()}")
                 print(f"json_util.py exists: {json_util_file.exists()}")
                 if init_file.exists():
-                    with open(init_file, 'r') as f:
+                    with open(init_file, "r") as f:
                         print(f"__init__.py contents:\n{f.read()}")
-            
+
             # Clear and rebuild sys.path
-            sys.path = [p for p in sys.path if 'utils' not in p]
+            sys.path = [p for p in sys.path if "utils" not in p]
             sys.path.insert(0, str(comfy_path))
             sys.path.insert(1, str(utils_path))
-            
+
             print("\n=== Final Python Path ===")
             print(f"Updated sys.path: {sys.path}")
 
             self.load_args()
-            
+
             print("\n=== Import Attempt ===")
             try:
                 print("Attempting direct import of utils package...")
                 import utils
+
                 print(f"Utils package: {utils}")
                 print(f"Utils package location: {utils.__file__}")
-                
+
                 print("\nAttempting import of json_util...")
                 from utils import json_util
+
                 print("Successfully imported json_util")
-                
+
             except ImportError as e:
                 print(f"Import failed: {e}")
                 print(f"Error type: {type(e)}")
                 print(f"Error args: {e.args}")
-                
+
             print("\n=== Starting Main Imports ===")
             try:
                 import nodes
@@ -2216,13 +2273,13 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             print(f"\nGPUs available: {torch.cuda.is_available()}")
 
 
-
 @app.function(
     image=target_image,
     gpu=None,
 )
 async def get_image_id():
     return target_image.object_id
+
 
 @app.function(
     image=target_image,
@@ -2240,12 +2297,7 @@ async def get_file_tree(path="/"):
     """
     import os
 
-    result = {
-        "path": path,
-        "contents": {},
-        "directories": [],
-        "files": []
-    }
+    result = {"path": path, "contents": {}, "directories": [], "files": []}
 
     try:
         # List contents of the directory
@@ -2266,9 +2318,7 @@ async def get_file_tree(path="/"):
         for dir_name in sorted(dirs):
             full_path = os.path.join(path, entry)
             result["directories"].append(dir_name)
-            result["contents"][dir_name] = {
-                "type": "directory"
-            }
+            result["contents"][dir_name] = {"type": "directory"}
 
         # Add sorted files to result
         for file_name in sorted(files):
@@ -2279,7 +2329,7 @@ async def get_file_tree(path="/"):
             result["contents"][file_name] = {
                 "type": "file",
                 "size": stat.st_size,
-                "last_modified": stat.st_mtime
+                "last_modified": stat.st_mtime,
             }
 
     except PermissionError:
@@ -2290,6 +2340,7 @@ async def get_file_tree(path="/"):
         result["error"] = str(e)
 
     return result
+
 
 @app.cls(
     image=target_image,
@@ -2306,11 +2357,10 @@ async def get_file_tree(path="/"):
 )
 @modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
 class ComfyDeployRunner(BaseComfyDeployRunner):
-    
     is_workspace: bool = modal.parameter(default=False)
     gpu: str = modal.parameter(default="")
     session_id: str = modal.parameter(default="")
-    
+
     @enter()
     async def setup(self):
         self._is_workspace = self.is_workspace
@@ -2318,13 +2368,15 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
             self._gpu = self.gpu
         if self.session_id != "":
             self._session_id = self.session_id
-        
+
         await self.handle_container_enter_before_comfy()
-        
+
         hasAPINode = self.has_api_node()
 
         self.server_process = await asyncio.subprocess.create_subprocess_shell(
-            comfyui_cmd(mountIO=self.mountIO, cpu=self._gpu == "CPU", hasAPINode=hasAPINode),
+            comfyui_cmd(
+                mountIO=self.mountIO, cpu=self._gpu == "CPU", hasAPINode=hasAPINode
+            ),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",

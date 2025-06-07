@@ -482,7 +482,9 @@ async def check_server_with_log(
             while last_sent_log_index < len(machine_logs):
                 log = machine_logs[last_sent_log_index]
                 if isinstance(log["timestamp"], float):
-                    log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                    log["timestamp"] = (
+                        datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                    )
                 yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                 last_sent_log_index += 1
 
@@ -649,6 +651,8 @@ class GPUType(str, Enum):
     A100_80GB = "A100-80GB"
     H100 = "H100"
     L4 = "L4"
+    H200 = "H200"
+    B200 = "B200"
 
 
 class OverrideInput(BaseModel):
@@ -699,8 +703,19 @@ if "TAILSCALE_AUTHKEY" in config and config["TAILSCALE_AUTHKEY"] is not None:
     ]
 
 
-async def send_status_update(input: Input, status: str, gpu_event_id: str | None = None, function_id: str | None = None):
-    print("sending status update", input.status_endpoint, status, gpu_event_id, function_id)
+async def send_status_update(
+    input: Input,
+    status: str,
+    gpu_event_id: str | None = None,
+    function_id: str | None = None,
+):
+    print(
+        "sending status update",
+        input.status_endpoint,
+        status,
+        gpu_event_id,
+        function_id,
+    )
     async with aiohttp.ClientSession() as session:
         data = {
             "run_id": input.prompt_id,
@@ -827,7 +842,9 @@ def create_web_app():
 
         # asyncio.create_task(send_status_update(request_input.input, "queued", result.object_id))
         asyncio.create_task(
-            send_status_update(request_input.input, "not-started", None, result.object_id)
+            send_status_update(
+                request_input.input, "not-started", None, result.object_id
+            )
         )
         return JSONResponse({"call_id": result.object_id})
 
@@ -901,7 +918,10 @@ def create_web_app():
 
             asyncio.create_task(
                 send_status_update(
-                    request_input.input, "not-started", None, modal.current_function_call_id()
+                    request_input.input,
+                    "not-started",
+                    None,
+                    modal.current_function_call_id(),
                 )
             )
             # asyncio.create_task(send_status_update(request_input.input, "queued", modal.current_function_call_id()))
@@ -1333,7 +1353,12 @@ class ComfyDeployRunner:
                         while self.last_sent_log_index < len(self.machine_logs):
                             log = self.machine_logs[self.last_sent_log_index]
                             if isinstance(log["timestamp"], float):
-                                log["timestamp"] = datetime.utcfromtimestamp(log["timestamp"]).isoformat() + "Z"
+                                log["timestamp"] = (
+                                    datetime.utcfromtimestamp(
+                                        log["timestamp"]
+                                    ).isoformat()
+                                    + "Z"
+                                )
                             yield f"event: log_update\ndata: {json.dumps(log)}\n\n"
                             self.last_sent_log_index += 1
 
@@ -1718,7 +1743,9 @@ class ComfyDeployRunner:
 
             # self.private_volume.reload()
 
-            await send_status_update(input, "queued", self.gpu_event_id, modal.current_function_call_id())
+            await send_status_update(
+                input, "queued", self.gpu_event_id, modal.current_function_call_id()
+            )
 
             result = {"status": "queued"}
 
