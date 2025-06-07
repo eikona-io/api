@@ -180,7 +180,17 @@ class WorkflowRun(SerializableMixin, Base):
     started_at = Column(DateTime(timezone=True))
     gpu_event_id = Column(String)
     gpu = Column(
-        Enum("CPU", "T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum(
+            "CPU",
+            "T4",
+            "L4",
+            "A10G",
+            "L40S",
+            "A100",
+            "A100-80GB",
+            "H100",
+            name="machine_gpu",
+        )
     )
     machine_version = Column(String)
     machine_type = Column(
@@ -219,6 +229,7 @@ class WorkflowRun(SerializableMixin, Base):
 
 class WorkflowRunWithExtra(WorkflowRun):
     pass
+
 
 WorkflowRunWithExtra.duration = column_property(
     (
@@ -284,7 +295,7 @@ class APIKey(SerializableMixin, Base):
     token_type = Column(
         Enum("user", "machine", "scoped", name="api_key_token_type"),
         nullable=False,
-        default="user"
+        default="user",
     )  # New field to distinguish token types
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
@@ -304,7 +315,7 @@ class User(SerializableMixin, Base):
     name = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
-    
+
     # Add other user fields as needed
 
     # api_keys = relationship("APIKey", back_populates="user")
@@ -358,7 +369,17 @@ class Deployment(SerializableMixin, Base):
     modal_image_id = Column(String)
     concurrency_limit = Column(Integer, nullable=False, default=2)
     gpu = Column(
-        Enum("CPU", "T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum(
+            "CPU",
+            "T4",
+            "L4",
+            "A10G",
+            "L40S",
+            "A100",
+            "A100-80GB",
+            "H100",
+            name="machine_gpu",
+        )
     )
     run_timeout = Column(Integer, nullable=False, default=300)
     idle_timeout = Column(Integer, nullable=False, default=0)
@@ -386,6 +407,8 @@ def get_machine_columns():
                 "A100",
                 "A100-80GB",
                 "H100",
+                "H200",
+                "B200",
                 name="machine_gpu",
             )
         ),
@@ -407,16 +430,16 @@ def get_machine_columns():
         "status": Column(
             Enum(
                 "not-started",
-                "ready", 
+                "ready",
                 "building",
                 "error",
                 "running",
                 "paused",
                 "starting",
-                name="machine_status"
+                name="machine_status",
             ),
             nullable=False,
-            default="ready"
+            default="ready",
         ),
         "build_log": Column(String),
         "machine_hash": Column(String),
@@ -442,7 +465,7 @@ class MachineVersion(SerializableMixin, Base):
     user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
-    
+
     modal_image_id = Column(String)
 
     # Add shared columns
@@ -519,26 +542,35 @@ class Machine(SerializableMixin, Base):
     # Add shared columns
     locals().update(get_machine_columns())
 
+
 class Secret(SerializableMixin, Base):
     __tablename__ = "secrets"
     metadata = metadata
 
     id = Column(UUID(as_uuid=True), primary_key=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="cascade"), nullable=False)
-    name=Column(String, nullable=False)
+    name = Column(String, nullable=False)
     org_id = Column(String)
     created_at = Column(DateTime(timezone=True), nullable=False)
     updated_at = Column(DateTime(timezone=True), nullable=False)
     environment_variables = Column(JSON)
+
 
 class MachineSecret(SerializableMixin, Base):
     __tablename__ = "machine_secrets"
     metadata = metadata
 
     id = Column(UUID(as_uuid=True), primary_key=True)
-    machine_id = Column(UUID(as_uuid=True), ForeignKey("machines.id", ondelete="cascade"), nullable=False)
-    secret_id = Column(UUID(as_uuid=True), ForeignKey("secrets.id", ondelete="cascade"), nullable=False)
+    machine_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("machines.id", ondelete="cascade"),
+        nullable=False,
+    )
+    secret_id = Column(
+        UUID(as_uuid=True), ForeignKey("secrets.id", ondelete="cascade"), nullable=False
+    )
     created_at = Column(DateTime(timezone=True), nullable=False)
+
 
 class UserSettings(SerializableMixin, Base):
     __tablename__ = "user_settings"
@@ -709,7 +741,17 @@ class GPUEvent(SerializableMixin, Base):
     start_time = Column(DateTime(timezone=True))
     end_time = Column(DateTime(timezone=True))
     gpu = Column(
-        Enum("CPU", "T4", "L4", "A10G", "L40S", "A100", "A100-80GB", "H100", name="machine_gpu")
+        Enum(
+            "CPU",
+            "T4",
+            "L4",
+            "A10G",
+            "L40S",
+            "A100",
+            "A100-80GB",
+            "H100",
+            name="machine_gpu",
+        )
     )
     ws_gpu = Column(Enum("4090", name="workspace_machine_gpu"))
     gpu_provider = Column(
@@ -733,7 +775,7 @@ class GPUEvent(SerializableMixin, Base):
     modal_function_id = Column(String)
     tunnel_url = Column(String)
     machine_version_id = Column(UUID(as_uuid=True))
-    
+
     environment = Column(
         Enum(
             "staging",
@@ -822,6 +864,13 @@ class Asset(SerializableMixin, Base):
     file_size = Column(BigInteger)
     url = Column(String)
     mime_type = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
     deleted = Column(Boolean, default=False)
