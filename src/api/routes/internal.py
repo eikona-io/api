@@ -686,7 +686,7 @@ async def create_gpu_event(
         return {"error": "user_id required"}, 404
 
     final_user_id = user_id or token_data["user_id"]
-    final_org_id = org_id if user_id else token_data["org_id"]
+    final_org_id = org_id if org_id else token_data.get("org_id", None)
 
     try:
         if event_type == "gpu_start":
