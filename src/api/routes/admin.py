@@ -106,13 +106,13 @@ async def scan_deployment_ttl(
         if not dry_run:
             await db.commit()
             
-        logfire.info(
-            "admin.scan_deployment_ttl",
-            output={
-                "deactivated": deactivated_deployments,
-                "would_deactivate": would_deactivate_deployments
-            }
-        )
+        # logfire.info(
+        #     "admin.scan_deployment_ttl",
+        #     output={
+        #         "deactivated": deactivated_deployments,
+        #         "would_deactivate": would_deactivate_deployments
+        #     }
+        # )
         
         return TTLScanResponse(
             deactivated=deactivated_deployments,
