@@ -2068,8 +2068,8 @@ async def get_customer_plan_v2(
     key_builder=lambda user_id_or_org_id: f"plan:{user_id_or_org_id}",
 )
 async def get_customer_plan_cached(user_id_or_org_id: str):
-    with logfire.span("get_customer_plan"):
-        return await get_customer_plan_v2(user_id_or_org_id)
+    # with logfire.span("get_customer_plan"):
+    return await get_customer_plan_v2(user_id_or_org_id)
     
 @multi_level_cached(
     key_prefix="plan",
@@ -2081,8 +2081,8 @@ async def get_customer_plan_cached(user_id_or_org_id: str):
     key_builder=lambda user_id_or_org_id: f"plan:{user_id_or_org_id}",
 )
 async def get_customer_plan_cached_5_seconds(user_id_or_org_id: str):
-    with logfire.span("get_customer_plan"):
-        return await get_customer_plan_v2(user_id_or_org_id)
+    # with logfire.span("get_customer_plan"):
+    return await get_customer_plan_v2(user_id_or_org_id)
 
 @router.patch("/platform/seats")
 async def update_seats(
