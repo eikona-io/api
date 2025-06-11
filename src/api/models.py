@@ -189,6 +189,8 @@ class WorkflowRun(SerializableMixin, Base):
             "A100",
             "A100-80GB",
             "H100",
+            "H200",
+            "B200",
             name="machine_gpu",
         )
     )
