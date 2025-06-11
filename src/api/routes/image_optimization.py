@@ -66,11 +66,11 @@ async def optimize_image_on_demand(
         
         # Check if optimized version exists
         if await check_s3_object_exists(s3_config, optimized_key):
-            logfire.info("Serving existing optimized image", extra={
-                "s3_key": s3_key,
-                "optimized_key": optimized_key,
-                "transformations": transformations
-            })
+            # logfire.info("Serving existing optimized image", extra={
+            #     "s3_key": s3_key,
+            #     "optimized_key": optimized_key,
+            #     "transformations": transformations
+            # })
             return await get_optimized_image_response(s3_config, optimized_key, user_settings, cache)
         
         # Check if original image exists
@@ -85,12 +85,12 @@ async def optimize_image_on_demand(
         # Trigger optimization asynchronously
         await trigger_image_optimization(s3_config, s3_key, optimized_key, transform_config)
         
-        logfire.info("Triggered image optimization", extra={
-            "s3_key": s3_key,
-            "optimized_key": optimized_key,
-            "transformations": transformations,
-            "is_public": is_public
-        })
+        # logfire.info("Triggered image optimization", extra={
+        #     "s3_key": s3_key,
+        #     "optimized_key": optimized_key,
+        #     "transformations": transformations,
+        #     "is_public": is_public
+        # })
         
         # Return URL to optimized image (will be ready shortly)
         return await get_optimized_image_response(s3_config, optimized_key, user_settings, cache)
@@ -257,7 +257,7 @@ async def get_fallback_response(
     cache_duration: int = 43200  # Default 12 hours for fallback images
 ):
     """Fallback to serving original image if optimization fails"""
-    logfire.info("Serving original image as fallback", extra={"s3_key": s3_key})
+    # logfire.info("Serving original image as fallback", extra={"s3_key": s3_key})
     return await get_optimized_image_response(s3_config, s3_key, user_settings, cache_duration)
 
 
@@ -274,15 +274,15 @@ async def check_s3_object_exists(s3_config: S3Config, s3_key: str) -> bool:
     """Check if S3 object exists"""
     from botocore.exceptions import ClientError
     
-    with logfire.span("check_s3_object_exists", extra={"s3_key": s3_key}):
-        try:
-            async with await S3ClientManager.get_s3_client(s3_config) as s3:
-                await s3.head_object(Bucket=s3_config.bucket, Key=s3_key)
-                return True
-        except ClientError as e:
-            if e.response['Error']['Code'] == '404':
-                return False
-            raise
+    # with logfire.span("check_s3_object_exists", extra={"s3_key": s3_key}):
+    try:
+        async with await S3ClientManager.get_s3_client(s3_config) as s3:
+            await s3.head_object(Bucket=s3_config.bucket, Key=s3_key)
+            return True
+    except ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            return False
+        raise
 
 
 async def check_s3_object_public(s3_config: S3Config, s3_key: str) -> bool:
@@ -290,28 +290,28 @@ async def check_s3_object_public(s3_config: S3Config, s3_key: str) -> bool:
     import aioboto3
     from botocore.exceptions import ClientError
     
-    with logfire.span("check_s3_object_public", extra={"s3_key": s3_key}):
-        try:
-            session = aioboto3.Session()
-            async with session.client(
-                's3',
-                region_name=s3_config.region,
-                aws_access_key_id=s3_config.access_key,
-                aws_secret_access_key=s3_config.secret_key,
-                aws_session_token=s3_config.session_token
-            ) as s3:
-                # Get object ACL
-                acl = await s3.get_object_acl(Bucket=s3_config.bucket, Key=s3_key)
-                
-                # Check if there's a public read grant
-                for grant in acl.get('Grants', []):
-                    grantee = grant.get('Grantee', {})
-                    if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and grant.get('Permission') in ['READ', 'READ_ACP']:
-                        return True
-                return False
-        except ClientError as e:
-            logfire.error("Failed to check object ACL", extra={
-                "s3_key": s3_key,
-                "error": str(e)
-            })
+    # with logfire.span("check_s3_object_public", extra={"s3_key": s3_key}):
+    try:
+        session = aioboto3.Session()
+        async with session.client(
+            's3',
+            region_name=s3_config.region,
+            aws_access_key_id=s3_config.access_key,
+            aws_secret_access_key=s3_config.secret_key,
+            aws_session_token=s3_config.session_token
+        ) as s3:
+            # Get object ACL
+            acl = await s3.get_object_acl(Bucket=s3_config.bucket, Key=s3_key)
+            
+            # Check if there's a public read grant
+            for grant in acl.get('Grants', []):
+                grantee = grant.get('Grantee', {})
+                if grantee.get('URI') == 'http://acs.amazonaws.com/groups/global/AllUsers' and grant.get('Permission') in ['READ', 'READ_ACP']:
+                    return True
             return False
+    except ClientError as e:
+        logfire.error("Failed to check object ACL", extra={
+            "s3_key": s3_key,
+            "error": str(e)
+        })
+        return False
