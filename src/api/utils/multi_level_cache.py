@@ -154,7 +154,7 @@ def multi_level_cached(
                 # Check version before using cached data
                 cached_version = value.get("version")
                 if cached_version != version:
-                    logfire.warning(f"Version mismatch in memory cache for {cache_key}. Cached: {cached_version}, Current: {version}")
+                    # logfire.warning(f"Version mismatch in memory cache for {cache_key}. Cached: {cached_version}, Current: {version}")
                     await multi_cache.invalidate(cache_key)
                 else:
                     age = datetime.now() - timestamp
@@ -166,7 +166,7 @@ def multi_level_cached(
                         pass
                     elif last_updated_age > func_redis_ttl:
                         if cache_key not in multi_cache.refresh_tasks or multi_cache.refresh_tasks[cache_key].done():
-                            logfire.warning(f"Invalidating redis cache: {cache_key}")
+                            # logfire.warning(f"Invalidating redis cache: {cache_key}")
                             multi_cache.refresh_tasks[cache_key] = asyncio.create_task(
                                 refresh_func(cache_key, *args, **kwargs)
                             )
@@ -174,39 +174,39 @@ def multi_level_cached(
                         redis_refresh_cache_key = f"{cache_key}:redis_refresh"
                         
                         if redis_refresh_cache_key not in multi_cache.refresh_tasks or multi_cache.refresh_tasks[redis_refresh_cache_key].done():
-                            logfire.info(f"Invalidating memory cache: {cache_key}")
+                            # logfire.info(f"Invalidating memory cache: {cache_key}")
                             multi_cache.refresh_tasks[redis_refresh_cache_key] = asyncio.create_task(
                                 update_redis_cache(cache_key, *args, **kwargs)
                             )
                             
-                    logfire.info(f"Returning cached memory value: {cache_key}")
+                    # logfire.info(f"Returning cached memory value: {cache_key}")
                     return value.get("data")
                     
-            logfire.warning(f"Cache miss memory: {cache_key}")
+            # logfire.warning(f"Cache miss memory: {cache_key}")
             # If not in memory or too stale, try Redis (L2)
             try:
-                with logfire.span("Getting cache from redis"):
-                    redis_value = await multi_cache.redis.get(cache_key)
-                    if redis_value:
-                        # Parse the JSON value
-                        parsed_value = json.loads(redis_value)
-                        
-                        # Check version in Redis cache
-                        redis_version = parsed_value.get("version")
-                        if redis_version != version:
-                            logfire.warning(f"Version mismatch in Redis cache for {cache_key}. Cached: {redis_version}, Current: {version}")
-                            await multi_cache.invalidate(cache_key)
-                        else:
-                            logfire.info(f"Cache hit redis: {cache_key}")
-                            # Update memory cache
-                            multi_cache.memory_cache[cache_key] = (parsed_value, datetime.now())
-                            multi_cache._cleanup_if_needed()
-                            return parsed_value.get("data")
+                # with logfire.span("Getting cache from redis"):
+                redis_value = await multi_cache.redis.get(cache_key)
+                if redis_value:
+                    # Parse the JSON value
+                    parsed_value = json.loads(redis_value)
+                    
+                    # Check version in Redis cache
+                    redis_version = parsed_value.get("version")
+                    if redis_version != version:
+                        # logfire.warning(f"Version mismatch in Redis cache for {cache_key}. Cached: {redis_version}, Current: {version}")
+                        await multi_cache.invalidate(cache_key)
+                    else:
+                        # logfire.info(f"Cache hit redis: {cache_key}")
+                        # Update memory cache
+                        multi_cache.memory_cache[cache_key] = (parsed_value, datetime.now())
+                        multi_cache._cleanup_if_needed()
+                        return parsed_value.get("data")
             except Exception as e:
                 logfire.error(f"Redis cache error: {str(e)}")
                 
             # Cache miss - call the original function
-            logfire.warning(f"Cache miss redis: {cache_key}, refreshing")
+            # logfire.warning(f"Cache miss redis: {cache_key}, refreshing")
             result = await func(*args, **kwargs)
             
             # When storing new results, include version
