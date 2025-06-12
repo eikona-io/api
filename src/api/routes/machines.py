@@ -2273,3 +2273,185 @@ async def get_machine_secrets(
                     secrets[key] = decrypted_value
 
     return secrets
+
+
+@router.get("/machine/{machine_id}/export")
+async def get_machine_export(
+    request: Request,
+    machine_id: str,
+    version: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    machine_query = select(Machine).where(
+        Machine.id == machine_id,
+        Machine.deleted == False
+    ).apply_org_check_by_type(Machine, request)
+    
+    result = await db.execute(machine_query)
+    machine = result.scalar_one_or_none()
+    
+    if not machine:
+        raise HTTPException(
+            status_code=404,
+            detail="Machine not found or you don't have access to it"
+        )
+    
+    machine_version = None
+    if version is not None:
+        version_query = select(MachineVersion).where(
+            MachineVersion.machine_id == machine_id,
+            MachineVersion.version == version
+        )
+    else:
+        version_query = select(MachineVersion).where(
+            MachineVersion.machine_id == machine_id
+        ).order_by(MachineVersion.created_at.desc()).limit(1)
+    
+    result = await db.execute(version_query)
+    machine_version = result.scalar_one_or_none()
+    
+    export_data = {
+        "name": machine.name,
+        "type": machine.type,
+        "endpoint": machine.endpoint,
+        "auth_token": machine.auth_token,
+        "snapshot": machine.snapshot,
+        "models": machine.models,
+        "dependencies": machine.dependencies,
+        "object_info": machine.object_info,
+        "extensions": machine.extensions,
+        "ws_timeout": machine.ws_timeout,
+        "legacy_mode": machine.legacy_mode,
+        "allow_background_volume_commits": machine.allow_background_volume_commits,
+        "gpu_workspace": machine.gpu_workspace,
+        "retrieve_static_assets": machine.retrieve_static_assets,
+        "is_workspace": machine.is_workspace,
+        "optimized_runner": machine.optimized_runner,
+        "export_version": "1.0",
+        "exported_at": datetime.datetime.utcnow().isoformat(),
+    }
+    
+    if machine_version:
+        export_data.update({
+            "comfyui_version": machine_version.comfyui_version,
+            "docker_command_steps": machine_version.docker_command_steps,
+            "concurrency_limit": machine_version.concurrency_limit,
+            "install_custom_node_with_gpu": machine_version.install_custom_node_with_gpu,
+            "run_timeout": machine_version.run_timeout,
+            "idle_timeout": machine_version.idle_timeout,
+            "extra_docker_commands": machine_version.extra_docker_commands,
+            "allow_concurrent_inputs": machine_version.allow_concurrent_inputs,
+            "machine_builder_version": machine_version.machine_builder_version,
+            "keep_warm": machine_version.keep_warm,
+            "base_docker_image": machine_version.base_docker_image,
+            "python_version": machine_version.python_version,
+            "extra_args": machine_version.extra_args,
+            "prestart_command": machine_version.prestart_command,
+            "disable_metadata": machine_version.disable_metadata,
+            "version": machine_version.version,
+        })
+    
+    for key, value in export_data.items():
+        if isinstance(value, uuid.UUID):
+            export_data[key] = str(value)
+    
+    return JSONResponse(content=export_data)
+
+
+@router.post("/machine/import")
+async def import_machine(
+    request: Request,
+    machine_data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        required_fields = ["name", "type"]
+        for field in required_fields:
+            if field not in machine_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing required field: {field}"
+                )
+        
+        existing_query = select(Machine).where(
+            Machine.name == machine_data["name"],
+            Machine.deleted == False
+        ).apply_org_check_by_type(Machine, request)
+        
+        result = await db.execute(existing_query)
+        existing_machine = result.scalar_one_or_none()
+        
+        if existing_machine:
+            timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            machine_data["name"] = f"{machine_data['name']}_imported_{timestamp}"
+        
+        machine_create_data = {
+            "name": machine_data["name"],
+            "type": machine_data.get("type", "classic"),
+            "endpoint": machine_data.get("endpoint", "http://127.0.0.1:8188"),
+            "auth_token": machine_data.get("auth_token"),
+            "snapshot": machine_data.get("snapshot"),
+            "models": machine_data.get("models"),
+            "dependencies": machine_data.get("dependencies"),
+            "object_info": machine_data.get("object_info"),
+            "extensions": machine_data.get("extensions"),
+            "ws_timeout": machine_data.get("ws_timeout", 2),
+            "legacy_mode": machine_data.get("legacy_mode", False),
+            "allow_background_volume_commits": machine_data.get("allow_background_volume_commits", False),
+            "gpu_workspace": machine_data.get("gpu_workspace", False),
+            "retrieve_static_assets": machine_data.get("retrieve_static_assets", False),
+            "is_workspace": machine_data.get("is_workspace", False),
+            "optimized_runner": machine_data.get("optimized_runner", False),
+            "user_id": request.state.current_user["user_id"],
+            "org_id": request.state.current_user.get("org_id"),
+        }
+        
+        new_machine = Machine(**machine_create_data)
+        db.add(new_machine)
+        await db.flush()
+        
+        if machine_data.get("type") == "comfy-deploy-serverless" and machine_data.get("comfyui_version"):
+            version_data = {
+                "machine_id": new_machine.id,
+                "version": 1,
+                "user_id": request.state.current_user["user_id"],
+                "comfyui_version": machine_data.get("comfyui_version"),
+                "docker_command_steps": machine_data.get("docker_command_steps"),
+                "concurrency_limit": machine_data.get("concurrency_limit", 2),
+                "install_custom_node_with_gpu": machine_data.get("install_custom_node_with_gpu", False),
+                "run_timeout": machine_data.get("run_timeout", 300),
+                "idle_timeout": machine_data.get("idle_timeout", 60),
+                "extra_docker_commands": machine_data.get("extra_docker_commands"),
+                "allow_concurrent_inputs": machine_data.get("allow_concurrent_inputs", 1),
+                "machine_builder_version": machine_data.get("machine_builder_version", "4"),
+                "keep_warm": machine_data.get("keep_warm", 0),
+                "base_docker_image": machine_data.get("base_docker_image"),
+                "python_version": machine_data.get("python_version", "3.11"),
+                "extra_args": machine_data.get("extra_args"),
+                "prestart_command": machine_data.get("prestart_command"),
+                "disable_metadata": machine_data.get("disable_metadata", True),
+            }
+            
+            machine_version = MachineVersion(**version_data)
+            db.add(machine_version)
+            await db.flush()
+            
+            new_machine.machine_version_id = machine_version.id
+        
+        await db.commit()
+        
+        return JSONResponse(content={
+            "id": str(new_machine.id),
+            "name": new_machine.name,
+            "message": "Machine imported successfully"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error importing machine: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to import machine: {str(e)}"
+        )
