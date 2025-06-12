@@ -2311,7 +2311,7 @@ async def get_machine_export(
     result = await db.execute(version_query)
     machine_version = result.scalar_one_or_none()
     
-    export_data = {
+    base_machine_data = {
         "name": machine.name,
         "type": machine.type,
         "endpoint": machine.endpoint,
@@ -2332,31 +2332,37 @@ async def get_machine_export(
         "exported_at": datetime.datetime.utcnow().isoformat(),
     }
     
+    environment = {}
     if machine_version:
-        export_data.update({
+        environment = {
             "comfyui_version": machine_version.comfyui_version,
+            "gpu": machine.gpu,
             "docker_command_steps": machine_version.docker_command_steps,
-            "concurrency_limit": machine_version.concurrency_limit,
+            "max_containers": machine_version.concurrency_limit,
             "install_custom_node_with_gpu": machine_version.install_custom_node_with_gpu,
             "run_timeout": machine_version.run_timeout,
-            "idle_timeout": machine_version.idle_timeout,
+            "scaledown_window": machine_version.idle_timeout,
             "extra_docker_commands": machine_version.extra_docker_commands,
-            "allow_concurrent_inputs": machine_version.allow_concurrent_inputs,
-            "machine_builder_version": machine_version.machine_builder_version,
-            "keep_warm": machine_version.keep_warm,
             "base_docker_image": machine_version.base_docker_image,
             "python_version": machine_version.python_version,
             "extra_args": machine_version.extra_args,
             "prestart_command": machine_version.prestart_command,
+            "min_containers": machine_version.keep_warm,
+            "machine_hash": getattr(machine_version, 'machine_hash', None),
             "disable_metadata": machine_version.disable_metadata,
+            "allow_concurrent_inputs": machine_version.allow_concurrent_inputs,
+            "machine_builder_version": machine_version.machine_builder_version,
             "version": machine_version.version,
-        })
+        }
     
-    for key, value in export_data.items():
+    base_machine_data["environment"] = environment
+    
+    # Convert any UUIDs to strings
+    for key, value in base_machine_data.items():
         if isinstance(value, uuid.UUID):
-            export_data[key] = str(value)
+            base_machine_data[key] = str(value)
     
-    return JSONResponse(content=export_data)
+    return JSONResponse(content=base_machine_data)
 
 
 @router.post("/machine/import")
@@ -2387,6 +2393,8 @@ async def import_machine(
             timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
             machine_data["name"] = f"{machine_data['name']}_imported_{timestamp}"
         
+        environment = machine_data.get("environment", {})
+        
         machine_create_data = {
             "name": machine_data["name"],
             "type": machine_data.get("type", "classic"),
@@ -2404,6 +2412,7 @@ async def import_machine(
             "retrieve_static_assets": machine_data.get("retrieve_static_assets", False),
             "is_workspace": machine_data.get("is_workspace", False),
             "optimized_runner": machine_data.get("optimized_runner", False),
+            "gpu": environment.get("gpu") or machine_data.get("gpu"),
             "user_id": request.state.current_user["user_id"],
             "org_id": request.state.current_user.get("org_id"),
         }
@@ -2412,33 +2421,36 @@ async def import_machine(
         db.add(new_machine)
         await db.flush()
         
-        if machine_data.get("type") == "comfy-deploy-serverless" and machine_data.get("comfyui_version"):
-            version_data = {
-                "machine_id": new_machine.id,
-                "version": 1,
-                "user_id": request.state.current_user["user_id"],
-                "comfyui_version": machine_data.get("comfyui_version"),
-                "docker_command_steps": machine_data.get("docker_command_steps"),
-                "concurrency_limit": machine_data.get("concurrency_limit", 2),
-                "install_custom_node_with_gpu": machine_data.get("install_custom_node_with_gpu", False),
-                "run_timeout": machine_data.get("run_timeout", 300),
-                "idle_timeout": machine_data.get("idle_timeout", 60),
-                "extra_docker_commands": machine_data.get("extra_docker_commands"),
-                "allow_concurrent_inputs": machine_data.get("allow_concurrent_inputs", 1),
-                "machine_builder_version": machine_data.get("machine_builder_version", "4"),
-                "keep_warm": machine_data.get("keep_warm", 0),
-                "base_docker_image": machine_data.get("base_docker_image"),
-                "python_version": machine_data.get("python_version", "3.11"),
-                "extra_args": machine_data.get("extra_args"),
-                "prestart_command": machine_data.get("prestart_command"),
-                "disable_metadata": machine_data.get("disable_metadata", True),
-            }
+        if machine_data.get("type") == "comfy-deploy-serverless":
+            comfyui_version = environment.get("comfyui_version") or machine_data.get("comfyui_version")
             
-            machine_version = MachineVersion(**version_data)
-            db.add(machine_version)
-            await db.flush()
-            
-            new_machine.machine_version_id = machine_version.id
+            if comfyui_version:
+                version_data = {
+                    "machine_id": new_machine.id,
+                    "version": 1,
+                    "user_id": request.state.current_user["user_id"],
+                    "comfyui_version": comfyui_version,
+                    "docker_command_steps": environment.get("docker_command_steps") or machine_data.get("docker_command_steps"),
+                    "concurrency_limit": environment.get("max_containers") or machine_data.get("concurrency_limit", 2),
+                    "install_custom_node_with_gpu": environment.get("install_custom_node_with_gpu") or machine_data.get("install_custom_node_with_gpu", False),
+                    "run_timeout": environment.get("run_timeout") or machine_data.get("run_timeout", 300),
+                    "idle_timeout": environment.get("scaledown_window") or machine_data.get("idle_timeout", 60),
+                    "extra_docker_commands": environment.get("extra_docker_commands") or machine_data.get("extra_docker_commands"),
+                    "allow_concurrent_inputs": environment.get("allow_concurrent_inputs") or machine_data.get("allow_concurrent_inputs", 1),
+                    "machine_builder_version": environment.get("machine_builder_version") or machine_data.get("machine_builder_version", "4"),
+                    "keep_warm": environment.get("min_containers") or machine_data.get("keep_warm", 0),
+                    "base_docker_image": environment.get("base_docker_image") or machine_data.get("base_docker_image"),
+                    "python_version": environment.get("python_version") or machine_data.get("python_version", "3.11"),
+                    "extra_args": environment.get("extra_args") or machine_data.get("extra_args"),
+                    "prestart_command": environment.get("prestart_command") or machine_data.get("prestart_command"),
+                    "disable_metadata": environment.get("disable_metadata") or machine_data.get("disable_metadata", True),
+                }
+                
+                machine_version = MachineVersion(**version_data)
+                db.add(machine_version)
+                await db.flush()
+                
+                new_machine.machine_version_id = machine_version.id
         
         await db.commit()
         
