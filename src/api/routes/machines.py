@@ -27,6 +27,7 @@ from api.utils.docker import (
     generate_all_docker_commands,
     comfyui_hash,
     comfydeploy_hash,
+    hash_machine_dependencies,
 )
 from pydantic import BaseModel, constr
 from .types import (
@@ -2362,6 +2363,7 @@ async def get_machine_export(
 async def import_machine(
     request: Request,
     machine_data: dict,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -2439,6 +2441,51 @@ async def import_machine(
             new_machine.machine_version_id = machine_version.id
         
         await db.commit()
+        
+        if new_machine.type == "comfy-deploy-serverless" and machine_version:
+            current_endpoint = str(request.base_url).rstrip("/")
+            volumes = await retrieve_model_volumes(request, db)
+            docker_commands = generate_all_docker_commands(new_machine)
+            machine_token = generate_machine_token(request.state.current_user["user_id"], request.state.current_user.get("org_id"))
+            secrets = await get_machine_secrets(db=db, machine_id=new_machine.id)
+            
+            params = BuildMachineItem(
+                machine_id=str(new_machine.id),
+                name=str(new_machine.id),
+                cd_callback_url=f"{current_endpoint}/api/machine-built",
+                callback_url=f"{current_endpoint}/api",
+                gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
+                models=new_machine.models,
+                gpu=new_machine.gpu,
+                model_volume_name=volumes[0]["volume_name"] if volumes else "default",
+                run_timeout=machine_version.run_timeout,
+                idle_timeout=machine_version.idle_timeout,
+                auth_token=machine_token,
+                ws_timeout=new_machine.ws_timeout,
+                concurrency_limit=machine_version.concurrency_limit,
+                allow_concurrent_inputs=machine_version.allow_concurrent_inputs,
+                legacy_mode=new_machine.legacy_mode,
+                install_custom_node_with_gpu=machine_version.install_custom_node_with_gpu,
+                allow_background_volume_commits=new_machine.allow_background_volume_commits,
+                retrieve_static_assets=new_machine.retrieve_static_assets,
+                skip_static_assets=True,
+                docker_commands=docker_commands.model_dump()["docker_commands"] if docker_commands else [],
+                machine_builder_version=machine_version.machine_builder_version,
+                base_docker_image=machine_version.base_docker_image,
+                python_version=machine_version.python_version,
+                prestart_command=machine_version.prestart_command,
+                extra_args=machine_version.extra_args,
+                machine_version_id=str(machine_version.id),
+                machine_hash=hash_machine_dependencies(docker_commands) if docker_commands else None,
+                disable_metadata=machine_version.disable_metadata,
+                secrets=secrets,
+                cpu_request=new_machine.cpu_request,
+                cpu_limit=new_machine.cpu_limit,
+                memory_request=new_machine.memory_request,
+                memory_limit=new_machine.memory_limit
+            )
+            
+            background_tasks.add_task(build_logic, params)
         
         return JSONResponse(content={
             "id": str(new_machine.id),
