@@ -1,51 +1,68 @@
-# Machine Deactivation Feature
+# Machine Environment Configuration
 
 ## Overview
-ComfyDeploy supports machine deactivation through a `disabled` boolean field in the machines table. This allows users to temporarily disable machines without deleting them, preserving configurations for future use.
+ComfyDeploy machine export/import functionality uses a standardized environment format that aligns with workflow exports. This ensures consistency across the platform and enables seamless machine configuration management.
 
-## Database Schema
-The `disabled` field is defined in the machines table:
-```sql
-ALTER TABLE "comfyui_deploy"."machines" ADD COLUMN "disabled" boolean DEFAULT false NOT NULL;
-```
+## Environment Object Structure
+The machine environment contains all runtime and deployment configuration:
 
-## Usage
-- Disabled machines are not deleted but are marked as inactive
-- Machine configurations, versions, and associated data are preserved
-- Disabled machines can be re-enabled by setting `disabled = false`
-- The UI shows disabled machines with a "Disabled" badge and red X icon
-
-## API Operations
-To disable a machine, update the machine record:
-```
-PATCH /api/machine/{machine_id}
+```json
 {
-  "disabled": true
+  "environment": {
+    "comfyui_version": "string",
+    "gpu": "string",
+    "docker_command_steps": [],
+    "max_containers": 2,
+    "install_custom_node_with_gpu": false,
+    "run_timeout": 300,
+    "scaledown_window": 60,
+    "extra_docker_commands": [],
+    "base_docker_image": "string",
+    "python_version": "3.11",
+    "extra_args": "string",
+    "prestart_command": "string",
+    "min_containers": 0,
+    "machine_hash": "string",
+    "disable_metadata": true,
+    "allow_concurrent_inputs": 1,
+    "machine_builder_version": "4",
+    "version": 1
+  }
 }
 ```
 
-To re-enable a machine:
-```
-PATCH /api/machine/{machine_id}
+## Field Mappings
+The environment format uses standardized field names:
+- `max_containers` - Maximum concurrent containers (from `concurrency_limit`)
+- `scaledown_window` - Idle timeout before scaling down (from `idle_timeout`)
+- `min_containers` - Minimum warm containers (from `keep_warm`)
+- `comfyui_version` - ComfyUI version for the machine
+- `docker_command_steps` - Build steps and custom nodes
+- `gpu` - GPU configuration and type
+
+## Export Format
+Machine exports include both base machine data and environment configuration:
+```json
 {
-  "disabled": false
+  "name": "machine-name",
+  "type": "comfy-deploy-serverless",
+  "snapshot": {},
+  "models": [],
+  "environment": {
+    // Environment object as defined above
+  },
+  "export_version": "1.0",
+  "exported_at": "2024-01-01T00:00:00.000Z"
 }
 ```
 
-## UI Indicators
-- Red X icon in machine status (shown in machine-status.tsx)
-- "Disabled" badge in machine list
-- Machines remain visible in the list but clearly marked as inactive
-- Disabled state is checked via `props.machine.disabled`
-
-## Implementation Details
-- The disabled field is part of the base Machine model
-- UI components check `machine.disabled` to show appropriate status
-- Disabled machines are still accessible for viewing but operations may be restricted
-- The feature preserves all machine data while marking it as temporarily inactive
+## Import Compatibility
+The import function supports both:
+- **New format**: Environment object with standardized field names
+- **Legacy format**: Direct fields for backward compatibility
 
 ## Benefits
-- Allows users to manage machine quota without losing configurations
-- Preserves machine history and versions for reproducibility
-- Provides a reversible alternative to machine deletion
-- Helps with cost management by temporarily disabling unused machines
+- Consistent format across workflow and machine exports
+- Standardized field naming for better maintainability
+- Backward compatibility with existing exports
+- Complete environment preservation for reproducibility
