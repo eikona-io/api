@@ -501,7 +501,7 @@ async def handle_file_download(
             print("e: ", str(e))
             raise HTTPException(status_code=400, detail="Error: " + str(e))
 
-        modal_download_file_task = modal.Function.lookup(
+        modal_download_file_task = modal.Function.from_name(
             "volume-operations", "modal_download_file_task"
         )
 
@@ -869,7 +869,7 @@ def is_valid_filename(filename):
 
 async def lookup_volume(volume_name: str, create_if_missing: bool = False):
     try:
-        return await Volume.lookup.aio(volume_name, create_if_missing=create_if_missing)
+        return Volume.from_name(volume_name, create_if_missing=create_if_missing)
     except Exception as e:
         raise Exception(f"Can't find Volume: {e}")
 
@@ -1310,7 +1310,7 @@ async def add_huggingface_repo(
         await db.refresh(model)
         
         # Use Modal to download the entire repo
-        modal_download_repo_task = modal.Function.lookup(
+        modal_download_repo_task = modal.Function.from_name(
             "volume-operations", "modal_download_repo_task"
         )
         
