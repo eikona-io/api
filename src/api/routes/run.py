@@ -191,7 +191,7 @@ async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optiona
     target_app_name = str(deployment.id if deployment is not None and deployment.modal_image_id is not None else machine_id)
     class_name = "ComfyDeployRunner" if not optimized_runner else "ComfyDeployRunnerOptimizedImports"
     try:
-        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, class_name)
+        ComfyDeployRunner = modal.Cls.from_name(target_app_name, class_name)
     except modal.exception.NotFoundError as e:
         logger.info(f"App not found for machine {target_app_name}, redeploying...")
         if deployment is not None:
@@ -202,7 +202,7 @@ async def get_comfy_deploy_runner(machine_id: str, gpu: str, deployment: Optiona
         else:
             # We are deploying the modal app as machine
             await redeploy_machine_internal(target_app_name)
-        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, class_name)
+        ComfyDeployRunner = modal.Cls.from_name(target_app_name, class_name)
             
     return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
 
@@ -210,7 +210,7 @@ async def redeploy_comfy_deploy_runner_if_exists(machine_id: str, gpu: str, depl
     # Only when this deployment is using latest modal_image
     target_app_name = str(deployment.id if deployment is not None and deployment.modal_image_id is not None else machine_id)
     try:
-        ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+        ComfyDeployRunner = modal.Cls.from_name(target_app_name, "ComfyDeployRunner")
     except modal.exception.NotFoundError as e:
         return
     
@@ -223,7 +223,7 @@ async def redeploy_comfy_deploy_runner_if_exists(machine_id: str, gpu: str, depl
     else:
         await redeploy_machine_internal(target_app_name)
         
-    ComfyDeployRunner = await modal.Cls.lookup.aio(target_app_name, "ComfyDeployRunner")
+    ComfyDeployRunner = modal.Cls.from_name(target_app_name, "ComfyDeployRunner")
     return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
 
 @router.post(
@@ -773,8 +773,6 @@ async def run_model(
 
     return []
 
-    # ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
-
     # if not model.is_comfyui:
     #     update_status(run_id, "queued", background_tasks, client, workflow_run)
 
@@ -902,7 +900,7 @@ async def run_model_async(
     if not model:
         raise HTTPException(status_code=404, detail=f"Model {data.model_id} not found")
 
-    ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
+    ComfyDeployRunner = modal.Cls.from_name(data.model_id, "ComfyDeployRunner")
     result = await ComfyDeployRunner().run.spawn.aio(params)
 
     return {
@@ -1360,10 +1358,6 @@ async def _create_run(
                         background_tasks=background_tasks,
                         client=client,
                     )
-                # if data.execution_mode == "async":
-                #     ComfyDeployRunner = modal.Cls.lookup(data.model_id, "ComfyDeployRunner")
-                #     await ComfyDeployRunner().run.spawn.aio(params)
-                #     return {"run_id": str(new_run.id)}
                 if data.execution_mode == "sync":
                     params = {
                         **params,

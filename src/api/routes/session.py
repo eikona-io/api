@@ -116,7 +116,7 @@ async def get_comfy_runner_for_workspace(
     machine_id: str, session_id: str | UUID, timeout: int, gpu: str, optimized_runner: bool = False
 ):
     logger.info(machine_id)
-    ComfyDeployRunner = await modal.Cls.lookup.aio(str(machine_id), "ComfyDeployRunner" if not optimized_runner else "ComfyDeployRunnerOptimizedImports")
+    ComfyDeployRunner = modal.Cls.from_name(str(machine_id), "ComfyDeployRunner" if not optimized_runner else "ComfyDeployRunnerOptimizedImports")
     
     try:
         ComfyDeployRunner.new_tunnel_params
@@ -861,8 +861,7 @@ async def create_dynamic_sesssion_background_task(
 
         shared_model_volume_name = os.environ.get("SHARED_MODEL_VOLUME_NAME")
 
-        # session_manager = await modal.App.lookup.aio("session_manager")
-        run_session = await modal.Function.lookup.aio("session_manager", "run_session")
+        run_session = modal.Function.from_name("session_manager", "run_session")
         machine_version = docker_config.get("machine_version")
         send_log_entry(session_id, body.machine_id, "Starting session")
         result = await run_session.spawn.aio(

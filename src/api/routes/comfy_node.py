@@ -199,7 +199,7 @@ async def get_comfyui_versions(request: Request):
 async def get_nodes_json():
     try:
         # Get the data from modal function
-        function = await modal.Function.lookup.aio("comfy-nodes", "read_custom_nodes")
+        function = modal.Function.from_name("comfy-nodes", "read_custom_nodes")
         nodes_data = await function.remote.aio()
 
         # Create a temporary file to serve
