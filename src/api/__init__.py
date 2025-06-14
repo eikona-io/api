@@ -191,6 +191,7 @@ app.add_middleware(AuthMiddleware)
 # Get frontend URL from environment variable, default to localhost:3000 for development
 
 allow_origins = []
+allow_origin_regex = None
 
 if os.getenv("ENV") == "development":
     allow_origins.append("http://localhost:3001")
@@ -201,6 +202,8 @@ elif os.getenv("ENV") == "staging":
             "https://staging.app.comfydeploy.com",
         ]
     )
+    # Allow preview deployments hosted on Vercel
+    allow_origin_regex = r"https://.*\.vercel\.app"
 else:
     allow_origins.extend(
         [
@@ -214,6 +217,7 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,  # Allow all subdomains of comfydeploy.com
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,  # Allow credentials (cookies)
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
