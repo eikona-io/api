@@ -2164,9 +2164,8 @@ async def update_seats(
                 return result
 
 # Local ComfyUI
-@router.get("/platform/comfyui/auth")
-async def get_local_comfyui_auth(
-    request: Request,
+@router.get("/platform/comfyui/auth-response")
+async def get_local_comfyui_auth_response(
     request_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -2178,20 +2177,29 @@ async def get_local_comfyui_auth(
                 AuthRequest.expired_date > datetime.now(),
             )
         )
-        .apply_org_check(request)
         .limit(1)
     )
     result = await db.execute(auth_key)
     auth_request = result.scalar_one_or_none()
+    
     if not auth_request:
         raise HTTPException(status_code=404, detail="Auth request not found")
-    return {"api_key": auth_request.api_hash}
+    
+    user_id = auth_request.user_id
+    org_id = auth_request.org_id
+
+    user_data = await get_clerk_org(org_id) if org_id else await get_clerk_user(user_id)
+    
+    return {
+        "api_key": auth_request.api_hash,
+        "name": user_data["name"] if org_id else user_data["username"]
+    }
 
 class CreateLocalComfyuiAuthRequest(BaseModel):
     request_id: str
 
-@router.post("/platform/comfyui/auth")
-async def create_local_comfyui_auth(
+@router.post("/platform/comfyui/auth-request")
+async def create_local_comfyui_auth_request(
     request: Request,
     body: CreateLocalComfyuiAuthRequest,
     db: AsyncSession = Depends(get_db),
