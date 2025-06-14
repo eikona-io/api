@@ -6,7 +6,7 @@ import logfire
 from nanoid import generate
 from pydantic import BaseModel
 from api.database import get_db
-from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent, UserSettings
+from api.models import Machine, SubscriptionStatus, User, Workflow, GPUEvent, UserSettings, AuthRequest
 from api.routes.utils import (
     async_lru_cache,
     fetch_user_icon,
@@ -18,7 +18,8 @@ from api.routes.utils import (
 from api.middleware.auth import (
   get_api_keys as get_api_keys_auth,
   delete_api_key as delete_api_key_auth,
-  create_api_key as create_api_key_auth
+  create_api_key as create_api_key_auth,
+  generate_jwt_token
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import Date, and_, desc, func, or_, cast, extract, text, not_
@@ -27,7 +28,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi import BackgroundTasks
 import aiohttp
 from typing import Optional, Dict, Any, List, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import asyncio
 import unicodedata
 import re
@@ -35,6 +36,8 @@ import functools
 from upstash_redis.asyncio import Redis
 import json
 import resend
+import uuid
+from sqlalchemy.exc import IntegrityError
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -2159,3 +2162,73 @@ async def update_seats(
                 logfire.info(f"Seats updated from org_id {org_id}", extra=result)
                 
                 return result
+
+# Local ComfyUI
+@router.get("/platform/comfyui/auth")
+async def get_local_comfyui_auth(
+    request: Request,
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    auth_key = (
+        select(AuthRequest)
+        .where(
+            and_(
+                AuthRequest.request_id == request_id,
+                AuthRequest.expired_date > datetime.now(),
+            )
+        )
+        .apply_org_check(request)
+        .limit(1)
+    )
+    result = await db.execute(auth_key)
+    auth_request = result.scalar_one_or_none()
+    if not auth_request:
+        raise HTTPException(status_code=404, detail="Auth request not found")
+    return {"api_key": auth_request.api_hash}
+
+class CreateLocalComfyuiAuthRequest(BaseModel):
+    request_id: str
+
+@router.post("/platform/comfyui/auth")
+async def create_local_comfyui_auth(
+    request: Request,
+    body: CreateLocalComfyuiAuthRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    # Get current user info from request
+    user_id = request.state.current_user["user_id"]
+    org_id = request.state.current_user.get("org_id")
+    
+    # Set expiration date to one week from now
+    expired_date = datetime.now(timezone.utc) + timedelta(weeks=1)
+    
+    # Generate a JWT token for API access
+    api_hash = generate_jwt_token(user_id, org_id)
+    
+    # Create the auth request
+    auth_request = AuthRequest(
+        request_id=body.request_id,
+        user_id=user_id,
+        org_id=org_id,
+        api_hash=api_hash,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        expired_date=expired_date
+    )
+    
+    try:
+        # Save to database
+        db.add(auth_request)
+        await db.commit()
+        await db.refresh(auth_request)
+        
+        return {
+            "request_id": auth_request.request_id,
+            "api_hash": auth_request.api_hash,
+            "expired_date": auth_request.expired_date.isoformat(),
+            "status": "success"
+        }
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Auth request with this ID already exists")

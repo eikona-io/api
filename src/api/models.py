@@ -307,6 +307,17 @@ class APIKey(SerializableMixin, Base):
     def is_revoked(self):
         return self.revoked
 
+class AuthRequest(SerializableMixin, Base):
+    __tablename__ = "auth_requests"
+    metadata = metadata
+    
+    request_id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=True)
+    org_id = Column(String, nullable=True)
+    api_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+    expired_date = Column(DateTime(timezone=True), nullable=True)
 
 class User(SerializableMixin, Base):
     __tablename__ = "users"

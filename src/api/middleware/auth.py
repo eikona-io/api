@@ -110,6 +110,27 @@ async def delete_api_key(request: Request, db: AsyncSession):
     await db.commit()
     return fetchedKey
 
+def generate_jwt_token(user_id: str, org_id: Optional[str] = None) -> str:
+    """
+    Generate a JWT token for API key usage.
+    
+    Args:
+        user_id: The user ID to associate with the token
+        org_id: Optional organization ID
+        
+    Returns:
+        str: The generated JWT token
+    """
+    payload = {
+        "user_id": user_id,
+        "iat": datetime.now(timezone.utc)
+    }
+
+    if org_id:
+        payload["org_id"] = org_id
+
+    return jwt.encode(payload, os.environ["JWT_SECRET"])
+
 async def create_api_key(request: Request, db: AsyncSession):
     user_id = request.state.current_user["user_id"]
     org_id = request.state.current_user.get("org_id")
@@ -122,15 +143,7 @@ async def create_api_key(request: Request, db: AsyncSession):
         return JSONResponse(status_code=400, content={"error": "Name is required"})
 
     # Generate JWT token with user/org info
-    payload = {
-        "user_id": user_id,
-        "iat": datetime.now(timezone.utc)
-    }
-
-    if org_id:
-        payload["org_id"] = org_id
-
-    token = jwt.encode(payload, os.environ["JWT_SECRET"])
+    token = generate_jwt_token(user_id, org_id)
 
     # Create new API key
     api_key = APIKey(
