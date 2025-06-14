@@ -27,6 +27,7 @@ from api.utils.docker import (
     generate_all_docker_commands,
     comfyui_hash,
     comfydeploy_hash,
+    hash_machine_dependencies,
 )
 from pydantic import BaseModel, constr
 from .types import (
@@ -2273,3 +2274,243 @@ async def get_machine_secrets(
                     secrets[key] = decrypted_value
 
     return secrets
+
+
+@router.get("/machine/{machine_id}/export")
+async def get_machine_export(
+    request: Request,
+    machine_id: str,
+    version: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    machine_query = select(Machine).where(
+        Machine.id == machine_id,
+        Machine.deleted == False
+    ).apply_org_check_by_type(Machine, request)
+    
+    result = await db.execute(machine_query)
+    machine = result.scalar_one_or_none()
+    
+    if not machine:
+        raise HTTPException(
+            status_code=404,
+            detail="Machine not found or you don't have access to it"
+        )
+    
+    machine_version = None
+    if version is not None:
+        version_query = select(MachineVersion).where(
+            MachineVersion.machine_id == machine_id,
+            MachineVersion.version == version
+        )
+    else:
+        version_query = select(MachineVersion).where(
+            MachineVersion.machine_id == machine_id
+        ).order_by(MachineVersion.created_at.desc()).limit(1)
+    
+    result = await db.execute(version_query)
+    machine_version = result.scalar_one_or_none()
+    
+    base_machine_data = {
+        "name": machine.name,
+        "type": machine.type,
+        "endpoint": machine.endpoint,
+        "auth_token": machine.auth_token,
+        "snapshot": machine.snapshot,
+        "models": machine.models,
+        "dependencies": machine.dependencies,
+        "object_info": machine.object_info,
+        "extensions": machine.extensions,
+        "ws_timeout": machine.ws_timeout,
+        "legacy_mode": machine.legacy_mode,
+        "allow_background_volume_commits": machine.allow_background_volume_commits,
+        "gpu_workspace": machine.gpu_workspace,
+        "retrieve_static_assets": machine.retrieve_static_assets,
+        "is_workspace": machine.is_workspace,
+        "optimized_runner": machine.optimized_runner,
+        "export_version": "1.0",
+        "exported_at": datetime.datetime.utcnow().isoformat(),
+    }
+    
+    environment = {}
+    if machine_version:
+        environment = {
+            "comfyui_version": machine_version.comfyui_version,
+            "gpu": machine.gpu,
+            "docker_command_steps": machine_version.docker_command_steps,
+            "max_containers": machine_version.concurrency_limit,
+            "install_custom_node_with_gpu": machine_version.install_custom_node_with_gpu,
+            "run_timeout": machine_version.run_timeout,
+            "scaledown_window": machine_version.idle_timeout,
+            "extra_docker_commands": machine_version.extra_docker_commands,
+            "base_docker_image": machine_version.base_docker_image,
+            "python_version": machine_version.python_version,
+            "extra_args": machine_version.extra_args,
+            "prestart_command": machine_version.prestart_command,
+            "min_containers": machine_version.keep_warm,
+            "machine_hash": getattr(machine_version, 'machine_hash', None),
+            "disable_metadata": machine_version.disable_metadata,
+            "allow_concurrent_inputs": machine_version.allow_concurrent_inputs,
+            "machine_builder_version": machine_version.machine_builder_version,
+            "version": machine_version.version,
+        }
+    
+    base_machine_data["environment"] = environment
+    
+    # Convert any UUIDs to strings
+    for key, value in base_machine_data.items():
+        if isinstance(value, uuid.UUID):
+            base_machine_data[key] = str(value)
+    
+    return JSONResponse(content=base_machine_data)
+
+
+@router.post("/machine/import")
+async def import_machine(
+    request: Request,
+    machine_data: dict,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        required_fields = ["name", "type"]
+        for field in required_fields:
+            if field not in machine_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Missing required field: {field}"
+                )
+        
+        existing_query = select(Machine).where(
+            Machine.name == machine_data["name"],
+            Machine.deleted == False
+        ).apply_org_check_by_type(Machine, request)
+        
+        result = await db.execute(existing_query)
+        existing_machine = result.scalar_one_or_none()
+        
+        if existing_machine:
+            timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            machine_data["name"] = f"{machine_data['name']}_imported_{timestamp}"
+        
+        environment = machine_data.get("environment", {})
+        
+        machine_create_data = {
+            "name": machine_data["name"],
+            "type": machine_data.get("type", "classic"),
+            "endpoint": machine_data.get("endpoint", "http://127.0.0.1:8188"),
+            "auth_token": machine_data.get("auth_token"),
+            "snapshot": machine_data.get("snapshot"),
+            "models": machine_data.get("models"),
+            "dependencies": machine_data.get("dependencies"),
+            "object_info": machine_data.get("object_info"),
+            "extensions": machine_data.get("extensions"),
+            "ws_timeout": machine_data.get("ws_timeout", 2),
+            "legacy_mode": machine_data.get("legacy_mode", False),
+            "allow_background_volume_commits": machine_data.get("allow_background_volume_commits", False),
+            "gpu_workspace": machine_data.get("gpu_workspace", False),
+            "retrieve_static_assets": machine_data.get("retrieve_static_assets", False),
+            "is_workspace": machine_data.get("is_workspace", False),
+            "optimized_runner": machine_data.get("optimized_runner", False),
+            "gpu": environment.get("gpu") or machine_data.get("gpu"),
+            "user_id": request.state.current_user["user_id"],
+            "org_id": request.state.current_user.get("org_id"),
+        }
+        
+        new_machine = Machine(**machine_create_data)
+        db.add(new_machine)
+        await db.flush()
+        
+        if machine_data.get("type") == "comfy-deploy-serverless":
+            comfyui_version = environment.get("comfyui_version") or machine_data.get("comfyui_version")
+            
+            if comfyui_version:
+                version_data = {
+                    "machine_id": new_machine.id,
+                    "version": 1,
+                    "user_id": request.state.current_user["user_id"],
+                    "comfyui_version": comfyui_version,
+                    "docker_command_steps": environment.get("docker_command_steps") or machine_data.get("docker_command_steps"),
+                    "concurrency_limit": environment.get("max_containers") or machine_data.get("concurrency_limit", 2),
+                    "install_custom_node_with_gpu": environment.get("install_custom_node_with_gpu") or machine_data.get("install_custom_node_with_gpu", False),
+                    "run_timeout": environment.get("run_timeout") or machine_data.get("run_timeout", 300),
+                    "idle_timeout": environment.get("scaledown_window") or machine_data.get("idle_timeout", 60),
+                    "extra_docker_commands": environment.get("extra_docker_commands") or machine_data.get("extra_docker_commands"),
+                    "allow_concurrent_inputs": environment.get("allow_concurrent_inputs") or machine_data.get("allow_concurrent_inputs", 1),
+                    "machine_builder_version": environment.get("machine_builder_version") or machine_data.get("machine_builder_version", "4"),
+                    "keep_warm": environment.get("min_containers") or machine_data.get("keep_warm", 0),
+                    "base_docker_image": environment.get("base_docker_image") or machine_data.get("base_docker_image"),
+                    "python_version": environment.get("python_version") or machine_data.get("python_version", "3.11"),
+                    "extra_args": environment.get("extra_args") or machine_data.get("extra_args"),
+                    "prestart_command": environment.get("prestart_command") or machine_data.get("prestart_command"),
+                    "disable_metadata": environment.get("disable_metadata") or machine_data.get("disable_metadata", True),
+                }
+                
+                machine_version = MachineVersion(**version_data)
+                db.add(machine_version)
+                await db.flush()
+                
+                new_machine.machine_version_id = machine_version.id
+        
+        await db.commit()
+        
+        if new_machine.type == "comfy-deploy-serverless" and machine_version:
+            current_endpoint = str(request.base_url).rstrip("/")
+            volumes = await retrieve_model_volumes(request, db)
+            docker_commands = generate_all_docker_commands(new_machine)
+            machine_token = generate_machine_token(request.state.current_user["user_id"], request.state.current_user.get("org_id"))
+            secrets = await get_machine_secrets(db=db, machine_id=new_machine.id)
+            
+            params = BuildMachineItem(
+                machine_id=str(new_machine.id),
+                name=str(new_machine.id),
+                cd_callback_url=f"{current_endpoint}/api/machine-built",
+                callback_url=f"{current_endpoint}/api",
+                gpu_event_callback_url=f"{current_endpoint}/api/gpu_event",
+                models=new_machine.models,
+                gpu=new_machine.gpu,
+                model_volume_name=volumes[0]["volume_name"] if volumes else "default",
+                run_timeout=machine_version.run_timeout,
+                idle_timeout=machine_version.idle_timeout,
+                auth_token=machine_token,
+                ws_timeout=new_machine.ws_timeout,
+                concurrency_limit=machine_version.concurrency_limit,
+                allow_concurrent_inputs=machine_version.allow_concurrent_inputs,
+                legacy_mode=new_machine.legacy_mode,
+                install_custom_node_with_gpu=machine_version.install_custom_node_with_gpu,
+                allow_background_volume_commits=new_machine.allow_background_volume_commits,
+                retrieve_static_assets=new_machine.retrieve_static_assets,
+                skip_static_assets=True,
+                docker_commands=docker_commands.model_dump()["docker_commands"] if docker_commands else [],
+                machine_builder_version=machine_version.machine_builder_version,
+                base_docker_image=machine_version.base_docker_image,
+                python_version=machine_version.python_version,
+                prestart_command=machine_version.prestart_command,
+                extra_args=machine_version.extra_args,
+                machine_version_id=str(machine_version.id),
+                machine_hash=hash_machine_dependencies(docker_commands) if docker_commands else None,
+                disable_metadata=machine_version.disable_metadata,
+                secrets=secrets,
+                cpu_request=new_machine.cpu_request,
+                cpu_limit=new_machine.cpu_limit,
+                memory_request=new_machine.memory_request,
+                memory_limit=new_machine.memory_limit
+            )
+            
+            background_tasks.add_task(build_logic, params)
+        
+        return JSONResponse(content={
+            "id": str(new_machine.id),
+            "name": new_machine.name,
+            "message": "Machine imported successfully"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error importing machine: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to import machine: {str(e)}"
+        )
