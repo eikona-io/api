@@ -2185,6 +2185,18 @@ async def get_local_comfyui_auth_response(
     if not auth_request:
         raise HTTPException(status_code=404, detail="Auth request not found")
     
+    # Handle timezone-aware/naive datetime comparison
+    current_time = datetime.now(timezone.utc)
+    created_at = auth_request.created_at
+
+    # If created_at is naive (no timezone info), assume it's UTC
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+
+    time_since_created = current_time - created_at
+    if time_since_created.total_seconds() > 30:
+        raise HTTPException(status_code=410, detail="Auth request has expired. ")
+    
     user_id = auth_request.user_id
     org_id = auth_request.org_id
 

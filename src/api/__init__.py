@@ -194,13 +194,7 @@ allow_origins = []
 allow_origin_regex = None
 
 if os.getenv("ENV") == "development":
-    allow_origins.extend(
-        [
-            "http://localhost:3001",
-            "http://localhost:8188",
-            "http://127.0.0.1:8188",
-        ]
-    )
+    allow_origins.append("http://localhost:3001")
 elif os.getenv("ENV") == "staging":
     allow_origins.extend(
         [
