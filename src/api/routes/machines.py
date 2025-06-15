@@ -27,7 +27,6 @@ from api.utils.docker import (
     generate_all_docker_commands,
     comfyui_hash,
     comfydeploy_hash,
-    hash_machine_dependencies,
 )
 from pydantic import BaseModel, constr
 from .types import (
