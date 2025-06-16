@@ -1143,7 +1143,13 @@ async def create_shared_workflow(
         
         share_slug = await generate_unique_share_slug(share_request.title, db)
         
-        user_id = request.state.current_user["id"]
+        # request.state.current_user is populated by the auth middleware.  The
+        # token payload consistently uses the ``user_id`` field to store the
+        # identifier of the authenticated user.  This previously attempted to
+        # access ``"id"`` which is not present in our payloads and resulted in a
+        # ``KeyError`` when sharing workflows.  Use ``user_id`` instead.
+
+        user_id = request.state.current_user["user_id"]
         org_id = request.state.current_user.get("org_id")
         
         # Create the shared workflow record
