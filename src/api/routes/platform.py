@@ -2223,8 +2223,8 @@ async def create_local_comfyui_auth_request(
     # Set expiration date to one week from now
     expired_date = datetime.now(timezone.utc) + timedelta(weeks=1)
     
-    # Generate a JWT token for API access
-    api_hash = generate_jwt_token(user_id, org_id)
+    # Generate a JWT token for API access to a week
+    api_hash = generate_jwt_token(user_id, org_id, expires_in=604800)
     
     # Create the auth request
     auth_request = AuthRequest(

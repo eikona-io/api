@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 from api.routes.utils import select
 from api.utils.multi_level_cache import multi_level_cached
-from fastapi import Request, HTTPException, Depends
+from fastapi import Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 import os
@@ -10,7 +10,7 @@ from typing import Optional, List
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_
 from api.models import APIKey
-from api.database import get_db, get_db_context
+from api.database import get_db_context
 from hashlib import sha256
 
 JWT_SECRET = os.getenv("JWT_SECRET")
@@ -110,13 +110,14 @@ async def delete_api_key(request: Request, db: AsyncSession):
     await db.commit()
     return fetchedKey
 
-def generate_jwt_token(user_id: str, org_id: Optional[str] = None) -> str:
+def generate_jwt_token(user_id: str, org_id: Optional[str] = None, expires_in: Optional[int] = None) -> str:
     """
     Generate a JWT token for API key usage.
     
     Args:
         user_id: The user ID to associate with the token
         org_id: Optional organization ID
+        expires_in: Optional expiration time in seconds
         
     Returns:
         str: The generated JWT token
@@ -128,6 +129,11 @@ def generate_jwt_token(user_id: str, org_id: Optional[str] = None) -> str:
 
     if org_id:
         payload["org_id"] = org_id
+    
+    if expires_in:
+        # Convert datetime to Unix timestamp (integer)
+        exp_time = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        payload["exp"] = int(exp_time.timestamp())  # Add int() here!
 
     return jwt.encode(payload, os.environ["JWT_SECRET"])
 
