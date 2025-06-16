@@ -49,7 +49,7 @@ from api.models import (
     WorkflowRunOutput,
     SerializableMixin,
 )
-from api.schema import sharedWorkflowsTable
+from api.models import SharedWorkflow
 from api.database import get_db
 import logging
 from typing import Any, Dict, List, Optional
@@ -1147,30 +1147,24 @@ async def create_shared_workflow(
         org_id = request.state.current_user.get("org_id")
         
         # Create the shared workflow record
-        shared_workflow_data = {
-            "user_id": user_id,
-            "org_id": org_id,
-            "workflow_id": share_request.workflow_id,
-            "workflow_version_id": share_request.workflow_version_id,
-            "workflow_export": export_data,
-            "share_slug": share_slug,
-            "title": share_request.title,
-            "description": share_request.description,
-            "cover_image": share_request.cover_image,
-            "is_public": share_request.is_public,
-        }
+        shared_workflow = SharedWorkflow(
+            user_id=user_id,
+            org_id=org_id,
+            workflow_id=share_request.workflow_id,
+            workflow_version_id=share_request.workflow_version_id,
+            workflow_export=export_data,
+            share_slug=share_slug,
+            title=share_request.title,
+            description=share_request.description,
+            cover_image=share_request.cover_image,
+            is_public=share_request.is_public,
+        )
         
-        insert_stmt = sharedWorkflowsTable.insert().values(**shared_workflow_data)
-        result = await db.execute(insert_stmt)
+        db.add(shared_workflow)
         await db.commit()
+        await db.refresh(shared_workflow)
         
-        # Get the created record
-        shared_workflow_id = result.inserted_primary_key[0]
-        select_stmt = select(sharedWorkflowsTable).where(sharedWorkflowsTable.c.id == shared_workflow_id)
-        result = await db.execute(select_stmt)
-        shared_workflow = result.fetchone()
-        
-        return SharedWorkflowModel.model_validate(dict(shared_workflow._mapping))
+        return SharedWorkflowModel.model_validate(shared_workflow.to_dict())
         
     except Exception as e:
         await db.rollback()
@@ -1190,34 +1184,34 @@ async def list_shared_workflows(
     """List shared workflows with pagination and filtering"""
     try:
         # Build the query
-        query = select(sharedWorkflowsTable).where(sharedWorkflowsTable.c.is_public == True)
+        query = select(SharedWorkflow).where(SharedWorkflow.is_public == True)
         
         # Add user filter if specified
         if user_id:
-            query = query.where(sharedWorkflowsTable.c.user_id == user_id)
+            query = query.where(SharedWorkflow.user_id == user_id)
         
         # Add search filter if specified
         if search:
-            query = query.where(sharedWorkflowsTable.c.title.ilike(f"%{search}%"))
+            query = query.where(SharedWorkflow.title.ilike(f"%{search}%"))
         
-        query = query.order_by(sharedWorkflowsTable.c.created_at.desc()).limit(limit).offset(offset)
+        query = query.order_by(SharedWorkflow.created_at.desc()).limit(limit).offset(offset)
         
         result = await db.execute(query)
-        shared_workflows = result.fetchall()
+        shared_workflows = result.scalars().all()
         
-        count_query = select(func.count()).select_from(sharedWorkflowsTable).where(sharedWorkflowsTable.c.is_public == True)
+        count_query = select(func.count()).select_from(SharedWorkflow).where(SharedWorkflow.is_public == True)
         if user_id:
-            count_query = count_query.where(sharedWorkflowsTable.c.user_id == user_id)
+            count_query = count_query.where(SharedWorkflow.user_id == user_id)
         if search:
-            count_query = count_query.where(sharedWorkflowsTable.c.title.ilike(f"%{search}%"))
+            count_query = count_query.where(SharedWorkflow.title.ilike(f"%{search}%"))
         
         count_result = await db.execute(count_query)
         total = count_result.scalar()
         
         # Convert to models
         shared_workflow_models = [
-            SharedWorkflowModel.model_validate(dict(row._mapping))
-            for row in shared_workflows
+            SharedWorkflowModel.model_validate(workflow.to_dict())
+            for workflow in shared_workflows
         ]
         
         return SharedWorkflowListResponse(
@@ -1237,26 +1231,21 @@ async def get_shared_workflow(
 ):
     """Get a specific shared workflow by share slug"""
     try:
-        query = select(sharedWorkflowsTable).where(
-            sharedWorkflowsTable.c.share_slug == share_slug,
-            sharedWorkflowsTable.c.is_public == True
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.share_slug == share_slug,
+            SharedWorkflow.is_public == True
         )
         
         result = await db.execute(query)
-        shared_workflow = result.fetchone()
+        shared_workflow = result.scalar_one_or_none()
         
         if not shared_workflow:
             raise HTTPException(status_code=404, detail="Shared workflow not found")
         
-        update_stmt = (
-            sharedWorkflowsTable.update()
-            .where(sharedWorkflowsTable.c.id == shared_workflow.id)
-            .values(view_count=sharedWorkflowsTable.c.view_count + 1)
-        )
-        await db.execute(update_stmt)
+        shared_workflow.view_count += 1
         await db.commit()
         
-        return SharedWorkflowModel.model_validate(dict(shared_workflow._mapping))
+        return SharedWorkflowModel.model_validate(shared_workflow.to_dict())
         
     except HTTPException:
         raise
@@ -1272,23 +1261,18 @@ async def download_shared_workflow(
 ):
     """Download the workflow JSON for a shared workflow"""
     try:
-        query = select(sharedWorkflowsTable).where(
-            sharedWorkflowsTable.c.share_slug == share_slug,
-            sharedWorkflowsTable.c.is_public == True
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.share_slug == share_slug,
+            SharedWorkflow.is_public == True
         )
         
         result = await db.execute(query)
-        shared_workflow = result.fetchone()
+        shared_workflow = result.scalar_one_or_none()
         
         if not shared_workflow:
             raise HTTPException(status_code=404, detail="Shared workflow not found")
         
-        update_stmt = (
-            sharedWorkflowsTable.update()
-            .where(sharedWorkflowsTable.c.id == shared_workflow.id)
-            .values(download_count=sharedWorkflowsTable.c.download_count + 1)
-        )
-        await db.execute(update_stmt)
+        shared_workflow.download_count += 1
         await db.commit()
         
         return JSONResponse(
@@ -1410,9 +1394,9 @@ async def generate_unique_share_slug(title: str, db: AsyncSession) -> str:
     slug = base_slug
     
     while True:
-        query = select(sharedWorkflowsTable).where(sharedWorkflowsTable.c.share_slug == slug)
+        query = select(SharedWorkflow).where(SharedWorkflow.share_slug == slug)
         result = await db.execute(query)
-        existing = result.fetchone()
+        existing = result.scalar_one_or_none()
         
         if not existing:
             return slug

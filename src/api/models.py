@@ -880,3 +880,31 @@ class Asset(SerializableMixin, Base):
         nullable=False,
     )
     deleted = Column(Boolean, default=False)
+
+
+class SharedWorkflow(SerializableMixin, Base):
+    __tablename__ = "shared_workflows"
+    metadata = metadata
+
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    org_id = Column(String)
+    workflow_id = Column(String, ForeignKey("workflows.id"), nullable=False)
+    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"))
+    workflow_export = Column(JSON, nullable=False)
+    share_slug = Column(String, nullable=False, unique=True)
+    title = Column(String, nullable=False)
+    description = Column(String)
+    cover_image = Column(String)
+    is_public = Column(Boolean, default=True, nullable=False)
+    view_count = Column(Integer, default=0, nullable=False)
+    download_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
