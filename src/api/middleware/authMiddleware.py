@@ -28,6 +28,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/clerk/webhook",
             "/api/share/*",
             "/api/platform/stripe/webhook",
+            "/api/platform/comfyui/auth-response",
         ]
         # print("AuthMiddleware initialized")  # Test print
 
