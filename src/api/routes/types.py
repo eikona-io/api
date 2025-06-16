@@ -631,6 +631,41 @@ class DeploymentFeaturedModel(BaseModel):
     share_slug: Optional[str] = None
 
 
+class SharedWorkflowModel(BaseModel):
+    id: UUID
+    user_id: str
+    org_id: Optional[str]
+    workflow_id: UUID
+    workflow_version_id: Optional[UUID]
+    workflow_export: Dict[str, Any]
+    share_slug: str
+    title: str
+    description: Optional[str] = None
+    cover_image: Optional[str] = None
+    is_public: bool = True
+    view_count: int = 0
+    download_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CreateSharedWorkflowRequest(BaseModel):
+    workflow_id: UUID
+    workflow_version_id: Optional[UUID] = None
+    title: str
+    description: Optional[str] = None
+    cover_image: Optional[str] = None
+    is_public: bool = True
+
+
+class SharedWorkflowListResponse(BaseModel):
+    shared_workflows: List[SharedWorkflowModel]
+    total: int
+
+
 
 
 class WorkspaceGPU(str, Enum):
