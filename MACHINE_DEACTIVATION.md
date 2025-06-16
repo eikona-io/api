@@ -46,8 +46,6 @@ Machine exports include both base machine data and environment configuration:
 {
   "name": "machine-name",
   "type": "comfy-deploy-serverless",
-  "snapshot": {},
-  "models": [],
   "environment": {
     // Environment object as defined above
   },
@@ -60,6 +58,7 @@ Machine exports include both base machine data and environment configuration:
 The import function supports both:
 - **New format**: Environment object with standardized field names
 - **Legacy format**: Direct fields for backward compatibility
+- Runtime fields like endpoint are ignored and replaced with a default value based on the machine type
 
 ## Benefits
 - Consistent format across workflow and machine exports

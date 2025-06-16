@@ -10,7 +10,7 @@ This PR implements machine export/import functionality for the ComfyDeploy platf
   - **Refactored to use workflow export environment format structure**
   - Creates standardized `environment` object with fields like `max_containers`, `scaledown_window`, `min_containers`
   - Supports optional version parameter for specific version exports
-  - Includes comprehensive machine data: snapshot, models, dependencies, environment settings
+  - Excludes runtime-specific fields like endpoint and tokens from exports
   - Handles both classic and serverless machine types
   - Respects existing permission model for machine operations
 
@@ -20,6 +20,7 @@ This PR implements machine export/import functionality for the ComfyDeploy platf
   - Handles name conflicts with timestamp-based renaming
   - Creates machine versions for serverless machines
   - **Automatically triggers machine build for serverless machines after successful import**
+  - Ignores any exported endpoint and sets a default based on machine type
   - Comprehensive error handling and validation
 
 ### Environment Format Alignment

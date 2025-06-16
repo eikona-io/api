@@ -2313,20 +2313,6 @@ async def get_machine_export(
     base_machine_data = {
         "name": machine.name,
         "type": machine.type,
-        "endpoint": machine.endpoint,
-        "auth_token": machine.auth_token,
-        "snapshot": machine.snapshot,
-        "models": machine.models,
-        "dependencies": machine.dependencies,
-        "object_info": machine.object_info,
-        "extensions": machine.extensions,
-        "ws_timeout": machine.ws_timeout,
-        "legacy_mode": machine.legacy_mode,
-        "allow_background_volume_commits": machine.allow_background_volume_commits,
-        "gpu_workspace": machine.gpu_workspace,
-        "retrieve_static_assets": machine.retrieve_static_assets,
-        "is_workspace": machine.is_workspace,
-        "optimized_runner": machine.optimized_runner,
         "export_version": "1.0",
         "exported_at": datetime.datetime.utcnow().isoformat(),
     }
@@ -2397,20 +2383,11 @@ async def import_machine(
         machine_create_data = {
             "name": machine_data["name"],
             "type": machine_data.get("type", "classic"),
-            "endpoint": machine_data.get("endpoint", "http://127.0.0.1:8188"),
-            "auth_token": machine_data.get("auth_token"),
-            "snapshot": machine_data.get("snapshot"),
-            "models": machine_data.get("models"),
-            "dependencies": machine_data.get("dependencies"),
-            "object_info": machine_data.get("object_info"),
-            "extensions": machine_data.get("extensions"),
-            "ws_timeout": machine_data.get("ws_timeout", 2),
-            "legacy_mode": machine_data.get("legacy_mode", False),
-            "allow_background_volume_commits": machine_data.get("allow_background_volume_commits", False),
-            "gpu_workspace": machine_data.get("gpu_workspace", False),
-            "retrieve_static_assets": machine_data.get("retrieve_static_assets", False),
-            "is_workspace": machine_data.get("is_workspace", False),
-            "optimized_runner": machine_data.get("optimized_runner", False),
+            "endpoint": (
+                "not-ready"
+                if machine_data.get("type") == "comfy-deploy-serverless"
+                else "http://127.0.0.1:8188"
+            ),
             "gpu": environment.get("gpu") or machine_data.get("gpu"),
             "user_id": request.state.current_user["user_id"],
             "org_id": request.state.current_user.get("org_id"),
