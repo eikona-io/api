@@ -23,6 +23,7 @@ from api.modal.builder import (
 )
 from api.routes.volumes import retrieve_model_volumes
 from api.utils.docker import (
+    DepsBody,
     DockerCommandResponse,
     generate_all_docker_commands,
     comfyui_hash,
@@ -2358,6 +2359,9 @@ async def import_machine(
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        # Ensure we always have a reference for later checks
+        machine_version = None
+
         required_fields = ["name", "type"]
         for field in required_fields:
             if field not in machine_data:
@@ -2380,7 +2384,10 @@ async def import_machine(
         
         environment = machine_data.get("environment", {})
         
+        comfyui_version = environment.get("comfyui_version") or machine_data.get("comfyui_version")
+        
         machine_create_data = {
+            "id": uuid.uuid4(),
             "name": machine_data["name"],
             "type": machine_data.get("type", "classic"),
             "endpoint": (
@@ -2388,38 +2395,50 @@ async def import_machine(
                 if machine_data.get("type") == "comfy-deploy-serverless"
                 else "http://127.0.0.1:8188"
             ),
-            "gpu": environment.get("gpu") or machine_data.get("gpu"),
             "user_id": request.state.current_user["user_id"],
             "org_id": request.state.current_user.get("org_id"),
+            "created_at": func.now(),
+            "updated_at": func.now(),
         }
         
-        new_machine = Machine(**machine_create_data)
+        shared_machine_data = {
+            "comfyui_version": comfyui_version,
+            "docker_command_steps": environment.get("docker_command_steps") or machine_data.get("docker_command_steps"),
+            "concurrency_limit": environment.get("max_containers") or machine_data.get("concurrency_limit", 2),
+            "install_custom_node_with_gpu": environment.get("install_custom_node_with_gpu") or machine_data.get("install_custom_node_with_gpu", False),
+            "run_timeout": environment.get("run_timeout") or machine_data.get("run_timeout", 300),
+            "idle_timeout": environment.get("scaledown_window") or machine_data.get("idle_timeout", 60),
+            "extra_docker_commands": environment.get("extra_docker_commands") or machine_data.get("extra_docker_commands"),
+            "allow_concurrent_inputs": environment.get("allow_concurrent_inputs") or machine_data.get("allow_concurrent_inputs", 1),
+            "machine_builder_version": environment.get("machine_builder_version") or machine_data.get("machine_builder_version", "4"),
+            "keep_warm": environment.get("min_containers") or machine_data.get("keep_warm", 0),
+            "base_docker_image": environment.get("base_docker_image") or machine_data.get("base_docker_image"),
+            "python_version": environment.get("python_version") or machine_data.get("python_version", "3.11"),
+            "extra_args": environment.get("extra_args") or machine_data.get("extra_args"),
+            "prestart_command": environment.get("prestart_command") or machine_data.get("prestart_command"),
+            "disable_metadata": environment.get("disable_metadata") or machine_data.get("disable_metadata", True),
+            "gpu": environment.get("gpu") or machine_data.get("gpu"),
+        }
+        
+        new_machine = Machine(**machine_create_data, **shared_machine_data)
         db.add(new_machine)
         await db.flush()
         
         if machine_data.get("type") == "comfy-deploy-serverless":
-            comfyui_version = environment.get("comfyui_version") or machine_data.get("comfyui_version")
-            
             if comfyui_version:
                 version_data = {
+                    "id": uuid.uuid4(),
                     "machine_id": new_machine.id,
                     "version": 1,
                     "user_id": request.state.current_user["user_id"],
-                    "comfyui_version": comfyui_version,
-                    "docker_command_steps": environment.get("docker_command_steps") or machine_data.get("docker_command_steps"),
-                    "concurrency_limit": environment.get("max_containers") or machine_data.get("concurrency_limit", 2),
-                    "install_custom_node_with_gpu": environment.get("install_custom_node_with_gpu") or machine_data.get("install_custom_node_with_gpu", False),
-                    "run_timeout": environment.get("run_timeout") or machine_data.get("run_timeout", 300),
-                    "idle_timeout": environment.get("scaledown_window") or machine_data.get("idle_timeout", 60),
-                    "extra_docker_commands": environment.get("extra_docker_commands") or machine_data.get("extra_docker_commands"),
-                    "allow_concurrent_inputs": environment.get("allow_concurrent_inputs") or machine_data.get("allow_concurrent_inputs", 1),
-                    "machine_builder_version": environment.get("machine_builder_version") or machine_data.get("machine_builder_version", "4"),
-                    "keep_warm": environment.get("min_containers") or machine_data.get("keep_warm", 0),
-                    "base_docker_image": environment.get("base_docker_image") or machine_data.get("base_docker_image"),
-                    "python_version": environment.get("python_version") or machine_data.get("python_version", "3.11"),
-                    "extra_args": environment.get("extra_args") or machine_data.get("extra_args"),
-                    "prestart_command": environment.get("prestart_command") or machine_data.get("prestart_command"),
-                    "disable_metadata": environment.get("disable_metadata") or machine_data.get("disable_metadata", True),
+
+                    # Required timestamp columns
+                    "created_at": func.now(),
+                    "updated_at": func.now(),
+                    # Ensure status column has a value
+                    "status": "ready",
+                    
+                    **shared_machine_data,
                 }
                 
                 machine_version = MachineVersion(**version_data)
@@ -2433,7 +2452,14 @@ async def import_machine(
         if new_machine.type == "comfy-deploy-serverless" and machine_version:
             current_endpoint = str(request.base_url).rstrip("/")
             volumes = await retrieve_model_volumes(request, db)
-            docker_commands = generate_all_docker_commands(new_machine)
+            # Build DepsBody for docker command generation
+            deps_body = DepsBody(
+                docker_command_steps=environment.get("docker_command_steps") or machine_data.get("docker_command_steps"),
+                comfyui_version=comfyui_version,
+                extra_docker_commands=environment.get("extra_docker_commands") or machine_data.get("extra_docker_commands"),
+            )
+
+            docker_commands = generate_all_docker_commands(deps_body)
             machine_token = generate_machine_token(request.state.current_user["user_id"], request.state.current_user.get("org_id"))
             secrets = await get_machine_secrets(db=db, machine_id=new_machine.id)
             
