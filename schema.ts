@@ -757,6 +757,43 @@ export const deploymentsRelations = relations(deploymentsTable, ({ one }) => ({
     }),
 }));
 
+export const sharedWorkflowsTable = dbSchema.table("shared_workflows", {
+    id: uuid("id").primaryKey().defaultRandom().notNull(),
+    user_id: text("user_id").references(() => usersTable.id, {
+        onDelete: "cascade",
+    }).notNull(),
+    org_id: text("org_id"),
+    workflow_id: uuid("workflow_id").references(() => workflowTable.id, {
+        onDelete: "cascade",
+    }).notNull(),
+    workflow_version_id: uuid("workflow_version_id").references(() => workflowVersionTable.id),
+    workflow_export: jsonb("workflow_export").$type<any>().notNull(),
+    share_slug: text("share_slug").notNull().unique(),
+    title: text("title").notNull(),
+    description: text("description"),
+    cover_image: text("cover_image"),
+    is_public: boolean("is_public").default(true).notNull(),
+    view_count: integer("view_count").default(0).notNull(),
+    download_count: integer("download_count").default(0).notNull(),
+    created_at: timestamp("created_at").defaultNow().notNull(),
+    updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const sharedWorkflowsRelations = relations(sharedWorkflowsTable, ({ one }) => ({
+    workflow: one(workflowTable, {
+        fields: [sharedWorkflowsTable.workflow_id],
+        references: [workflowTable.id],
+    }),
+    workflow_version: one(workflowVersionTable, {
+        fields: [sharedWorkflowsTable.workflow_version_id],
+        references: [workflowVersionTable.id],
+    }),
+    user: one(usersTable, {
+        fields: [sharedWorkflowsTable.user_id],
+        references: [usersTable.id],
+    }),
+}));
+
 export const scopes = z.array(z.string());
 
 export const apiKeyTokenType = pgEnum("api_key_token_type", ["user", "machine", "scoped"]);
@@ -1168,3 +1205,4 @@ export type SubscriptionStatusType = InferSelectModel<
 >;
 export type GpuEventType = InferSelectModel<typeof gpuEvents>;
 export type MachineVersionType = InferSelectModel<typeof machineVersionsTable>;
+export type SharedWorkflowType = InferSelectModel<typeof sharedWorkflowsTable>;

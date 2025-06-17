@@ -22,7 +22,7 @@ COMMON_CLS_CONFIG = {
     "image": generate_modal_image(dependencies=COMFY_DEPENDENCIES),
     "gpu": "A100",
     "volumes": {
-        "/private_models": modal.Volume.lookup("models_org_2am4LjkQ5IaWGRYMHxGXfHdHcjA")
+        "/private_models": modal.Volume.from_name("models_org_2am4LjkQ5IaWGRYMHxGXfHdHcjA")
     },
 }
 

@@ -333,7 +333,7 @@ async def proxy_to_comfy_org(
                 # Prepare response headers (exclude some that shouldn't be proxied)
                 response_headers = {}
                 for key, value in response.headers.items():
-                    if key.lower() not in ["connection"]:
+                    if key.lower() not in ["connection", "content-encoding", "content-length"]:
                         response_headers[key] = value
                         
                 logfire.info("Proxied request", extra={"response": response.status_code, "response_headers": response_headers})

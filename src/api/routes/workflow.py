@@ -23,6 +23,9 @@ from .types import (
     WorkflowModel,
     WorkflowRunModel,
     WorkflowVersionModel,
+    SharedWorkflowModel,
+    CreateSharedWorkflowRequest,
+    SharedWorkflowListResponse,
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +49,7 @@ from api.models import (
     WorkflowRunOutput,
     SerializableMixin,
 )
+from api.models import SharedWorkflow
 from api.database import get_db
 import logging
 from typing import Any, Dict, List, Optional
@@ -1124,4 +1128,425 @@ async def get_workflow_export(
             base_workflow[key] = str(value)
 
     return JSONResponse(content=serialize_row(base_workflow))
+
+
+@router.post("/workflow/{workflow_id}/share")
+async def create_shared_workflow(
+    request: Request,
+    workflow_id: str,
+    share_request: CreateSharedWorkflowRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or update a shared workflow from an existing workflow"""
+    try:
+        user_id = request.state.current_user["user_id"]
+        org_id = request.state.current_user.get("org_id")
+        
+        # Check if shared workflow already exists
+        existing_query = select(SharedWorkflow).where(
+            SharedWorkflow.workflow_id == share_request.workflow_id,
+            SharedWorkflow.user_id == user_id
+        )
+        result = await db.execute(existing_query)
+        existing_shared = result.scalar_one_or_none()
+        
+        export_data = await get_workflow_export_data(request, workflow_id, share_request.workflow_version_id, db)
+        
+        if existing_shared:
+            # Update existing shared workflow
+            existing_shared.title = share_request.title
+            existing_shared.description = share_request.description
+            existing_shared.cover_image = share_request.cover_image
+            existing_shared.workflow_export = export_data
+            existing_shared.is_public = True  # Always public now
+            existing_shared.updated_at = func.now()
+            
+            await db.commit()
+            await db.refresh(existing_shared)
+            
+            return SharedWorkflowModel.model_validate(existing_shared.to_dict())
+        else:
+            # Create new shared workflow
+            share_slug = await generate_unique_share_slug(share_request.title, db)
+            
+            shared_workflow = SharedWorkflow(
+                user_id=user_id,
+                org_id=org_id,
+                workflow_id=share_request.workflow_id,
+                workflow_version_id=share_request.workflow_version_id,
+                workflow_export=export_data,
+                share_slug=share_slug,
+                title=share_request.title,
+                description=share_request.description,
+                cover_image=share_request.cover_image,
+                is_public=True,  # Always public now
+            )
+            
+            db.add(shared_workflow)
+            await db.commit()
+            await db.refresh(shared_workflow)
+            
+            return SharedWorkflowModel.model_validate(shared_workflow.to_dict())
+        
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Error creating shared workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create shared workflow: {str(e)}")
+
+
+@router.get("/shared-workflows")
+async def list_shared_workflows(
+    request: Request,
+    limit: int = 20,
+    offset: int = 0,
+    user_id: str = None,
+    search: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """List shared workflows with pagination and filtering"""
+    try:
+        # Build the query
+        query = select(SharedWorkflow).where(SharedWorkflow.is_public == True)
+        
+        # Add user filter if specified
+        if user_id:
+            query = query.where(SharedWorkflow.user_id == user_id)
+        
+        # Add search filter if specified
+        if search:
+            query = query.where(SharedWorkflow.title.ilike(f"%{search}%"))
+        
+        query = query.order_by(SharedWorkflow.created_at.desc()).limit(limit).offset(offset)
+        
+        result = await db.execute(query)
+        shared_workflows = result.scalars().all()
+        
+        count_query = select(func.count()).select_from(SharedWorkflow).where(SharedWorkflow.is_public == True)
+        if user_id:
+            count_query = count_query.where(SharedWorkflow.user_id == user_id)
+        if search:
+            count_query = count_query.where(SharedWorkflow.title.ilike(f"%{search}%"))
+        
+        count_result = await db.execute(count_query)
+        total = count_result.scalar()
+        
+        # Convert to models
+        shared_workflow_models = [
+            SharedWorkflowModel.model_validate(workflow.to_dict())
+            for workflow in shared_workflows
+        ]
+        
+        return SharedWorkflowListResponse(
+            shared_workflows=shared_workflow_models,
+            total=total
+        )
+        
+    except Exception as e:
+        logging.error(f"Error listing shared workflows: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list shared workflows: {str(e)}")
+
+
+@router.get("/shared-workflows/{share_slug}")
+async def get_shared_workflow(
+    share_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific shared workflow by share slug (without incrementing view count)"""
+    try:
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.share_slug == share_slug,
+            SharedWorkflow.is_public == True
+        )
+        
+        result = await db.execute(query)
+        shared_workflow = result.scalar_one_or_none()
+        
+        if not shared_workflow:
+            raise HTTPException(status_code=404, detail="Shared workflow not found")
+        
+        # Don't increment view count here - use separate endpoint for that
+        data = shared_workflow.to_dict()
+        
+        return SharedWorkflowModel.model_validate(data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting shared workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get shared workflow: {str(e)}")
+
+
+@router.post("/shared-workflows/{share_slug}/view")
+async def increment_shared_workflow_view(
+    share_slug: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Increment view count for a shared workflow"""
+    try:
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.share_slug == share_slug,
+            SharedWorkflow.is_public == True
+        )
+        
+        result = await db.execute(query)
+        shared_workflow = result.scalar_one_or_none()
+        
+        if not shared_workflow:
+            raise HTTPException(status_code=404, detail="Shared workflow not found")
+        
+        # Get client IP for potential deduplication (optional enhancement)
+        client_ip = request.client.host if request.client else "unknown"
+        
+        shared_workflow.view_count += 1
+        await db.commit()
+        
+        return {"success": True, "view_count": shared_workflow.view_count}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error incrementing view count: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to increment view count: {str(e)}")
+
+
+@router.get("/shared-workflows/{share_slug}/download")
+async def download_shared_workflow(
+    share_slug: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the workflow JSON for a shared workflow"""
+    try:
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.share_slug == share_slug,
+            SharedWorkflow.is_public == True
+        )
+        
+        result = await db.execute(query)
+        shared_workflow = result.scalar_one_or_none()
+        
+        if not shared_workflow:
+            raise HTTPException(status_code=404, detail="Shared workflow not found")
+        
+        shared_workflow.download_count += 1
+        await db.commit()
+        
+        return JSONResponse(
+            content=serialize_row(shared_workflow.workflow_export),
+            headers={
+                "Content-Disposition": f"attachment; filename={shared_workflow.title.replace(' ', '_')}.json"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error downloading shared workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to download shared workflow: {str(e)}")
+
+
+@router.get("/workflow/{workflow_id}/shared-status")
+async def get_workflow_shared_status(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the shared workflow status for a specific workflow"""
+    try:
+        # First verify the user has access to this workflow
+        workflow_query = (
+            select(Workflow)
+            .where(Workflow.id == workflow_id)
+            .where(Workflow.deleted == False)
+            .apply_org_check(request)
+        )
+        
+        result = await db.execute(workflow_query)
+        workflow = result.scalar_one_or_none()
+        
+        if not workflow:
+            raise HTTPException(status_code=404, detail="Workflow not found or you don't have access to it")
+        
+        # Get shared workflow records for this workflow
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.workflow_id == workflow_id
+        ).order_by(SharedWorkflow.created_at.desc())
+        
+        result = await db.execute(query)
+        shared_workflows = result.scalars().all()
+        
+        # Convert to models and return
+        shared_workflow_models = [
+            SharedWorkflowModel.model_validate(workflow.to_dict())
+            for workflow in shared_workflows
+        ]
+        
+        return {
+            "shared_workflows": shared_workflow_models,
+            "total": len(shared_workflow_models)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting workflow shared status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get workflow shared status: {str(e)}")
+
+
+@router.delete("/workflow/{workflow_id}/share")
+async def delete_shared_workflow(
+    request: Request,
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete/unpublish a shared workflow"""
+    try:
+        user_id = request.state.current_user["user_id"]
+        
+        # Find all shared workflows for this workflow and user (in case of duplicates)
+        query = select(SharedWorkflow).where(
+            SharedWorkflow.workflow_id == workflow_id,
+            SharedWorkflow.user_id == user_id
+        )
+        
+        result = await db.execute(query)
+        shared_workflows = result.scalars().all()
+        
+        if not shared_workflows:
+            raise HTTPException(status_code=404, detail="Shared workflow not found")
+        
+        # Delete all shared workflows for this workflow (handles duplicates)
+        deleted_count = 0
+        for shared_workflow in shared_workflows:
+            await db.delete(shared_workflow)
+            deleted_count += 1
+        
+        await db.commit()
+        
+        return {
+            "message": f"Shared workflow deleted successfully ({deleted_count} record(s) removed)"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Error deleting shared workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete shared workflow: {str(e)}")
+
+
+async def get_workflow_export_data(request: Request, workflow_id: str, version_id: UUID = None, db: AsyncSession = None):
+    """Helper function to get workflow export data (reused from get_workflow_export)"""
+    # First get the workflow version
+    version_query = select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow_id)
+    
+    if version_id is not None:
+        version_query = version_query.where(WorkflowVersion.id == version_id)
+    else:
+        version_query = version_query.order_by(WorkflowVersion.created_at.desc()).limit(1)
+    
+    version_query = version_query.join(Workflow).where(
+        Workflow.deleted == False,
+        Workflow.id == workflow_id
+    ).apply_org_check_by_type(Workflow, request)
+
+    result = await db.execute(version_query)
+    workflow_version = result.scalar_one_or_none()
+    
+    if not workflow_version:
+        raise HTTPException(
+            status_code=404,
+            detail="Workflow not found or you don't have access to it"
+        )
+
+    # Get machine data
+    machine_data = None
+    if workflow_version.machine_id:
+        # First try to get the specific machine version if specified
+        if workflow_version.machine_version_id:
+            machine_query = (
+                select(MachineVersion)
+                .where(MachineVersion.id == workflow_version.machine_version_id)
+                .where(MachineVersion.machine_id == workflow_version.machine_id)
+            )
+        else:
+            # Get the latest machine version
+            machine_query = (
+                select(MachineVersion)
+                .where(MachineVersion.machine_id == workflow_version.machine_id)
+                .order_by(MachineVersion.created_at.desc())
+                .limit(1)
+            )
+        
+        result = await db.execute(machine_query)
+        machine_data = result.scalar_one_or_none()
+
+    if workflow_version.machine_id:
+        default_machine_query = select(Machine).where(Machine.id == workflow_version.machine_id)
+        result = await db.execute(default_machine_query)
+        default_machine_data = result.scalar_one_or_none()
+
+    # If no machine version found, get the base machine data
+    if not machine_data and workflow_version.machine_id:
+        machine_data = default_machine_data.to_dict()
+
+    # Get the base workflow data
+    base_workflow = workflow_version.workflow or {}
+
+    # Create the environment object from machine data
+    environment = {}
+    if machine_data:
+        environment = {
+            "comfyui_version": machine_data.comfyui_version,
+            "gpu": default_machine_data.gpu,
+            "docker_command_steps": machine_data.docker_command_steps,
+            "max_containers": machine_data.concurrency_limit,
+            "install_custom_node_with_gpu": machine_data.install_custom_node_with_gpu,
+            "run_timeout": machine_data.run_timeout,
+            "scaledown_window": machine_data.idle_timeout,
+            "extra_docker_commands": machine_data.extra_docker_commands,
+            "base_docker_image": machine_data.base_docker_image,
+            "python_version": machine_data.python_version,
+            "extra_args": machine_data.extra_args,
+            "prestart_command": machine_data.prestart_command,
+            "min_containers": machine_data.keep_warm,
+            "machine_hash": machine_data.machine_hash,
+            "disable_metadata": machine_data.disable_metadata,
+        }
+
+    # Add the new fields to the base workflow
+    base_workflow["workflow_api"] = workflow_version.workflow_api
+    base_workflow["environment"] = environment
+
+    # Convert any remaining UUIDs to strings
+    for key, value in base_workflow.items():
+        if isinstance(value, uuid.UUID):
+            base_workflow[key] = str(value)
+
+    return base_workflow
+
+
+async def generate_unique_share_slug(title: str, db: AsyncSession) -> str:
+    """Generate a unique share slug based on the title"""
+    import re
+    
+    # Create base slug from title
+    base_slug = re.sub(r'[^a-zA-Z0-9\s-]', '', title.lower())
+    base_slug = re.sub(r'\s+', '-', base_slug.strip())
+    base_slug = base_slug[:50]  # Limit length
+    
+    # Check if slug exists and add suffix if needed
+    counter = 0
+    slug = base_slug
+    
+    while True:
+        query = select(SharedWorkflow).where(SharedWorkflow.share_slug == slug)
+        result = await db.execute(query)
+        existing = result.scalar_one_or_none()
+        
+        if not existing:
+            return slug
+        
+        counter += 1
+        slug = f"{base_slug}-{counter}"
 

@@ -307,6 +307,17 @@ class APIKey(SerializableMixin, Base):
     def is_revoked(self):
         return self.revoked
 
+class AuthRequest(SerializableMixin, Base):
+    __tablename__ = "auth_requests"
+    metadata = metadata
+    
+    request_id = Column(String, primary_key=True)
+    user_id = Column(String, nullable=True)
+    org_id = Column(String, nullable=True)
+    api_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+    expired_date = Column(DateTime(timezone=True), nullable=True)
 
 class User(SerializableMixin, Base):
     __tablename__ = "users"
@@ -880,3 +891,31 @@ class Asset(SerializableMixin, Base):
         nullable=False,
     )
     deleted = Column(Boolean, default=False)
+
+
+class SharedWorkflow(SerializableMixin, Base):
+    __tablename__ = "shared_workflows"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    org_id = Column(String)
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+    workflow_version_id = Column(UUID(as_uuid=True), ForeignKey("workflow_versions.id"))
+    workflow_export = Column(JSON, nullable=False)
+    share_slug = Column(String, nullable=False, unique=True)
+    title = Column(String, nullable=False)
+    description = Column(String)
+    cover_image = Column(String)
+    is_public = Column(Boolean, default=True, nullable=False)
+    view_count = Column(Integer, default=0, nullable=False)
+    download_count = Column(Integer, default=0, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
