@@ -897,11 +897,11 @@ class SharedWorkflow(SerializableMixin, Base):
     __tablename__ = "shared_workflows"
     metadata = metadata
 
-    id = Column(String, primary_key=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     org_id = Column(String)
-    workflow_id = Column(String, ForeignKey("workflows.id"), nullable=False)
-    workflow_version_id = Column(String, ForeignKey("workflow_versions.id"))
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=False)
+    workflow_version_id = Column(UUID(as_uuid=True), ForeignKey("workflow_versions.id"))
     workflow_export = Column(JSON, nullable=False)
     share_slug = Column(String, nullable=False, unique=True)
     title = Column(String, nullable=False)
