@@ -1249,9 +1249,10 @@ async def get_shared_workflow(
             raise HTTPException(status_code=404, detail="Shared workflow not found")
         
         shared_workflow.view_count += 1
+        data = shared_workflow.to_dict()
         await db.commit()
         
-        return SharedWorkflowModel.model_validate(shared_workflow.to_dict())
+        return SharedWorkflowModel.model_validate(data)
         
     except HTTPException:
         raise
