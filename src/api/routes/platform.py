@@ -1956,7 +1956,7 @@ async def calculate_usage_charges(
 async def get_customer_plan_v2(
     user_or_org_id: str,
 ):
-    logfire.info(f"Fetching fresh data from Autumn for {user_or_org_id}")
+    # logfire.info(f"Fetching fresh data from Autumn for {user_or_org_id}")
     # Fetch raw data from Autumn
     autumn_data = await get_autumn_customer(user_or_org_id)
     if not autumn_data:
