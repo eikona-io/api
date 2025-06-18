@@ -32,6 +32,7 @@ from .share import create_dub_link, get_dub_link, update_dub_link
 from sqlalchemy import func
 import asyncio
 from nanoid import generate
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -778,4 +779,320 @@ async def delete_deployment(
 
     except Exception as e:
         logger.error(f"Error deleting deployment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# === Helper: build v0 UI spec ==================================================
+
+def _slugify_simple(text: str) -> str:
+    """Simple slugify helper (keeps lower-case ascii, replaces others with -)"""
+    text = re.sub(r"[^a-zA-Z0-9\-\_]+", "-", text)
+    return re.sub(r"-{2,}", "-", text).strip("-").lower()
+
+import os
+CURRENT_API_URL = os.getenv("CURRENT_API_URL")
+
+
+def _generate_component_code(inputs: List[dict]) -> tuple[str, List[str]]:
+    """Create a minimal ShadCN/New-York page component string for the given inputs.
+    Returns (component_source, registry_dependencies)."""
+
+    control_snippets: List[str] = []
+    deps: set[str] = {"input", "label", "button"}
+
+    for inp in inputs:
+        label = inp.get("display_name") or inp.get("input_id") or inp.get("class_type")
+        field_name = inp.get("input_id") or _slugify_simple(label)
+        input_type = inp.get("type")
+        default_value = inp.get("default_value")
+
+        if input_type in {"float", "integer"}:
+            dv_raw = default_value if default_value is not None else ""
+            dv = str(dv_raw)
+            snippet = (
+                f'<div className="flex flex-col gap-2">\n'
+                f'  <Label htmlFor="{field_name}">{label}</Label>\n'
+                f'  <Input type="number" id="{field_name}" name="{field_name}" defaultValue="{dv}" />\n'
+                f'</div>'
+            )
+        elif input_type == "boolean":
+            deps.add("checkbox")
+            checked_value = str(default_value).lower() if default_value is not None else "false"
+            checkbox_line = (
+                f'  <Checkbox id="{field_name}" name="{field_name}" defaultChecked={{' + checked_value + '}} />\n'
+            )
+            snippet = (
+                '<div className="flex items-center gap-2">\n'
+                + checkbox_line
+                + f'  <Label htmlFor="{field_name}">{label}</Label>\n'
+                + '</div>'
+            )
+        elif inp.get("enum_values"):
+            # Enumerated string options -> Select component
+            deps.update({"select"})
+            options = inp["enum_values"] or []
+            options_code = "\n".join(
+                [f'        <SelectItem value="{opt}">{opt}</SelectItem>' for opt in options]
+            )
+            dv = default_value if default_value is not None else (options[0] if options else "")
+            snippet = (
+                f'<div className="flex flex-col gap-2">\n'
+                f'  <Label htmlFor="{field_name}">{label}</Label>\n'
+                f'  <Select defaultValue="{dv}" name="{field_name}">\n'
+                f'    <SelectTrigger>{label}</SelectTrigger>\n'
+                f'    <SelectContent>\n'
+                f'{options_code}\n'
+                f'    </SelectContent>\n'
+                f'  </Select>\n'
+                f'</div>'
+            )
+        else:
+            # Default to text input
+            dv_raw = default_value if default_value is not None else ""
+            dv = str(dv_raw).replace('"', '\\"')
+            snippet = (
+                f'<div className="flex flex-col gap-2">\n'
+                f'  <Label htmlFor="{field_name}">{label}</Label>\n'
+                f'  <Input id="{field_name}" name="{field_name}" placeholder="{label}" defaultValue="{dv}" />\n'
+                f'</div>'
+            )
+
+        control_snippets.append(snippet)
+
+    controls_code = "\n      ".join(control_snippets)
+
+    # Include card dependency always for layout
+    deps.add("card")
+
+    # Build individual import lines for each component group so that paths match registry files
+    import_lines: List[str] = [
+        'import { Input } from "@/components/ui/input";',
+        'import { Label } from "@/components/ui/label";',
+        'import { Button } from "@/components/ui/button";',
+        'import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card";',
+    ]
+    if "checkbox" in deps:
+        import_lines.append('import { Checkbox } from "@/components/ui/checkbox";')
+    if "select" in deps:
+        import_lines.append('import { Select, SelectTrigger, SelectContent, SelectItem } from "@/components/ui/select";')
+
+    imports = "\n".join(import_lines)
+
+    component_code = (
+        '"use client";\n\n'
+        'import React from "react";\n'
+        'import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";\n'
+        f'{imports}\n\n'
+        'const queryClient = new QueryClient();\\n\\n'
+        'function WorkflowForm() {\\n'
+        '  const [runId, setRunId] = React.useState(null);\\n'
+        '  const [imageUrl, setImageUrl] = React.useState(null);\\n'
+        '  const [runData, setRunData] = React.useState(null);\\n\\n'
+        '  const generateMutation = useMutation({\\n'
+        '    mutationFn: async (inputs) => {\\n'
+        '      const res = await fetch("/api/generate", {\\n'
+        '        method: "POST",\\n'
+        '        headers: { "Content-Type": "application/json" },\\n'
+        '        body: JSON.stringify(inputs),\\n'
+        '      });\\n'
+        '      return res.json();\\n'
+        '    },\\n'
+        '    onSuccess: (data) => {\\n'
+        '      if (data?.run_id) setRunId(data.run_id);\\n'
+        '    },\\n'
+        '  });\\n\\n'
+        '  useQuery({\\n'
+        '    queryKey: ["run", runId],\n'
+        '    queryFn: async () => {\n'
+        '      const res = await fetch(`/api/poll?runId=${runId}`);\n'
+        '      return res.json();\n'
+        '    },\n'
+        '    enabled: !!runId,\n'
+        '    refetchInterval: (data) => {\n'
+        '      return data?.status === "success" ? false : 2000;\n'
+        '    },\n'
+        '    onSuccess: (data) => {\n'
+        '      setRunData(data);\\n'
+        '      if (data?.status === "success") {\\n'
+        '        const out = data.outputs?.[0];\\n'
+        '        if (out?.url) setImageUrl(out.url);\\n'
+        '      }\\n'
+        '    },\\n'
+        '  });\\n\\n'
+        '  const handleSubmit = (e) => {\n'
+        '    e.preventDefault();\n'
+        '    const formData = new FormData(e.currentTarget);\n'
+        '    const inputs = Object.fromEntries(formData.entries());\n'
+        '    generateMutation.mutate(inputs);\n'
+        '  };\n'
+        '  return (\n'
+        '    <div className="flex min-h-screen items-center justify-center bg-background px-4">\n'
+        '      <Card className="w-full max-w-xl border shadow-sm">\n'
+        '        <CardHeader>\n'
+        '          <CardTitle className="text-2xl">ComfyDeploy Workflow</CardTitle>\n'
+        '        </CardHeader>\n'
+        '        <CardContent>\n'
+        '          <form className="flex flex-col gap-4" onSubmit={handleSubmit}>\n'
+        f'            {controls_code}\n'
+        '            <div className="flex justify-end">\n'
+        '              <Button type="submit" size="sm" disabled={generateMutation.isPending}>\n'
+        '                {generateMutation.isPending ? "Running..." : "Run"}\n'
+        '              </Button>\n'
+        '            </div>\n'
+        '          </form>\n'
+        '          {imageUrl && (\n'
+        '            <div className="mt-6 flex justify-center">\n'
+        '              <img src={imageUrl} alt="output" className="max-w-full rounded-md border shadow-sm" />\n'
+        '            </div>\n'
+        '          )}\n'
+        '          {runData && (\n'
+        '            <pre className="mt-6 w-full overflow-x-auto rounded bg-muted p-4 text-xs">\n'
+        '              {JSON.stringify(runData, null, 2)}\n'
+        '            </pre>\n'
+        '          )}\n'
+        '        </CardContent>\n'
+        '      </Card>\n'
+        '    </div>\n'
+        '  );\n'
+        '}\\n\\n'
+        'export default function Page() {\n'
+        '  return (\n'
+        '    <QueryClientProvider client={queryClient}>\n'
+        '      <WorkflowForm />\n'
+        '    </QueryClientProvider>\n'
+        '  );\n'
+        '}\n'
+    )
+    # Replace escaped newlines with actual newline characters
+    component_code = component_code.replace('\\n', '\n')
+    return component_code, sorted(deps)
+
+
+# === Route: Generate v0 UI spec ===============================================
+
+@router.get(
+    "/deployment/{deployment_id}/v0-ui-spec",
+    openapi_extra={"x-speakeasy-name-override": "getV0UiSpec"},
+)
+async def get_deployment_v0_ui_spec(
+    request: Request,
+    deployment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a Vercel v0 compatible registry JSON describing a simple UI for the deployment."""
+    try:
+        # Re-use the same logic from get_deployment to fetch deployment & inputs
+        deployment_query = (
+            select(Deployment)
+            .options(
+                joinedload(Deployment.workflow).load_only(Workflow.name),
+                joinedload(Deployment.version),
+            )
+            .join(Workflow)
+            .where(
+                Deployment.id == deployment_id,
+                Workflow.deleted == False,
+            )
+            .apply_org_check(request)
+        )
+
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+
+        workflow_api = deployment.version.workflow_api if deployment.version else None
+        inputs = get_inputs_from_workflow_api(workflow_api) or []
+
+        # Build component code
+        component_code, deps = _generate_component_code(inputs)
+
+        # Build registry spec
+        workflow_name = deployment.workflow.name if deployment.workflow else "deployment"
+        slug_name = _slugify_simple(workflow_name)
+        block_name = f"workflow-{slug_name}"
+
+        # --- server action/route examples ---
+        api_base = CURRENT_API_URL + "/api"
+
+        generate_route = (
+            f"""import {{ NextRequest, NextResponse }} from 'next/server'
+
+export async function POST(req: NextRequest) {{
+  // Inputs sent from the client form
+  const inputs = await req.json();
+
+  const res = await fetch('{api_base}/run/deployment/queue', {{
+    method: 'POST',
+    headers: {{
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${{process.env.COMFY_API_KEY ?? ''}}`,
+    }},
+    body: JSON.stringify({{
+      deployment_id: '{deployment_id}',
+      inputs: inputs,
+    }}),
+  }});
+
+  const data = await res.json();
+  return NextResponse.json(data);
+}}
+"""
+        )
+
+        poll_route = (
+            f"""import {{ NextRequest, NextResponse }} from 'next/server'
+
+export async function GET(req: NextRequest) {{
+  const {{ searchParams }} = new URL(req.url)
+  const runId = searchParams.get('runId')
+
+  const res = await fetch('{api_base}/run/' + runId, {{
+    headers: {{
+      Authorization: `Bearer ${{process.env.COMFY_API_KEY ?? ''}}`,
+    }},
+  }})
+
+  const data = await res.json()
+  return NextResponse.json(data)
+}}
+"""
+        )
+
+        spec = {
+            "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+            "name": block_name,
+            "type": "registry:block",
+            "author": "comfydeploy",
+            "description": f"Autogenerated UI for deployment {deployment_id}",
+            "registryDependencies": deps,
+            "files": [
+                {
+                    "path": f"blocks/{block_name}/page.tsx",
+                    "content": component_code,
+                    "type": "registry:page",
+                    "target": "app/page.tsx",
+                },
+                {
+                    "path": "blocks/common/api_generate_route.ts",
+                    "content": generate_route,
+                    "type": "registry:component",
+                    "target": "app/api/generate/route.ts",
+                },
+                {
+                    "path": "blocks/common/api_poll_route.ts",
+                    "content": poll_route,
+                    "type": "registry:component",
+                    "target": "app/api/poll/route.ts",
+                },
+            ],
+            "categories": ["workflow", "form"],
+        }
+
+        return spec
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating v0 UI spec: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
