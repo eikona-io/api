@@ -223,7 +223,10 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-logfire.instrument_fastapi(app)
+logfire.instrument_fastapi(
+    app,
+    excluded_urls=r".*/api/update-run$"
+)
 logfire.instrument_sqlalchemy(
     engine=engine.sync_engine,
 )
