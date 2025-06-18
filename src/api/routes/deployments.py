@@ -875,96 +875,136 @@ def _generate_component_code(inputs: List[dict]) -> tuple[str, List[str]]:
         import_lines.append('import { Checkbox } from "@/components/ui/checkbox";')
     if "select" in deps:
         import_lines.append('import { Select, SelectTrigger, SelectContent, SelectItem } from "@/components/ui/select";')
+    import_lines.append('import { Loader2, CheckCircle, XCircle, Hourglass } from "lucide-react";')
 
     imports = "\n".join(import_lines)
 
+    # Build the component in a single triple-quoted template and replace tokens
+    component_template = """
+"use client";
+
+import React from "react";
+import {{ QueryClient, QueryClientProvider, useMutation, useQuery }} from "@tanstack/react-query";
+__IMPORTS__
+
+const queryClient = new QueryClient();
+
+function WorkflowForm() {{
+  const [runId, setRunId] = React.useState<string | null>(null);
+  const [imageUrl, setImageUrl] = React.useState<string | null>(null);
+
+  const generateMutation = useMutation({{
+    mutationFn: async (inputs: Record<string, unknown>) => {{
+      const res = await fetch("/api/generate", {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify(inputs)
+      }});
+      return res.json();
+    }},
+    onSuccess: (data: any) => {{
+      if (data?.run_id) {{
+        // Reset previous state and start polling
+        setRunId(data.run_id);
+        setImageUrl(null);
+      }}
+    }},
+  }});
+
+  const {{ data: runData }} = useQuery({{
+    queryKey: ["run", runId],
+    enabled: !!runId,
+    queryFn: async () => {{
+      if (!runId) return null;
+      const res = await fetch(`/api/poll?runId=${{runId}}`);
+      if (!res.ok) {{
+        // When the run isn't available yet keep polling
+        return {{ status: "queued" }};
+      }}
+      return res.json();
+    }},
+    refetchInterval: (data) => {{
+      if (!data) return 2000;
+      return ["success", "failed", "timeout", "cancelled"].includes(data.status) ? false : 2000;
+    }},
+  }});
+
+  // Update image when the run finishes successfully
+  React.useEffect(() => {{
+    if (runData?.status === "success") {{
+      const out = runData.outputs?.[0];
+      if (out?.url) setImageUrl(out.url);
+    }}
+  }}, [runData]);
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {{
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const inputs = Object.fromEntries(formData.entries());
+    generateMutation.mutate(inputs);
+  }};
+
+  const status = runData?.status as string | undefined;
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-xl border shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-2xl">ComfyDeploy Workflow</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form className="flex flex-col gap-4" onSubmit={{handleSubmit}}>
+            __CONTROLS__
+            <div className="flex justify-end">
+              <Button type="submit" size="sm" disabled={{generateMutation.isPending}}>
+                {{generateMutation.isPending ? "Running..." : "Run"}}
+              </Button>
+            </div>
+          </form>
+
+          {{status && (
+            <div className="mt-6 flex items-center justify-center gap-2 text-sm capitalize">
+              {{status === "queued" && <Hourglass className="h-4 w-4 animate-pulse" />}}
+              {{status === "running" && <Loader2 className="h-4 w-4 animate-spin" />}}
+              {{status === "success" && <CheckCircle className="h-4 w-4 text-green-500" />}}
+              {{status === "failed" && <XCircle className="h-4 w-4 text-red-500" />}}
+              <span>{{status}}</span>
+            </div>
+          )}}
+
+          {{imageUrl && (
+            <div className="mt-6 flex justify-center">
+              <img src={{imageUrl}} alt="output" className="max-w-full rounded-md border shadow-sm" />
+            </div>
+          )}}
+
+          {{runData && (
+            <pre className="mt-6 w-full overflow-x-auto rounded bg-muted p-4 text-xs">
+              {{JSON.stringify(runData, null, 2)}}
+            </pre>
+          )}}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}}
+
+export default function Page() {{
+  return (
+    <QueryClientProvider client={{queryClient}}>
+      <WorkflowForm />
+    </QueryClientProvider>
+  );
+}}
+"""
+
     component_code = (
-        '"use client";\n\n'
-        'import React from "react";\n'
-        'import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";\n'
-        f'{imports}\n\n'
-        'const queryClient = new QueryClient();\\n\\n'
-        'function WorkflowForm() {\\n'
-        '  const [runId, setRunId] = React.useState(null);\\n'
-        '  const [imageUrl, setImageUrl] = React.useState(null);\\n'
-        '  const [runData, setRunData] = React.useState(null);\\n\\n'
-        '  const generateMutation = useMutation({\\n'
-        '    mutationFn: async (inputs) => {\\n'
-        '      const res = await fetch("/api/generate", {\\n'
-        '        method: "POST",\\n'
-        '        headers: { "Content-Type": "application/json" },\\n'
-        '        body: JSON.stringify(inputs),\\n'
-        '      });\\n'
-        '      return res.json();\\n'
-        '    },\\n'
-        '    onSuccess: (data) => {\\n'
-        '      if (data?.run_id) setRunId(data.run_id);\\n'
-        '    },\\n'
-        '  });\\n\\n'
-        '  useQuery({\\n'
-        '    queryKey: ["run", runId],\n'
-        '    queryFn: async () => {\n'
-        '      const res = await fetch(`/api/poll?runId=${runId}`);\n'
-        '      return res.json();\n'
-        '    },\n'
-        '    enabled: !!runId,\n'
-        '    refetchInterval: (data) => {\n'
-        '      return data?.status === "success" ? false : 2000;\n'
-        '    },\n'
-        '    onSuccess: (data) => {\n'
-        '      setRunData(data);\\n'
-        '      if (data?.status === "success") {\\n'
-        '        const out = data.outputs?.[0];\\n'
-        '        if (out?.url) setImageUrl(out.url);\\n'
-        '      }\\n'
-        '    },\\n'
-        '  });\\n\\n'
-        '  const handleSubmit = (e) => {\n'
-        '    e.preventDefault();\n'
-        '    const formData = new FormData(e.currentTarget);\n'
-        '    const inputs = Object.fromEntries(formData.entries());\n'
-        '    generateMutation.mutate(inputs);\n'
-        '  };\n'
-        '  return (\n'
-        '    <div className="flex min-h-screen items-center justify-center bg-background px-4">\n'
-        '      <Card className="w-full max-w-xl border shadow-sm">\n'
-        '        <CardHeader>\n'
-        '          <CardTitle className="text-2xl">ComfyDeploy Workflow</CardTitle>\n'
-        '        </CardHeader>\n'
-        '        <CardContent>\n'
-        '          <form className="flex flex-col gap-4" onSubmit={handleSubmit}>\n'
-        f'            {controls_code}\n'
-        '            <div className="flex justify-end">\n'
-        '              <Button type="submit" size="sm" disabled={generateMutation.isPending}>\n'
-        '                {generateMutation.isPending ? "Running..." : "Run"}\n'
-        '              </Button>\n'
-        '            </div>\n'
-        '          </form>\n'
-        '          {imageUrl && (\n'
-        '            <div className="mt-6 flex justify-center">\n'
-        '              <img src={imageUrl} alt="output" className="max-w-full rounded-md border shadow-sm" />\n'
-        '            </div>\n'
-        '          )}\n'
-        '          {runData && (\n'
-        '            <pre className="mt-6 w-full overflow-x-auto rounded bg-muted p-4 text-xs">\n'
-        '              {JSON.stringify(runData, null, 2)}\n'
-        '            </pre>\n'
-        '          )}\n'
-        '        </CardContent>\n'
-        '      </Card>\n'
-        '    </div>\n'
-        '  );\n'
-        '}\\n\\n'
-        'export default function Page() {\n'
-        '  return (\n'
-        '    <QueryClientProvider client={queryClient}>\n'
-        '      <WorkflowForm />\n'
-        '    </QueryClientProvider>\n'
-        '  );\n'
-        '}\n'
+        component_template
+        .replace("__IMPORTS__", imports)
+        .replace("__CONTROLS__", controls_code)
     )
-    # Replace escaped newlines with actual newline characters
-    component_code = component_code.replace('\\n', '\n')
+    # Ensure valid TS/JSX syntax by converting doubled braces to single braces
+    component_code = component_code.replace("{{", "{").replace("}}", "}")
     return component_code, sorted(deps)
 
 
@@ -1039,6 +1079,8 @@ export async function POST(req: NextRequest) {{
 }}
 """
         )
+        # Normalize curly braces for valid TypeScript
+        generate_route = generate_route.replace("{{", "{").replace("}}", "}")
 
         poll_route = (
             f"""import {{ NextRequest, NextResponse }} from 'next/server'
@@ -1053,11 +1095,23 @@ export async function GET(req: NextRequest) {{
     }},
   }})
 
-  const data = await res.json()
-  return NextResponse.json(data)
+  const json = await data.json()
+
+  const {{ live_status, status, outputs, progress, queue_position }} = json
+
+  // Now you can use the run_id in your response
+  return NextResponse.json({{
+    live_status,
+    status,
+    outputs,
+    progress,
+    queue_position,
+  }})
 }}
 """
         )
+        # Normalize curly braces for valid TypeScript
+        poll_route = poll_route.replace("{{", "{").replace("}}", "}")
 
         spec = {
             "$schema": "https://ui.shadcn.com/schema/registry-item.json",
