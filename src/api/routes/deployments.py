@@ -911,7 +911,7 @@ function WorkflowForm() {{
     }},
   }});
 
-  const {{ data: runData }} = useQuery({{
+  const {{ data: runData, isLoading: runLoading }} = useQuery({{
     queryKey: ["run", runId],
     enabled: !!runId,
     queryFn: async () => {{
@@ -961,6 +961,13 @@ function WorkflowForm() {{
               </Button>
             </div>
           </form>
+
+          {{runLoading && (
+            <div className="mt-6 flex items-center justify-center gap-2 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Loading...</span>
+            </div>
+          )}}
 
           {{status && (
             <div className="mt-6 flex items-center justify-center gap-2 text-sm capitalize">
@@ -1095,7 +1102,7 @@ export async function GET(req: NextRequest) {{
     }},
   }})
 
-  const json = await data.json()
+  const json = await res.json()
 
   const {{ live_status, status, outputs, progress, queue_position }} = json
 
