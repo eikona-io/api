@@ -430,7 +430,10 @@ async def get_deployments(
         query = (
             select(Deployment)
             .options(
-                joinedload(Deployment.workflow).load_only(Workflow.name),
+                joinedload(Deployment.workflow).load_only(
+                    Workflow.name,
+                    Workflow.cover_image,
+                ),
                 joinedload(Deployment.version),
             )
             .join(Workflow)
@@ -459,6 +462,13 @@ async def get_deployments(
 
         for idx, deployment in enumerate(deployments):
             deployment_dict = deployment.to_dict()
+
+            if deployment_dict.get("workflow"):
+                cover_image = deployment_dict["workflow"].get("cover_image")
+                if cover_image:
+                    deployment_dict["workflow"][
+                        "cover_url"
+                    ] = f"/api/optimize/auto/{cover_image}"
 
             workflow_api = (
                 deployment.version.workflow_api if deployment.version else None
@@ -508,7 +518,10 @@ async def get_share_deployment(
     deployment_query = (
         select(Deployment)
         .options(
-            joinedload(Deployment.workflow).load_only(Workflow.name),
+            joinedload(Deployment.workflow).load_only(
+                Workflow.name,
+                Workflow.cover_image,
+            ),
             joinedload(Deployment.version),
         )
         .join(Workflow)
@@ -532,6 +545,10 @@ async def get_share_deployment(
 
     # Just update the deployment with the additional fields
     deployment_dict = deployment.to_dict()
+    if deployment_dict.get("workflow"):
+        cover_image = deployment_dict["workflow"].get("cover_image")
+        if cover_image:
+            deployment_dict["workflow"]["cover_url"] = f"/api/optimize/auto/{cover_image}"
     deployment_dict["input_types"] = inputs
     deployment_dict["output_types"] = outputs
 
@@ -572,6 +589,11 @@ async def get_featured_deployments(
     deployments_data = []
     for deployment in deployments:
         deployment_dict = deployment.to_dict()
+
+        if deployment_dict.get("workflow"):
+            cover_image = deployment_dict["workflow"].get("cover_image")
+            if cover_image:
+                deployment_dict["workflow"]["cover_url"] = f"/api/optimize/auto/{cover_image}"
 
         if deployment.version and hasattr(deployment.version, "workflow"):
             deployment_dict["workflow"]["workflow"] = deployment.version.workflow
@@ -699,7 +721,10 @@ async def get_deployment(
         deployment_query = (
             select(Deployment)
             .options(
-                joinedload(Deployment.workflow).load_only(Workflow.name),
+                joinedload(Deployment.workflow).load_only(
+                    Workflow.name,
+                    Workflow.cover_image,
+                ),
                 joinedload(Deployment.version),
             )
             .join(Workflow)
@@ -725,6 +750,10 @@ async def get_deployment(
 
         # Convert to dict and add additional fields
         deployment_dict = deployment.to_dict()
+        if deployment_dict.get("workflow"):
+            cover_image = deployment_dict["workflow"].get("cover_image")
+            if cover_image:
+                deployment_dict["workflow"]["cover_url"] = f"/api/optimize/auto/{cover_image}"
         if inputs:
             deployment_dict["input_types"] = inputs
         if outputs:
