@@ -61,7 +61,12 @@ async def build_cover_url(request: Request, db: AsyncSession, cover_image: str) 
     """
     s3_config = await get_s3_config(request, db)
     composed_endpoint = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com"
-    url = f"{composed_endpoint}/{cover_image}"
+
+    # If cover_image is already a full URL just use it directly
+    if cover_image.startswith("http://") or cover_image.startswith("https://"):
+        url = cover_image
+    else:
+        url = f"{composed_endpoint}/{cover_image}"
 
     if not s3_config.public:
         url = get_temporary_download_url(
