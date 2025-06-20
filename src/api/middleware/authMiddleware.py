@@ -29,6 +29,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/share/*",
             "/api/shared-workflows",
             "/api/shared-workflows/*",
+            "/api/user/*",
             "/api/platform/stripe/webhook",
             "/api/platform/comfyui/auth-response",
         ]
