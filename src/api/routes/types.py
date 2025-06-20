@@ -547,6 +547,7 @@ class DeploymentEnvironment(str, Enum):
 class WorkflowWithName(BaseModel):
     id: UUID
     name: str
+    cover_url: Optional[str] = None
     
 class MachineWithName(BaseModel):
     id: UUID
