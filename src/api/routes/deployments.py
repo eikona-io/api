@@ -575,7 +575,7 @@ async def get_share_deployment(
     deployment_dict = deployment.to_dict()
     if deployment_dict.get("workflow"):
         cover_image = deployment_dict["workflow"].get("cover_image")
-        if cover_image:
+        if cover_image and hasattr(request, "state") and hasattr(request.state, "current_user"):
             deployment_dict["workflow"]["cover_url"] = await build_cover_url(
                 request, db, cover_image
             )
