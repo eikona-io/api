@@ -226,431 +226,444 @@ async def update_run(
     db: AsyncSession = Depends(get_db),
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
-    # updated_at = datetime.utcnow()
-    updated_at = dt.datetime.now(dt.UTC)
+    # Use suppress_instrumentation for successful calls
+    try:
+        with logfire.suppress_instrumentation():
+            # updated_at = datetime.utcnow()
+            updated_at = dt.datetime.now(dt.UTC)
 
-    # Ensure request.time is timezone-aware
-    # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
-    fixed_time = updated_at
+            # Ensure request.time is timezone-aware
+            # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
+            fixed_time = updated_at
 
-    if body.ws_event is not None:
-        # print("body.ws_event", body.ws_event)
-        # Get the workflow run
-        # print("body.run_id", body.run_id)
-        # with logfire.span("get_cached_workflow_run"):
-        workflow_run = await get_cached_workflow_run(body.run_id, db)
-        # print("workflow_run", workflow_run)
+            if body.ws_event is not None:
+                # print("body.ws_event", body.ws_event)
+                # Get the workflow run
+                # print("body.run_id", body.run_id)
+                # with logfire.span("get_cached_workflow_run"):
+                workflow_run = await get_cached_workflow_run(body.run_id, db)
+                # print("workflow_run", workflow_run)
 
-        log_data = [
-            (
-                uuid4(),
-                body.run_id,
-                workflow_run.workflow_id,
-                workflow_run.machine_id,
-                updated_at,
-                "ws_event",
-                json.dumps(body.ws_event),
-            )
-        ]
-        # Add ClickHouse insert to background tasks
-        background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-        return {"status": "success"}
+                log_data = [
+                    (
+                        uuid4(),
+                        body.run_id,
+                        workflow_run.workflow_id,
+                        workflow_run.machine_id,
+                        updated_at,
+                        "ws_event",
+                        json.dumps(body.ws_event),
+                    )
+                ]
+                # Add ClickHouse insert to background tasks
+                background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                return {"status": "success"}
 
-    if body.logs is not None:
-        # Get the workflow run
-        workflow_run = await get_cached_workflow_run(body.run_id, db)
+            if body.logs is not None:
+                # Get the workflow run
+                workflow_run = await get_cached_workflow_run(body.run_id, db)
 
-        # if not workflow_run:
-        #     raise HTTPException(status_code=404, detail="WorkflowRun not found")
+                # if not workflow_run:
+                #     raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
-        # Prepare data for ClickHouse insert
-        log_data = []
-        for log_entry in body.logs:
-            data = (
-                uuid4(),
-                body.run_id if body.session_id is None else body.session_id,
-                workflow_run.workflow_id if workflow_run else None,
-                body.machine_id,
-                datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
-                "info",
-                log_entry["logs"],
-            )
-            # print("data", log_entry["logs"])
-            log_data.append(data)
+                # Prepare data for ClickHouse insert
+                log_data = []
+                for log_entry in body.logs:
+                    data = (
+                        uuid4(),
+                        body.run_id if body.session_id is None else body.session_id,
+                        workflow_run.workflow_id if workflow_run else None,
+                        body.machine_id,
+                        datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
+                        "info",
+                        log_entry["logs"],
+                    )
+                    # print("data", log_entry["logs"])
+                    log_data.append(data)
 
-        background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
 
-        return {"status": "success"}
+                return {"status": "success"}
 
-    # Updating the progress
-    if body.live_status is not None and body.progress is not None:
-        # Updating the workflow run table with live_status, progress, and updated_at
-        update_stmt = (
-            update(WorkflowRun)
-            .where(WorkflowRun.id == body.run_id)
-            .values(
-                live_status=body.live_status,
-                progress=body.progress,
-                updated_at=updated_at,
-                gpu_event_id=body.gpu_event_id,
-            )
-            .returning(WorkflowRun)
-        )
-        result = await db.execute(update_stmt)
-        await db.commit()
-
-        workflow_run = result.scalar_one()
-        workflow_run = cast(WorkflowRun, workflow_run)
-        await db.refresh(workflow_run)
-
-        # # Sending a real-time update to connected clients
-        # background_tasks.add_task(
-        #     send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
-        # )
-        # background_tasks.add_task(
-        #     send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
-        # )
-
-        # Sending to clickhouse
-        progress_data = [
-            (
-                workflow_run.user_id,
-                workflow_run.org_id,
-                workflow_run.machine_id,
-                body.gpu_event_id,
-                workflow_run.workflow_id,
-                workflow_run.workflow_version_id,
-                body.run_id,
-                updated_at,
-                "executing",  # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
-                body.progress,
-                body.live_status,
-            )
-        ]
-
-        background_tasks.add_task(
-            insert_to_clickhouse, client, "workflow_events", progress_data
-        )
-
-        if (
-            workflow_run.webhook is not None
-            and workflow_run.webhook_intermediate_status
-        ):
-            asyncio.create_task(
-                send_webhook(
-                    workflow_run=workflow_run.to_dict(),
-                    updated_at=updated_at,
-                    run_id=workflow_run.id,
-                    client=client,
+            # Updating the progress
+            if body.live_status is not None and body.progress is not None:
+                # Updating the workflow run table with live_status, progress, and updated_at
+                update_stmt = (
+                    update(WorkflowRun)
+                    .where(WorkflowRun.id == body.run_id)
+                    .values(
+                        live_status=body.live_status,
+                        progress=body.progress,
+                        updated_at=updated_at,
+                        gpu_event_id=body.gpu_event_id,
+                    )
+                    .returning(WorkflowRun)
                 )
-            )
-            # background_tasks.add_task(
-            #     send_webhook, workflow_run, updated_at, workflow_run.id
-            # )
+                result = await db.execute(update_stmt)
+                await db.commit()
 
-        return {"status": "success"}
+                workflow_run = result.scalar_one()
+                workflow_run = cast(WorkflowRun, workflow_run)
+                await db.refresh(workflow_run)
 
-    if body.log_data is not None:
-        # Cause all the logs will be sent to clickhouse now.
-        return {"status": "success"}
-        # update_stmt = (
-        #     update(WorkflowRun)
-        #     .where(WorkflowRun.id == request.run_id)
-        #     .values(run_log=request.log_data, updated_at=updated_at)
-        # )
-        # await db.execute(update_stmt)
-        # await db.commit()
-        # return {"status": "success"}
+                # # Sending a real-time update to connected clients
+                # background_tasks.add_task(
+                #     send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
+                # )
+                # background_tasks.add_task(
+                #     send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
+                # )
 
-    if body.status == "started" and fixed_time is not None:
-        update_stmt = (
-            update(WorkflowRun)
-            .where(WorkflowRun.id == body.run_id)
-            .values(started_at=fixed_time, updated_at=updated_at)
-        )
-        await db.execute(update_stmt)
-        await db.commit()
-
-    if body.status == "queued" and fixed_time is not None:
-        # Ensure request.time is UTC-aware
-        update_stmt = (
-            update(WorkflowRun)
-            .where(WorkflowRun.id == body.run_id)
-            .values(queued_at=fixed_time, updated_at=updated_at)
-        )
-        await db.execute(update_stmt)
-        await db.commit()
-        # return {"status": "success"}
-
-    ended = body.status in endStatuses
-    if body.output_data is not None:
-        # Sending to postgres
-        newOutput = WorkflowRunOutput(
-            id=uuid4(),  # Add this line to generate a new UUID for the primary key
-            created_at=updated_at,
-            updated_at=updated_at,
-            run_id=body.run_id,
-            data=body.output_data,
-            node_meta=body.node_meta,
-        )
-        db.add(newOutput)
-        await db.commit()
-        await db.refresh(newOutput)
-
-        existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
-        )
-        workflow_run = existing_run.scalar_one_or_none()
-        workflow_run = cast(WorkflowRun, workflow_run)
-
-        if workflow_run.webhook is not None:
-            try:
-                # Parse the webhook URL and get query parameters
-                parsed_url = urlparse(workflow_run.webhook)
-                query_params = {}
-
-                if parsed_url.query:
-                    # Safely parse query parameters
-                    for param in parsed_url.query.split("&"):
-                        try:
-                            if "=" in param:
-                                key, value = param.split("=", 1)
-                                query_params[key] = value
-                        except Exception:
-                            # Skip malformed query parameters
-                            continue
-
-                # Get target_events from query params and split into list
-                target_events = query_params.get("target_events", "").split(",")
-                target_events = [
-                    event.strip() for event in target_events if event.strip()
+                # Sending to clickhouse
+                progress_data = [
+                    (
+                        workflow_run.user_id,
+                        workflow_run.org_id,
+                        workflow_run.machine_id,
+                        body.gpu_event_id,
+                        workflow_run.workflow_id,
+                        workflow_run.workflow_version_id,
+                        body.run_id,
+                        updated_at,
+                        "executing",  # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
+                        body.progress,
+                        body.live_status,
+                    )
                 ]
 
-                # Send webhook if no target_events specified or if the event type is in target_events
-                if "run.output" in target_events:
-                    workflow_run_data = workflow_run.to_dict()
-                    outputs = clean_up_outputs([newOutput])
-                    if len(outputs) > 0:
-                        workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
-                        asyncio.create_task(
-                            send_webhook(
-                                workflow_run=workflow_run_data,
-                                updated_at=updated_at,
-                                run_id=workflow_run.id,
-                                type="run.output",
-                                client=client,
-                            )
+                background_tasks.add_task(
+                    insert_to_clickhouse, client, "workflow_events", progress_data
+                )
+
+                if (
+                    workflow_run.webhook is not None
+                    and workflow_run.webhook_intermediate_status
+                ):
+                    asyncio.create_task(
+                        send_webhook(
+                            workflow_run=workflow_run.to_dict(),
+                            updated_at=updated_at,
+                            run_id=workflow_run.id,
+                            client=client,
                         )
-                        # logfire.info("No outputs to send", workflow_run_id=workflow_run.id)
-            except Exception as e:
-                # Log the error but don't send webhook
-                logging.error(f"Error processing webhook URL parameters: {str(e)}")
+                    )
+                    # background_tasks.add_task(
+                    #     send_webhook, workflow_run, updated_at, workflow_run.id
+                    # )
 
-        # TODO: Send to upload to clickhouse
-        output_data = [
-            (
-                workflow_run.user_id,
-                workflow_run.org_id,
-                workflow_run.machine_id,
-                body.gpu_event_id,
-                workflow_run.workflow_id,
-                workflow_run.workflow_version_id,
-                body.run_id,
-                updated_at,
-                "output",
-                body.progress if body.progress is not None else -1,
-                json.dumps(body.output_data),
-            )
-        ]
-        background_tasks.add_task(
-            insert_to_clickhouse, client, "workflow_events", output_data
-        )
+                return {"status": "success"}
 
-    elif body.status is not None:
-        # Get existing run
-        existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
-        )
-        workflow_run = existing_run.scalar_one_or_none()
-        workflow_run = cast(WorkflowRun, workflow_run)
+            if body.log_data is not None:
+                # Cause all the logs will be sent to clickhouse now.
+                return {"status": "success"}
+                # update_stmt = (
+                #     update(WorkflowRun)
+                #     .where(WorkflowRun.id == request.run_id)
+                #     .values(run_log=request.log_data, updated_at=updated_at)
+                # )
+                # await db.execute(update_stmt)
+                # await db.commit()
+                # return {"status": "success"}
 
-        if not workflow_run:
-            raise HTTPException(status_code=404, detail="WorkflowRun not found")
-
-        # If the run is already cancelled, don't update it
-        if body.status == "cancelled":
-            return {"status": "success"}
-
-        # If the run is already timed out, don't update it
-        if workflow_run.status == "timeout":
-            return {"status": "success"}
-
-        # Update the run status
-        update_data = {"status": body.status, "updated_at": updated_at}
-        if ended and fixed_time is not None:
-            update_data["ended_at"] = fixed_time
-
-        update_values = {
-            "status": body.status,
-            "ended_at": updated_at if ended else None,
-            "updated_at": updated_at,
-        }
-
-        # Add modal_function_call_id if it's provided and the existing value is empty
-        if body.modal_function_call_id:
-            update_values["modal_function_call_id"] = body.modal_function_call_id
-
-        if body.status == "success":
-            # logfire.info(
-            #     "Workflow run success",
-            #     workflow_run_id=workflow_run.id,
-            #     workflow_id=workflow_run.workflow_id,
-            # )
-            logger.info(
-                "Workflow run success",
-                extra={
-                    "route": "run-status/success",  # Use low-cardinality route path
-                    "full_route": "run-status",
-                    "function_name": "update_run",
-                    "method": "POST",
-                    "status_code": 200,
-                    "user_id": workflow_run.user_id,
-                    "org_id": workflow_run.org_id,
-                    "workflow_run_id": workflow_run.id,
-                    "workflow_id": workflow_run.workflow_id,
-                },
-            )
-        elif body.status == "failed":
-            logfire.error(
-                "Workflow run failed",
-                workflow_run_id=workflow_run.id,
-                workflow_id=workflow_run.workflow_id,
-            )
-            logger.error(
-                "Workflow run failed",
-                extra={
-                    "route": "run-status/failed",  # Use low-cardinality route path
-                    "full_route": "run-status",
-                    "function_name": "update_run",
-                    "method": "POST",
-                    "status_code": 500,
-                    "user_id": workflow_run.user_id,
-                    "org_id": workflow_run.org_id,
-                    "workflow_run_id": workflow_run.id,
-                    "workflow_id": workflow_run.workflow_id,
-                },
-            )
-        elif body.status == "timeout":
-            logfire.error(
-                "Workflow run timeout",
-                workflow_run_id=workflow_run.id,
-                workflow_id=workflow_run.workflow_id,
-            )
-            logger.warning(
-                "Workflow run timeout",
-                extra={
-                    "route": "run-status/timeout",  # Use low-cardinality route path
-                    "full_route": "run-status",
-                    "function_name": "update_run",
-                    "method": "POST",
-                    "user_id": workflow_run.user_id,
-                    "org_id": workflow_run.org_id,
-                    "workflow_run_id": workflow_run.id,
-                    "workflow_id": workflow_run.workflow_id,
-                },
-            )
-        elif body.status == "cancelled":
-            logfire.error(
-                "Workflow run cancelled",
-                workflow_run_id=workflow_run.id,
-                workflow_id=workflow_run.workflow_id,
-            )
-            logger.warning(
-                "Workflow run cancelled",
-                extra={
-                    "route": "run-status/cancelled",  # Use low-cardinality route path
-                    "full_route": "run-status",
-                    "function_name": "update_run",
-                    "method": "POST",
-                    "user_id": workflow_run.user_id,
-                    "org_id": workflow_run.org_id,
-                    "workflow_run_id": workflow_run.id,
-                    "workflow_id": workflow_run.workflow_id,
-                },
-            )
-
-        update_stmt = (
-            update(WorkflowRun)
-            .where(
-                and_(
-                    WorkflowRun.id == body.run_id, ~WorkflowRun.status.in_(endStatuses)
+            if body.status == "started" and fixed_time is not None:
+                update_stmt = (
+                    update(WorkflowRun)
+                    .where(WorkflowRun.id == body.run_id)
+                    .values(started_at=fixed_time, updated_at=updated_at)
                 )
-            )
-            .values(**update_values)
-        )
-        await db.execute(update_stmt)
-        await db.commit()
-        await db.refresh(workflow_run)
+                await db.execute(update_stmt)
+                await db.commit()
 
-        # Get the updated workflow run
-        existing_run = await db.execute(
-            select(WorkflowRun).where(WorkflowRun.id == body.run_id)
-        )
-        workflow_run = existing_run.scalar_one_or_none()
-        workflow_run = cast(WorkflowRun, workflow_run)
+            if body.status == "queued" and fixed_time is not None:
+                # Ensure request.time is UTC-aware
+                update_stmt = (
+                    update(WorkflowRun)
+                    .where(WorkflowRun.id == body.run_id)
+                    .values(queued_at=fixed_time, updated_at=updated_at)
+                )
+                await db.execute(update_stmt)
+                await db.commit()
+                # return {"status": "success"}
 
-        # Sending to clickhouse
-        progress_data = [
-            (
-                workflow_run.user_id,
-                workflow_run.org_id,
-                workflow_run.machine_id,
-                body.gpu_event_id,
-                workflow_run.workflow_id,
-                workflow_run.workflow_version_id,
-                body.run_id,
-                updated_at,
-                body.status,
-                body.progress if body.progress is not None else -1,
-                body.live_status if body.live_status is not None else "",
-            )
-        ]
-        background_tasks.add_task(
-            insert_to_clickhouse, client, "workflow_events", progress_data
-        )
-
-        # Get all outputs for the workflow run
-        outputs_query = select(WorkflowRunOutput).where(
-            WorkflowRunOutput.run_id == body.run_id
-        )
-        outputs_result = await db.execute(outputs_query)
-        outputs = outputs_result.scalars().all()
-
-        user_settings = await get_user_settings(request, db)
-        if outputs:
-            await post_process_outputs(outputs, user_settings)
-        clean_up_outputs(outputs)
-        # Instead of setting outputs directly, create a new dictionary with all the data
-        workflow_run_data = workflow_run.to_dict()
-        workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
-        # workflow_run_data["status"] = request.status.value
-
-        if workflow_run.webhook is not None:
-            asyncio.create_task(
-                send_webhook(
-                    workflow_run=workflow_run_data,
+            ended = body.status in endStatuses
+            if body.output_data is not None:
+                # Sending to postgres
+                newOutput = WorkflowRunOutput(
+                    id=uuid4(),  # Add this line to generate a new UUID for the primary key
+                    created_at=updated_at,
                     updated_at=updated_at,
-                    run_id=workflow_run.id,
-                    client=client,
+                    run_id=body.run_id,
+                    data=body.output_data,
+                    node_meta=body.node_meta,
                 )
-            )
-            # background_tasks.add_task(
-            #     send_webhook, workflow_run, updated_at, workflow_run.id
-            # )
+                db.add(newOutput)
+                await db.commit()
+                await db.refresh(newOutput)
 
-        return {"status": "success"}
+                existing_run = await db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == body.run_id)
+                )
+                workflow_run = existing_run.scalar_one_or_none()
+                workflow_run = cast(WorkflowRun, workflow_run)
 
-    return {"status": "success"}
+                if workflow_run.webhook is not None:
+                    try:
+                        # Parse the webhook URL and get query parameters
+                        parsed_url = urlparse(workflow_run.webhook)
+                        query_params = {}
+
+                        if parsed_url.query:
+                            # Safely parse query parameters
+                            for param in parsed_url.query.split("&"):
+                                try:
+                                    if "=" in param:
+                                        key, value = param.split("=", 1)
+                                        query_params[key] = value
+                                except Exception:
+                                    # Skip malformed query parameters
+                                    continue
+
+                        # Get target_events from query params and split into list
+                        target_events = query_params.get("target_events", "").split(",")
+                        target_events = [
+                            event.strip() for event in target_events if event.strip()
+                        ]
+
+                        # Send webhook if no target_events specified or if the event type is in target_events
+                        if "run.output" in target_events:
+                            workflow_run_data = workflow_run.to_dict()
+                            outputs = clean_up_outputs([newOutput])
+                            if len(outputs) > 0:
+                                workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
+                                asyncio.create_task(
+                                    send_webhook(
+                                        workflow_run=workflow_run_data,
+                                        updated_at=updated_at,
+                                        run_id=workflow_run.id,
+                                        type="run.output",
+                                        client=client,
+                                    )
+                                )
+                                # logfire.info("No outputs to send", workflow_run_id=workflow_run.id)
+                    except Exception as e:
+                        # Log the error but don't send webhook
+                        logging.error(f"Error processing webhook URL parameters: {str(e)}")
+
+                # TODO: Send to upload to clickhouse
+                output_data = [
+                    (
+                        workflow_run.user_id,
+                        workflow_run.org_id,
+                        workflow_run.machine_id,
+                        body.gpu_event_id,
+                        workflow_run.workflow_id,
+                        workflow_run.workflow_version_id,
+                        body.run_id,
+                        updated_at,
+                        "output",
+                        body.progress if body.progress is not None else -1,
+                        json.dumps(body.output_data),
+                    )
+                ]
+                background_tasks.add_task(
+                    insert_to_clickhouse, client, "workflow_events", output_data
+                )
+
+            elif body.status is not None:
+                # Get existing run
+                existing_run = await db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == body.run_id)
+                )
+                workflow_run = existing_run.scalar_one_or_none()
+                workflow_run = cast(WorkflowRun, workflow_run)
+
+                if not workflow_run:
+                    raise HTTPException(status_code=404, detail="WorkflowRun not found")
+
+                # If the run is already cancelled, don't update it
+                if body.status == "cancelled":
+                    return {"status": "success"}
+
+                # If the run is already timed out, don't update it
+                if workflow_run.status == "timeout":
+                    return {"status": "success"}
+
+                # Update the run status
+                update_data = {"status": body.status, "updated_at": updated_at}
+                if ended and fixed_time is not None:
+                    update_data["ended_at"] = fixed_time
+
+                update_values = {
+                    "status": body.status,
+                    "ended_at": updated_at if ended else None,
+                    "updated_at": updated_at,
+                }
+
+                # Add modal_function_call_id if it's provided and the existing value is empty
+                if body.modal_function_call_id:
+                    update_values["modal_function_call_id"] = body.modal_function_call_id
+
+                if body.status == "success":
+                    # logfire.info(
+                    #     "Workflow run success",
+                    #     workflow_run_id=workflow_run.id,
+                    #     workflow_id=workflow_run.workflow_id,
+                    # )
+                    logger.info(
+                        "Workflow run success",
+                        extra={
+                            "route": "run-status/success",  # Use low-cardinality route path
+                            "full_route": "run-status",
+                            "function_name": "update_run",
+                            "method": "POST",
+                            "status_code": 200,
+                            "user_id": workflow_run.user_id,
+                            "org_id": workflow_run.org_id,
+                            "workflow_run_id": workflow_run.id,
+                            "workflow_id": workflow_run.workflow_id,
+                        },
+                    )
+                elif body.status == "failed":
+                    logfire.error(
+                        "Workflow run failed",
+                        workflow_run_id=workflow_run.id,
+                        workflow_id=workflow_run.workflow_id,
+                    )
+                    logger.error(
+                        "Workflow run failed",
+                        extra={
+                            "route": "run-status/failed",  # Use low-cardinality route path
+                            "full_route": "run-status",
+                            "function_name": "update_run",
+                            "method": "POST",
+                            "status_code": 500,
+                            "user_id": workflow_run.user_id,
+                            "org_id": workflow_run.org_id,
+                            "workflow_run_id": workflow_run.id,
+                            "workflow_id": workflow_run.workflow_id,
+                        },
+                    )
+                elif body.status == "timeout":
+                    logfire.error(
+                        "Workflow run timeout",
+                        workflow_run_id=workflow_run.id,
+                        workflow_id=workflow_run.workflow_id,
+                    )
+                    logger.warning(
+                        "Workflow run timeout",
+                        extra={
+                            "route": "run-status/timeout",  # Use low-cardinality route path
+                            "full_route": "run-status",
+                            "function_name": "update_run",
+                            "method": "POST",
+                            "user_id": workflow_run.user_id,
+                            "org_id": workflow_run.org_id,
+                            "workflow_run_id": workflow_run.id,
+                            "workflow_id": workflow_run.workflow_id,
+                        },
+                    )
+                elif body.status == "cancelled":
+                    logfire.error(
+                        "Workflow run cancelled",
+                        workflow_run_id=workflow_run.id,
+                        workflow_id=workflow_run.workflow_id,
+                    )
+                    logger.warning(
+                        "Workflow run cancelled",
+                        extra={
+                            "route": "run-status/cancelled",  # Use low-cardinality route path
+                            "full_route": "run-status",
+                            "function_name": "update_run",
+                            "method": "POST",
+                            "user_id": workflow_run.user_id,
+                            "org_id": workflow_run.org_id,
+                            "workflow_run_id": workflow_run.id,
+                            "workflow_id": workflow_run.workflow_id,
+                        },
+                    )
+
+                update_stmt = (
+                    update(WorkflowRun)
+                    .where(
+                        and_(
+                            WorkflowRun.id == body.run_id, ~WorkflowRun.status.in_(endStatuses)
+                        )
+                    )
+                    .values(**update_values)
+                )
+                await db.execute(update_stmt)
+                await db.commit()
+                await db.refresh(workflow_run)
+
+                # Get the updated workflow run
+                existing_run = await db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == body.run_id)
+                )
+                workflow_run = existing_run.scalar_one_or_none()
+                workflow_run = cast(WorkflowRun, workflow_run)
+
+                # Sending to clickhouse
+                progress_data = [
+                    (
+                        workflow_run.user_id,
+                        workflow_run.org_id,
+                        workflow_run.machine_id,
+                        body.gpu_event_id,
+                        workflow_run.workflow_id,
+                        workflow_run.workflow_version_id,
+                        body.run_id,
+                        updated_at,
+                        body.status,
+                        body.progress if body.progress is not None else -1,
+                        body.live_status if body.live_status is not None else "",
+                    )
+                ]
+                background_tasks.add_task(
+                    insert_to_clickhouse, client, "workflow_events", progress_data
+                )
+
+                # Get all outputs for the workflow run
+                outputs_query = select(WorkflowRunOutput).where(
+                    WorkflowRunOutput.run_id == body.run_id
+                )
+                outputs_result = await db.execute(outputs_query)
+                outputs = outputs_result.scalars().all()
+
+                user_settings = await get_user_settings(request, db)
+                if outputs:
+                    await post_process_outputs(outputs, user_settings)
+                clean_up_outputs(outputs)
+                # Instead of setting outputs directly, create a new dictionary with all the data
+                workflow_run_data = workflow_run.to_dict()
+                workflow_run_data["outputs"] = [output.to_dict() for output in outputs]
+                # workflow_run_data["status"] = request.status.value
+
+                if workflow_run.webhook is not None:
+                    asyncio.create_task(
+                        send_webhook(
+                            workflow_run=workflow_run_data,
+                            updated_at=updated_at,
+                            run_id=workflow_run.id,
+                            client=client,
+                        )
+                    )
+                    # background_tasks.add_task(
+                    #     send_webhook, workflow_run, updated_at, workflow_run.id
+                    # )
+
+                return {"status": "success"}
+
+            return {"status": "success"}
+            
+    except Exception as e:
+        # Always log exceptions
+        logfire.error(
+            "Exception in update_run",
+            error=str(e),
+            run_id=body.run_id,
+            exc_info=True
+        )
+        raise
 
 
 @router.post("/gpu_event", include_in_schema=False)

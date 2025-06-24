@@ -15,8 +15,12 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         try:
             if request.url.path.startswith("/api"):
-                with logfire.span("Check subscription access"):
+                # Skip logging for update-run
+                if request.url.path == "/api/update-run":
                     await self.check_subscription_access(request)
+                else:
+                    with logfire.span("Check subscription access"):
+                        await self.check_subscription_access(request)
             response = await call_next(request)
             return response
         except HTTPException as exc:
@@ -52,7 +56,8 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
                 logfire.error(f"Error parsing plan data: {str(e)}")
                 tier = "free"
 
-        logfire.info("Plan", tier=tier)
+        if request.url.path != "/api/update-run":
+            logfire.info("Plan", tier=tier)
 
         if request.state is not None and request.state.current_user is not None:
             request.state.current_user["plan"] = tier

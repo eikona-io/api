@@ -13,7 +13,7 @@ from .types import (
     DeploymentFeaturedModel,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import select
+from .utils import select, get_temporary_download_url
 from api.models import (
     Deployment,
     Machine,
@@ -33,6 +33,7 @@ from sqlalchemy import func
 import asyncio
 from nanoid import generate
 import re
+from api.utils.storage_helper import get_s3_config
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,33 @@ ENVIRONMENT_TTL_MAP = {
     "public-share": PUBLIC_SHARE_TTL_HOURS,
     "production": PRODUCTION_TTL_HOURS,
 }
+
+
+async def build_cover_url(request: Request, db: AsyncSession, cover_image: str) -> str:
+    """Return a direct URL to the cover image.
+
+    If the bucket is private, a temporary download URL is generated.
+    """
+    s3_config = await get_s3_config(request, db)
+    composed_endpoint = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com"
+
+    # If cover_image is already a full URL just use it directly
+    if cover_image.startswith("http://") or cover_image.startswith("https://"):
+        url = cover_image
+    else:
+        url = f"{composed_endpoint}/{cover_image}"
+
+    if not s3_config.public:
+        url = get_temporary_download_url(
+            url,
+            region=s3_config.region,
+            access_key=s3_config.access_key,
+            secret_key=s3_config.secret_key,
+            session_token=s3_config.session_token,
+            expiration=3600,
+        )
+
+    return url
 
 
 class GPUType(str, Enum):
@@ -466,9 +494,9 @@ async def get_deployments(
             if deployment_dict.get("workflow"):
                 cover_image = deployment_dict["workflow"].get("cover_image")
                 if cover_image:
-                    deployment_dict["workflow"][
-                        "cover_url"
-                    ] = f"/api/optimize/auto/{cover_image}"
+                    deployment_dict["workflow"]["cover_url"] = await build_cover_url(
+                        request, db, cover_image
+                    )
 
             workflow_api = (
                 deployment.version.workflow_api if deployment.version else None
@@ -548,7 +576,12 @@ async def get_share_deployment(
     if deployment_dict.get("workflow"):
         cover_image = deployment_dict["workflow"].get("cover_image")
         if cover_image:
-            deployment_dict["workflow"]["cover_url"] = f"/api/optimize/auto/{cover_image}"
+            has_auth = hasattr(request, "state") and hasattr(request.state, "current_user")
+            deployment_dict["workflow"]["cover_url"] = (
+                await build_cover_url(request, db, cover_image) if has_auth 
+                else cover_image
+            )
+
     deployment_dict["input_types"] = inputs
     deployment_dict["output_types"] = outputs
 
@@ -561,6 +594,7 @@ async def get_share_deployment(
     response_model=List[DeploymentFeaturedModel],
 )
 async def get_featured_deployments(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> List[DeploymentFeaturedModel]:
     featured_deployments_org_id = "org_2toS7J4JJDhTdlSlIy2Lb2IAmQA"
@@ -593,7 +627,9 @@ async def get_featured_deployments(
         if deployment_dict.get("workflow"):
             cover_image = deployment_dict["workflow"].get("cover_image")
             if cover_image:
-                deployment_dict["workflow"]["cover_url"] = f"/api/optimize/auto/{cover_image}"
+                deployment_dict["workflow"]["cover_url"] = await build_cover_url(
+                    request, db, cover_image
+                )
 
         if deployment.version and hasattr(deployment.version, "workflow"):
             deployment_dict["workflow"]["workflow"] = deployment.version.workflow
@@ -753,7 +789,9 @@ async def get_deployment(
         if deployment_dict.get("workflow"):
             cover_image = deployment_dict["workflow"].get("cover_image")
             if cover_image:
-                deployment_dict["workflow"]["cover_url"] = f"/api/optimize/auto/{cover_image}"
+                deployment_dict["workflow"]["cover_url"] = await build_cover_url(
+                    request, db, cover_image
+                )
         if inputs:
             deployment_dict["input_types"] = inputs
         if outputs:
