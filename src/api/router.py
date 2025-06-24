@@ -170,21 +170,41 @@ def custom_simple_openapi(with_code_samples: bool = True):
     ]
     
     # Get full schema (either from Speakeasy or generate locally)
-    # fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
     
-    full_schema = get_openapi(
-        title="ComfyDeploy API",
-        version="V2",
-        description=docs,
-        routes=public_api_router.routes,
-        servers=app.servers,
-        webhooks=app.webhooks.routes,
-    )
+    try:
+        if fetch_from_speakeasy:
+            import requests
+            response = requests.get("https://spec.speakeasy.com/comfydeploy/comfydeploy/comfydeploy-api-with-code-samples")
+            full_schema = response.json()
+        else:
+            full_schema = get_openapi(
+                title="ComfyDeploy API",
+                version="V2",
+                description=docs,
+                routes=public_api_router.routes,
+                servers=app.servers,
+                webhooks=app.webhooks.routes,
+            )
+    except Exception as e:
+        # Fallback to local generation if Speakeasy fails
+        full_schema = get_openapi(
+            title="ComfyDeploy API",
+            version="V2",
+            description=docs,
+            routes=public_api_router.routes,
+            servers=app.servers,
+            webhooks=app.webhooks.routes,
+        )
     
     # Create limited schema with only allowed paths
+    # Handle case where 'paths' key doesn't exist
+    full_paths = full_schema.get("paths", {})
+    filtered_paths = {path: full_paths.get(path, {}) for path in allowed_paths if path in full_paths}
+    
     return {
         **full_schema,
-        "paths": {path: full_schema["paths"].get(path, {}) for path in allowed_paths},
+        "paths": filtered_paths,
         "components": {
             **full_schema.get("components", {}),
             "securitySchemes": {"Bearer": {"type": "http", "scheme": "bearer"}}
