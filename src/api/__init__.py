@@ -194,10 +194,12 @@ allow_origins = []
 allow_origin_regex = None
 
 if os.getenv("ENV") == "development":
+    allow_origins.append("http://localhost:3000")
     allow_origins.append("http://localhost:3001")
 elif os.getenv("ENV") == "staging":
     allow_origins.extend(
         [
+            "http://localhost:3000",
             "http://localhost:3001",
             "https://staging.app.comfydeploy.com",
         ]
