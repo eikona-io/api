@@ -170,7 +170,7 @@ def custom_simple_openapi(with_code_samples: bool = True):
     ]
     
     # Get full schema (either from Speakeasy or generate locally)
-    fetch_from_speakeasy = with_code_samples and os.getenv("ENV", "production").lower() == "production"
+    fetch_from_speakeasy = False #with_code_samples and os.getenv("ENV", "production").lower() == "production"
     
     try:
         if fetch_from_speakeasy:
