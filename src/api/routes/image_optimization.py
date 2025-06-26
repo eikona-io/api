@@ -64,21 +64,15 @@ async def optimize_image_on_demand(
             
         optimized_key = f"optimized/{cache_key}{file_extension}"
         
-        # Check if optimized version exists
-        if await check_s3_object_exists(s3_config, optimized_key):
-            # logfire.info("Serving existing optimized image", extra={
-            #     "s3_key": s3_key,
-            #     "optimized_key": optimized_key,
-            #     "transformations": transformations
-            # })
-            return await get_optimized_image_response(s3_config, optimized_key, user_settings, cache)
+        existence_check, public_check = await asyncio.gather(
+            check_s3_object_exists(s3_config, optimized_key),
+            check_s3_object_public(s3_config, s3_key)
+        )
         
-        # Check if original image exists
-        # if not await check_s3_object_exists(s3_config, s3_key):
-        #     raise HTTPException(status_code=404, detail="Original image not found")
-            
-        # Check if original image is public
-        is_public = await check_s3_object_public(s3_config, s3_key)
+        if existence_check:
+            return await get_optimized_image_response(s3_config, optimized_key, user_settings, cache)
+
+        is_public = public_check
         if is_public:
             transform_config["is_public"] = True
         
@@ -263,10 +257,8 @@ async def get_fallback_response(
 
 @multi_level_cached(
     key_prefix="s3_object_exists",
-    # Time for local memory cache to refresh from redis
-    ttl_seconds=300,
-    # Time for redis to refresh from source (autumn)
-    redis_ttl_seconds=300,
+    ttl_seconds=3600,  # 1 hour for memory cache
+    redis_ttl_seconds=86400,  # 24 hours for Redis cache
     version="1.0",
     key_builder=lambda config, s3_key: f"s3_object_exists:{s3_key}",
 )
