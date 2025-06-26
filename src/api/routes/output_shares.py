@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
-from sqlalchemy import select, func
+from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
 import uuid
@@ -11,7 +11,7 @@ import string
 
 from api.database import get_db
 from api.models import OutputShare, WorkflowRun, User
-from api.routes.utils import apply_org_check
+from api.routes.utils import select
 
 router = APIRouter()
 
@@ -56,7 +56,8 @@ async def create_output_share(
     
     share_slug = generate_share_slug()
     while True:
-        existing = await db.execute(select(OutputShare).where(OutputShare.share_slug == share_slug))
+        from sqlalchemy import select as sql_select
+        existing = await db.execute(sql_select(OutputShare).where(OutputShare.share_slug == share_slug))
         if not existing.scalar_one_or_none():
             break
         share_slug = generate_share_slug()
@@ -94,8 +95,9 @@ async def get_shared_outputs(
     slug: str,
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import select as sql_select
     query = (
-        select(OutputShare)
+        sql_select(OutputShare)
         .options(joinedload(OutputShare.run))
         .where(OutputShare.share_slug == slug)
     )
