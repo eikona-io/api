@@ -43,3 +43,24 @@ class WorkflowRunOutput(SQLModel, table=True):
 
 class WorkflowRunWebhookResponse(BaseModel):
     status: str
+
+
+class OutputShareVisibility(str, enum.Enum):
+    LINK_ONLY = "link-only"
+    PUBLIC = "public"
+    PUBLIC_IN_ORG = "public-in-org"
+
+
+class OutputShare(SQLModel, table=True):
+    __tablename__ = "output_shares"
+    metadata = metadata
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(foreign_key="users.id")
+    org_id: Optional[str] = None
+    run_id: uuid.UUID = Field(foreign_key="workflow_runs.id")
+    shared_output_ids: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    share_slug: str = Field(unique=True)
+    visibility: OutputShareVisibility = Field(default=OutputShareVisibility.LINK_ONLY)
+    created_at: datetime = Field()
+    updated_at: datetime = Field()

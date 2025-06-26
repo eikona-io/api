@@ -1206,3 +1206,36 @@ export type SubscriptionStatusType = InferSelectModel<
 export type GpuEventType = InferSelectModel<typeof gpuEvents>;
 export type MachineVersionType = InferSelectModel<typeof machineVersionsTable>;
 export type SharedWorkflowType = InferSelectModel<typeof sharedWorkflowsTable>;
+
+export const outputShareVisibility = pgEnum("output_share_visibility", [
+  "link-only",
+  "public",
+  "public-in-org"
+]);
+
+export const outputSharesTable = dbSchema.table("output_shares", {
+  id: uuid("id").primaryKey().defaultRandom().notNull(),
+  user_id: text("user_id").references(() => usersTable.id).notNull(),
+  org_id: text("org_id"),
+  run_id: uuid("run_id").references(() => workflowRunsTable.id).notNull(),
+  shared_output_ids: jsonb("shared_output_ids").$type<string[]>(),
+  share_slug: text("share_slug").notNull(),
+  visibility: outputShareVisibility("visibility").notNull().default("link-only"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => ({
+  unique_slug: unique("unique_output_share_slug").on(table.share_slug)
+}));
+
+export const outputSharesRelations = relations(outputSharesTable, ({ one }) => ({
+  run: one(workflowRunsTable, {
+    fields: [outputSharesTable.run_id],
+    references: [workflowRunsTable.id],
+  }),
+  user: one(usersTable, {
+    fields: [outputSharesTable.user_id],
+    references: [usersTable.id],
+  }),
+}));
+
+export type OutputShareType = InferSelectModel<typeof outputSharesTable>;
