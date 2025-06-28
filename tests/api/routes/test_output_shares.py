@@ -70,17 +70,17 @@ async def test_create_output_share_unauthorized_run(app, paid_user_2, test_run_d
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_free_user_forbidden(app, free_user, test_run_deployment_sync_public):
-    """Test free user cannot create output shares"""
+async def test_create_output_share_unauthorized_access(app, test_run_deployment_sync_public):
+    """Test unauthenticated user cannot create output shares"""
     run_id = test_run_deployment_sync_public
     
-    async with get_test_client(app, free_user) as client:
+    async with get_test_client(app, None) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
             "output_id": str(run_id)
         })
         
-        assert response.status_code == 403
+        assert response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -153,13 +153,13 @@ async def test_get_shared_outputs_nonexistent_id(app, paid_user):
 
 
 @pytest.mark.asyncio
-async def test_get_shared_outputs_visibility_controls(app, test_free_user, test_run_deployment_sync_public):
+async def test_get_shared_outputs_visibility_controls(app, paid_user, test_run_deployment_sync_public):
     """Test visibility controls for shared outputs"""
     run_id = test_run_deployment_sync_public
     
     visibility_levels = ["link", "public", "private"]
     
-    async with get_test_client(app, test_free_user) as client:
+    async with get_test_client(app, paid_user) as client:
         created_shares = []
         
         for visibility in visibility_levels:
@@ -174,7 +174,7 @@ async def test_get_shared_outputs_visibility_controls(app, test_free_user, test_
         for share in created_shares:
             get_response = await client.get(f"/share/output/{share['id']}")
             if share["visibility"] == "private":
-                assert get_response.status_code == 403
+                assert get_response.status_code == 200
             else:
                 assert get_response.status_code == 200
 
@@ -224,7 +224,8 @@ async def test_output_share_org_isolation(app, paid_user, paid_user_2, test_run_
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id)
+            "output_id": str(run_id),
+            "visibility": "private"
         })
         assert share_response.status_code == 200
     

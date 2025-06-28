@@ -1,3 +1,8 @@
+DO $$ BEGIN
+ CREATE TYPE "public"."output_type" AS ENUM('image', 'video', '3d', 'other');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;--> statement-breakpoint
 ALTER TABLE "comfyui_deploy"."output_shares" DROP COLUMN "shared_output_ids";--> statement-breakpoint
 ALTER TABLE "comfyui_deploy"."output_shares" DROP COLUMN "share_slug";--> statement-breakpoint
 DROP INDEX IF EXISTS "unique_output_share_slug";--> statement-breakpoint

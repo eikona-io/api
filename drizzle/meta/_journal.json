@@ -1384,15 +1384,8 @@
     {
       "idx": 197,
       "version": "7",
-      "when": 1750911729265,
-      "tag": "0197_slow_gambit",
-      "breakpoints": true
-    },
-    {
-      "idx": 198,
-      "version": "7",
       "when": 1751088944851,
-      "tag": "0198_update_output_shares_schema",
+      "tag": "0197_update_output_shares_schema",
       "breakpoints": true
     }
   ]
