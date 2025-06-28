@@ -931,11 +931,15 @@ class OutputShare(SerializableMixin, Base):
     run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"), nullable=False)
     output_id = Column(UUID(as_uuid=True), ForeignKey("workflow_run_outputs.id"), nullable=False)
     output_data = Column(JSON)
-    share_slug = Column(String, nullable=False, unique=True)
-    visibility = Column(
-        Enum("link-only", "public", "public-in-org", name="output_share_visibility"),
+    output_type = Column(
+        Enum("image", "video", "3d", "other", name="output_type"),
         nullable=False,
-        default="link-only"
+        default="other"
+    )
+    visibility = Column(
+        Enum("private", "public", "link", name="output_share_visibility"),
+        nullable=False,
+        default="private"
     )
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

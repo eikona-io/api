@@ -39,7 +39,7 @@ from api.routes import (
     form,
     admin,
     image_optimization,
-    output_shares,
+    share,
 )
 from api.modal import builder
 from api.models import APIKey
@@ -162,7 +162,7 @@ api_router.include_router(search.router)
 api_router.include_router(form.router)
 api_router.include_router(admin.router)  # Add the admin router to internal API
 api_router.include_router(image_optimization.router)
-api_router.include_router(output_shares.router)
+api_router.include_router(share.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)

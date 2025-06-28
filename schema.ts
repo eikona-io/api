@@ -1208,9 +1208,16 @@ export type MachineVersionType = InferSelectModel<typeof machineVersionsTable>;
 export type SharedWorkflowType = InferSelectModel<typeof sharedWorkflowsTable>;
 
 export const outputShareVisibility = pgEnum("output_share_visibility", [
-  "link-only",
+  "private",
   "public",
-  "public-in-org"
+  "link"
+]);
+
+export const outputType = pgEnum("output_type", [
+  "image",
+  "video", 
+  "3d",
+  "other"
 ]);
 
 export const outputSharesTable = dbSchema.table("output_shares", {
@@ -1220,13 +1227,11 @@ export const outputSharesTable = dbSchema.table("output_shares", {
   run_id: uuid("run_id").references(() => workflowRunsTable.id).notNull(),
   output_id: uuid("output_id").references(() => workflowRunOutputs.id).notNull(),
   output_data: jsonb("output_data").$type<any>(),
-  share_slug: text("share_slug").notNull(),
-  visibility: outputShareVisibility("visibility").notNull().default("link-only"),
+  output_type: outputType("output_type").notNull().default("other"),
+  visibility: outputShareVisibility("visibility").notNull().default("private"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
-}, (table) => ({
-  unique_slug: unique("unique_output_share_slug").on(table.share_slug)
-}));
+});
 
 export const outputSharesRelations = relations(outputSharesTable, ({ one }) => ({
   run: one(workflowRunsTable, {
