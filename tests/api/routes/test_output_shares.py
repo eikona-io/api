@@ -14,14 +14,14 @@ async def test_create_output_share_success(app, paid_user, test_run_deployment_s
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1", "output2"],
+            "output_id": str(run_id),
             "visibility": "public"
         })
         
         assert response.status_code == 200
         data = response.json()
         assert data["run_id"] == str(run_id)
-        assert data["shared_output_ids"] == ["output1", "output2"]
+        assert data["output_id"] == str(run_id)
         assert data["visibility"] == "public"
         assert "share_slug" in data
         assert len(data["share_slug"]) == 8
@@ -35,7 +35,7 @@ async def test_create_output_share_default_visibility(app, paid_user, test_run_d
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1"]
+            "output_id": str(run_id)
         })
         
         assert response.status_code == 200
@@ -49,7 +49,7 @@ async def test_create_output_share_nonexistent_run(app, paid_user):
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(uuid.uuid4()),
-            "shared_output_ids": ["output1"]
+            "output_id": str(uuid.uuid4())
         })
         
         assert response.status_code == 404
@@ -63,7 +63,7 @@ async def test_create_output_share_unauthorized_run(app, paid_user_2, test_run_d
     async with get_test_client(app, paid_user_2) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1"]
+            "output_id": str(run_id)
         })
         
         assert response.status_code == 404
@@ -77,7 +77,7 @@ async def test_create_output_share_free_user_forbidden(app, free_user, test_run_
     async with get_test_client(app, free_user) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1"]
+            "output_id": str(run_id)
         })
         
         assert response.status_code == 403
@@ -91,7 +91,7 @@ async def test_list_output_shares_success(app, paid_user, test_run_deployment_sy
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1", "output2"]
+            "output_id": str(run_id)
         })
         assert share_response.status_code == 200
         
@@ -130,7 +130,7 @@ async def test_get_shared_outputs_success(app, paid_user, test_run_deployment_sy
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1", "output2"],
+            "output_id": str(run_id),
             "visibility": "public"
         })
         assert share_response.status_code == 200
@@ -165,7 +165,7 @@ async def test_get_shared_outputs_visibility_controls(app, test_free_user, test_
         for visibility in visibility_levels:
             share_response = await client.post("/output-shares", json={
                 "run_id": str(run_id),
-                "shared_output_ids": ["output1"],
+                "output_id": str(run_id),
                 "visibility": visibility
             })
             assert share_response.status_code == 200
@@ -184,7 +184,7 @@ async def test_delete_output_share_success(app, paid_user, test_run_deployment_s
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1"]
+            "output_id": str(run_id)
         })
         assert share_response.status_code == 200
         share_id = share_response.json()["id"]
@@ -221,7 +221,7 @@ async def test_output_share_org_isolation(app, paid_user, paid_user_2, test_run_
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1"]
+            "output_id": str(run_id)
         })
         assert share_response.status_code == 200
     
@@ -239,12 +239,12 @@ async def test_create_output_share_empty_output_ids(app, paid_user, test_run_dep
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": []
+            "output_id": str(run_id)
         })
         
         assert response.status_code == 200
         data = response.json()
-        assert data["shared_output_ids"] == []
+        assert data["output_id"] == str(run_id)
 
 
 @pytest.mark.asyncio
@@ -255,7 +255,7 @@ async def test_create_output_share_invalid_visibility(app, paid_user, test_run_d
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/output-shares", json={
             "run_id": str(run_id),
-            "shared_output_ids": ["output1"],
+            "output_id": str(run_id),
             "visibility": "invalid_visibility"
         })
         
@@ -272,7 +272,7 @@ async def test_slug_uniqueness(app, test_free_user, test_run_deployment_sync_pub
         for i in range(5):
             response = await client.post("/output-shares", json={
                 "run_id": str(run_id),
-                "shared_output_ids": [f"output{i}"]
+                "output_id": str(run_id)
             })
             assert response.status_code == 200
             share_slug = response.json()["share_slug"]

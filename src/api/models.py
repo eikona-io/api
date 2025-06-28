@@ -929,7 +929,8 @@ class OutputShare(SerializableMixin, Base):
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
     org_id = Column(String)
     run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"), nullable=False)
-    shared_output_ids = Column(JSON)
+    output_id = Column(UUID(as_uuid=True), ForeignKey("workflow_run_outputs.id"), nullable=False)
+    output_data = Column(JSON)
     share_slug = Column(String, nullable=False, unique=True)
     visibility = Column(
         Enum("link-only", "public", "public-in-org", name="output_share_visibility"),
@@ -948,3 +949,4 @@ class OutputShare(SerializableMixin, Base):
 
     run = relationship("WorkflowRun", foreign_keys=[run_id])
     user = relationship("User", foreign_keys=[user_id])
+    output = relationship("WorkflowRunOutput", foreign_keys=[output_id])

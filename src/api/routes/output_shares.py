@@ -10,7 +10,7 @@ import secrets
 import string
 
 from api.database import get_db
-from api.models import OutputShare, WorkflowRun, User
+from api.models import OutputShare, WorkflowRun, User, WorkflowRunOutput
 from api.routes.utils import select
 
 router = APIRouter()
@@ -18,7 +18,7 @@ router = APIRouter()
 
 class OutputShareCreate(BaseModel):
     run_id: uuid.UUID
-    shared_output_ids: List[str]
+    output_id: uuid.UUID
     visibility: str = "link-only"
 
 
@@ -27,7 +27,8 @@ class OutputShareResponse(BaseModel):
     user_id: str
     org_id: Optional[str]
     run_id: uuid.UUID
-    shared_output_ids: List[str]
+    output_id: uuid.UUID
+    output_data: dict
     share_slug: str
     visibility: str
     created_at: datetime
@@ -54,6 +55,17 @@ async def create_output_share(
     if not run:
         raise HTTPException(status_code=404, detail="Workflow run not found")
     
+    from sqlalchemy import select as sql_select
+    output_query = sql_select(WorkflowRunOutput).where(
+        WorkflowRunOutput.id == body.output_id,
+        WorkflowRunOutput.run_id == body.run_id
+    )
+    output_result = await db.execute(output_query)
+    output = output_result.scalar_one_or_none()
+    
+    if not output:
+        raise HTTPException(status_code=404, detail="Output not found")
+    
     share_slug = generate_share_slug()
     while True:
         from sqlalchemy import select as sql_select
@@ -66,7 +78,8 @@ async def create_output_share(
         user_id=user_id,
         org_id=org_id,
         run_id=body.run_id,
-        shared_output_ids=body.shared_output_ids,
+        output_id=body.output_id,
+        output_data=output.data,
         share_slug=share_slug,
         visibility=body.visibility,
     )

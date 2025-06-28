@@ -1218,7 +1218,8 @@ export const outputSharesTable = dbSchema.table("output_shares", {
   user_id: text("user_id").references(() => usersTable.id).notNull(),
   org_id: text("org_id"),
   run_id: uuid("run_id").references(() => workflowRunsTable.id).notNull(),
-  shared_output_ids: jsonb("shared_output_ids").$type<string[]>(),
+  output_id: uuid("output_id").references(() => workflowRunOutputs.id).notNull(),
+  output_data: jsonb("output_data").$type<any>(),
   share_slug: text("share_slug").notNull(),
   visibility: outputShareVisibility("visibility").notNull().default("link-only"),
   created_at: timestamp("created_at").defaultNow().notNull(),
@@ -1235,6 +1236,10 @@ export const outputSharesRelations = relations(outputSharesTable, ({ one }) => (
   user: one(usersTable, {
     fields: [outputSharesTable.user_id],
     references: [usersTable.id],
+  }),
+  output: one(workflowRunOutputs, {
+    fields: [outputSharesTable.output_id],
+    references: [workflowRunOutputs.id],
   }),
 }));
 
