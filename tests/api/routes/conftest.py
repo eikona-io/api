@@ -57,12 +57,18 @@ async def get_db_context():
 @asynccontextmanager
 async def get_test_client(app, user):
     """Helper function to create a new client instance with async context manager support"""
-    api_key = generate_persistent_token(user.id, None)
-    client = AsyncClient(
-        base_url=app + "/api",
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=120.0,  # 30 seconds timeout for all operations
-    )
+    if user is None:
+        client = AsyncClient(
+            base_url=app + "/api",
+            timeout=120.0,  # 30 seconds timeout for all operations
+        )
+    else:
+        api_key = generate_persistent_token(user.id, None)
+        client = AsyncClient(
+            base_url=app + "/api",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=120.0,  # 30 seconds timeout for all operations
+        )
     try:
         yield client
     finally:
