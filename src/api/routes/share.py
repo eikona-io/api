@@ -162,11 +162,10 @@ async def create_output_share(
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    run_query = select(WorkflowRun).where(
-        and_(
-            WorkflowRun.id == share_data.run_id,
-            WorkflowRun.user_id == user["user_id"]
-        )
+    run_query = (
+        select(WorkflowRun)
+        .where(WorkflowRun.id == share_data.run_id)
+        .apply_org_check(request)
     )
     run_result = await db.execute(run_query)
     run = run_result.scalar_one_or_none()
@@ -174,11 +173,16 @@ async def create_output_share(
     if not run:
         raise HTTPException(status_code=404, detail="Workflow run not found")
 
-    output_query = select(WorkflowRunOutput).where(
-        and_(
-            WorkflowRunOutput.id == share_data.output_id,
-            WorkflowRunOutput.run_id == share_data.run_id
+    output_query = (
+        select(WorkflowRunOutput)
+        .join(WorkflowRun, WorkflowRun.id == WorkflowRunOutput.run_id)
+        .where(
+            and_(
+                WorkflowRunOutput.id == share_data.output_id,
+                WorkflowRunOutput.run_id == share_data.run_id,
+            )
         )
+        .apply_org_check_by_type(WorkflowRun, request)
     )
     output_result = await db.execute(output_query)
     output = output_result.scalar_one_or_none()
