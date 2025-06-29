@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from enum import Enum
 from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
-from .share import create_dub_link, get_dub_link, update_dub_link
+from .share import get_dub_link
 from sqlalchemy import func
 import asyncio
 from nanoid import generate
@@ -512,10 +512,10 @@ async def get_deployments(
             if outputs:
                 deployment_dict["output_types"] = outputs
 
-            if deployment.environment == "public-share" and deployment.share_slug:
-                dub_link_tasks[idx] = asyncio.create_task(
-                    get_dub_link(deployment.share_slug)
-                )
+            # if deployment.environment == "public-share" and deployment.share_slug:
+            #    dub_link_tasks[idx] = asyncio.create_task(
+            #        get_dub_link(deployment.share_slug)
+            #    )
 
             deployments_data.append(deployment_dict)
 
@@ -578,7 +578,7 @@ async def get_share_deployment(
         if cover_image:
             has_auth = hasattr(request, "state") and hasattr(request.state, "current_user")
             deployment_dict["workflow"]["cover_url"] = (
-                await build_cover_url(request, db, cover_image) if has_auth 
+                await build_cover_url(request, db, cover_image) if has_auth
                 else cover_image
             )
 

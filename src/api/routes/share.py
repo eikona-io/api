@@ -11,6 +11,111 @@ from api.database import get_db
 from api.models import OutputShare, WorkflowRun, User, WorkflowRunOutput
 from api.routes.utils import select
 
+import os
+import dub
+import logging
+from typing import Optional
+
+# Replace the module-level initialization with a singleton pattern
+class DubClient:
+    _instance = None
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            dub_api_key = os.getenv("DUB_API_KEY")
+            if not dub_api_key:
+                logging.warning("DUB_API_KEY environment variable is not set")
+                return None
+            cls._instance = dub.Dub(token=dub_api_key)
+        return cls._instance
+
+def _check_dub_client() -> bool:
+    client = DubClient.get_instance()
+    if not client:
+        logging.error("Dub client not initialized - missing API key")
+        return False
+    return True
+
+
+async def create_dub_link(url: str, slug: str) -> Optional[str]:
+    if not _check_dub_client():
+        return None
+
+    res = None
+    client = DubClient.get_instance()
+
+    try:
+        res = await client.links.create_async(
+            request={
+                "url": url,
+                "domain": "comfydeploy.link",
+                "doIndex": True,
+                "tagIds": "tag_Oxo856QUGcEhziqjHZ3PO0Hv",
+                "external_id": slug,
+                "proxy": True,
+                "title": f"Comfy Deploy Share - {slug}",
+                # "rewrite": True,
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error creating dub link: {str(e)}")
+        return None
+
+    if res is not None:
+        logging.info(f"link created: {res.short_link}")
+        return res.short_link
+    return None
+
+
+async def get_dub_link(slug: str) -> Optional[str]:
+    if not _check_dub_client():
+        return None
+
+    try:
+        res = await DubClient.get_instance().links.get_async(request={"external_id": f"ext_{slug}"})
+        if res is not None:
+            logging.info(f"link found: {res.short_link}")
+            return res
+    except Exception as e:
+        logging.info(f"Link not found for slug: {slug}")
+        return None
+
+    return None
+
+
+async def update_dub_link(link_id: str, url: str, slug: str) -> Optional[str]:
+    if not _check_dub_client():
+        return None
+
+    res = None
+    client = DubClient.get_instance()
+
+    try:
+        res = await client.links.update_async(
+            link_id=link_id,
+            request_body={
+                "url": url,
+                "domain": "comfydeploy.link",
+                "doIndex": True,
+                "tagIds": "tag_Oxo856QUGcEhziqjHZ3PO0Hv",
+                "external_id": slug,
+                "proxy": True,
+                "title": f"Comfy Deploy Share - {slug}",
+                # "rewrite": True,
+            },
+        )
+    except Exception as e:
+        logging.error(f"Error updating dub link: {str(e)}")
+        return None
+
+    if res is not None:
+        logging.info(f"link updated: {res.short_link}")
+        return res
+    else:
+        return None
+
+
 router = APIRouter()
 
 class OutputShareCreate(BaseModel):
@@ -35,16 +140,16 @@ def determine_output_type(output_data: dict) -> str:
     """Determine output type based on output data"""
     if not output_data:
         return "other"
-    
+
     if any(key.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) for key in output_data.keys() if isinstance(key, str)):
         return "image"
-    
+
     if any(key.lower().endswith(('.mp4', '.avi', '.mov', '.webm')) for key in output_data.keys() if isinstance(key, str)):
         return "video"
-    
+
     if any(key.lower().endswith(('.obj', '.fbx', '.gltf', '.glb', '.ply')) for key in output_data.keys() if isinstance(key, str)):
         return "3d"
-    
+
     return "other"
 
 @router.post("/share/output", response_model=OutputShareResponse)
@@ -56,7 +161,7 @@ async def create_output_share(
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     run_query = select(WorkflowRun).where(
         and_(
             WorkflowRun.id == share_data.run_id,
@@ -65,10 +170,10 @@ async def create_output_share(
     )
     run_result = await db.execute(run_query)
     run = run_result.scalar_one_or_none()
-    
+
     if not run:
         raise HTTPException(status_code=404, detail="Workflow run not found")
-    
+
     output_query = select(WorkflowRunOutput).where(
         and_(
             WorkflowRunOutput.id == share_data.output_id,
@@ -77,14 +182,14 @@ async def create_output_share(
     )
     output_result = await db.execute(output_query)
     output = output_result.scalar_one_or_none()
-    
+
     if not output:
         raise HTTPException(status_code=404, detail="Output not found")
-    
+
     if share_data.output_type == "other":
         detected_type = determine_output_type(output.data or {})
         share_data.output_type = detected_type
-    
+
     output_share = OutputShare(
         user_id=user.id,
         org_id=getattr(user, 'org_id', None),
@@ -94,11 +199,11 @@ async def create_output_share(
         output_type=share_data.output_type,
         visibility=share_data.visibility
     )
-    
+
     db.add(output_share)
     await db.commit()
     await db.refresh(output_share)
-    
+
     return OutputShareResponse(
         id=output_share.id,
         user_id=output_share.user_id,
@@ -121,10 +226,10 @@ async def list_output_shares(
     db: AsyncSession = Depends(get_db)
 ):
     user = getattr(request.state, "user", None)
-    
+
     query = select(OutputShare)
     conditions = []
-    
+
     if user:
         org_condition = and_(
             OutputShare.user_id == user.id,
@@ -133,7 +238,7 @@ async def list_output_shares(
                 OutputShare.visibility == "link"
             )
         )
-        
+
         if include_public:
             conditions.append(or_(
                 org_condition,
@@ -143,21 +248,21 @@ async def list_output_shares(
             conditions.append(org_condition)
     else:
         conditions.append(OutputShare.visibility == "public")
-    
+
     if output_type:
         conditions.append(OutputShare.output_type == output_type)
-    
+
     if visibility:
         conditions.append(OutputShare.visibility == visibility)
-    
+
     if conditions:
         query = query.where(and_(*conditions))
-    
+
     query = query.order_by(OutputShare.created_at.desc())
-    
+
     result = await db.execute(query)
     shares = result.scalars().all()
-    
+
     return [
         OutputShareResponse(
             id=share.id,
@@ -181,19 +286,19 @@ async def get_shared_output(
     db: AsyncSession = Depends(get_db)
 ):
     user = getattr(request.state, "user", None)
-    
+
     query = select(OutputShare).options(
         joinedload(OutputShare.run),
         joinedload(OutputShare.user),
         joinedload(OutputShare.output)
     ).where(OutputShare.id == share_id)
-    
+
     result = await db.execute(query)
     share = result.scalar_one_or_none()
-    
+
     if not share:
         raise HTTPException(status_code=404, detail="Shared output not found")
-    
+
     if share.visibility == "private":
         if not user or user.id != share.user_id:
             raise HTTPException(status_code=403, detail="Access denied")
@@ -201,7 +306,7 @@ async def get_shared_output(
         pass
     elif share.visibility == "public":
         pass
-    
+
     return {
         "share": OutputShareResponse(
             id=share.id,
@@ -231,7 +336,7 @@ async def delete_output_share(
     user = getattr(request.state, "user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     query = select(OutputShare).where(
         and_(
             OutputShare.id == share_id,
@@ -240,11 +345,11 @@ async def delete_output_share(
     )
     result = await db.execute(query)
     share = result.scalar_one_or_none()
-    
+
     if not share:
         raise HTTPException(status_code=404, detail="Output share not found")
-    
+
     await db.delete(share)
     await db.commit()
-    
+
     return {"message": "Output share deleted successfully"}
