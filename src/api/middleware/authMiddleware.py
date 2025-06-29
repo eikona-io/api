@@ -26,12 +26,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/fal-webhook",
             "/api/models",
             "/api/clerk/webhook",
-            "/api/share/*",
-            "/api/shared-workflows",
-            "/api/shared-workflows/*",
             "/api/user/*",
             "/api/platform/stripe/webhook",
             "/api/platform/comfyui/auth-response",
+        ]
+        self.optional_auth_routes = [
+            "/api/share/*",
+            "/api/shared-workflows",
+            "/api/shared-workflows/*",
         ]
         # print("AuthMiddleware initialized")  # Test print
 
@@ -69,7 +71,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             logger.error(f"Error matching route: {e}")
 
 
-        if self.should_authenticate(request):
+        optional_auth = any(fnmatch(full_path, route) for route in self.optional_auth_routes)
+
+        if self.should_authenticate(request) and not optional_auth:
             # print("Authentication required")  # Test print
             try:
                 await self.authenticate(request)
@@ -99,6 +103,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(
                     status_code=e.status_code, content={"detail": e.detail}
                 )
+        elif optional_auth:
+            try:
+                await self.authenticate(request)
+            except HTTPException:
+                # Optional routes should not fail if auth is missing or invalid
+                request.state.current_user = None
         else:
             # print("Skipping authentication")  # Test print
             logger.info("Skipping auth check for non-API route or ignored route")

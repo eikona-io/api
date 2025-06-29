@@ -158,14 +158,14 @@ async def create_output_share(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    user = getattr(request.state, "user", None)
+    user = getattr(request.state, "current_user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
     run_query = select(WorkflowRun).where(
         and_(
             WorkflowRun.id == share_data.run_id,
-            WorkflowRun.user_id == user.id
+            WorkflowRun.user_id == user["user_id"]
         )
     )
     run_result = await db.execute(run_query)
@@ -191,8 +191,8 @@ async def create_output_share(
         share_data.output_type = detected_type
 
     output_share = OutputShare(
-        user_id=user.id,
-        org_id=getattr(user, 'org_id', None),
+        user_id=user["user_id"],
+        org_id=user.get("org_id"),
         run_id=share_data.run_id,
         output_id=share_data.output_id,
         output_data=output.data or {},
@@ -225,14 +225,14 @@ async def list_output_shares(
     include_public: bool = Query(True, description="Include public shares for authenticated users"),
     db: AsyncSession = Depends(get_db)
 ):
-    user = getattr(request.state, "user", None)
+    user = getattr(request.state, "current_user", None)
 
     query = select(OutputShare)
     conditions = []
 
     if user:
         org_condition = and_(
-            OutputShare.user_id == user.id,
+            OutputShare.user_id == user["user_id"],
             or_(
                 OutputShare.visibility == "private",
                 OutputShare.visibility == "link"
@@ -240,10 +240,9 @@ async def list_output_shares(
         )
 
         if include_public:
-            conditions.append(or_(
-                org_condition,
-                OutputShare.visibility == "public"
-            ))
+            conditions.append(
+                or_(org_condition, OutputShare.visibility == "public")
+            )
         else:
             conditions.append(org_condition)
     else:
@@ -285,7 +284,7 @@ async def get_shared_output(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    user = getattr(request.state, "user", None)
+    user = getattr(request.state, "current_user", None)
 
     query = select(OutputShare).options(
         joinedload(OutputShare.run),
@@ -300,7 +299,7 @@ async def get_shared_output(
         raise HTTPException(status_code=404, detail="Shared output not found")
 
     if share.visibility == "private":
-        if not user or user.id != share.user_id:
+        if not user or user["user_id"] != share.user_id:
             raise HTTPException(status_code=403, detail="Access denied")
     elif share.visibility == "link":
         pass
@@ -333,14 +332,14 @@ async def delete_output_share(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-    user = getattr(request.state, "user", None)
+    user = getattr(request.state, "current_user", None)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
 
     query = select(OutputShare).where(
         and_(
             OutputShare.id == share_id,
-            OutputShare.user_id == user.id
+            OutputShare.user_id == user["user_id"]
         )
     )
     result = await db.execute(query)
