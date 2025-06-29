@@ -919,3 +919,38 @@ class SharedWorkflow(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class OutputShare(SerializableMixin, Base):
+    __tablename__ = "output_shares"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    org_id = Column(String)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"), nullable=False)
+    output_id = Column(UUID(as_uuid=True), ForeignKey("workflow_run_outputs.id"), nullable=False)
+    output_data = Column(JSON)
+    output_type = Column(
+        Enum("image", "video", "3d", "other", name="output_type"),
+        nullable=False,
+        default="other"
+    )
+    visibility = Column(
+        Enum("private", "public", "link", name="output_share_visibility"),
+        nullable=False,
+        default="private"
+    )
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    run = relationship("WorkflowRun", foreign_keys=[run_id])
+    user = relationship("User", foreign_keys=[user_id])
+    output = relationship("WorkflowRunOutput", foreign_keys=[output_id])

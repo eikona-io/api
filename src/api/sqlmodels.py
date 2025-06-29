@@ -43,3 +43,32 @@ class WorkflowRunOutput(SQLModel, table=True):
 
 class WorkflowRunWebhookResponse(BaseModel):
     status: str
+
+
+class OutputShareVisibility(str, enum.Enum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+    LINK = "link"
+
+
+class OutputType(str, enum.Enum):
+    IMAGE = "image"
+    VIDEO = "video"
+    THREE_D = "3d"
+    OTHER = "other"
+
+
+class OutputShare(SQLModel, table=True):
+    __tablename__ = "output_shares"
+    metadata = metadata
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: str = Field(foreign_key="users.id")
+    org_id: Optional[str] = None
+    run_id: uuid.UUID = Field(foreign_key="workflow_runs.id")
+    output_id: uuid.UUID = Field(foreign_key="workflow_run_outputs.id")
+    output_data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    output_type: OutputType = Field(default=OutputType.OTHER)
+    visibility: OutputShareVisibility = Field(default=OutputShareVisibility.PRIVATE)
+    created_at: datetime = Field()
+    updated_at: datetime = Field()
