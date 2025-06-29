@@ -525,6 +525,24 @@ async def test_run_deployment_sync_public(app, test_free_user, test_create_workf
 
 
 @pytest_asyncio.fixture(scope="session")
+async def test_run_deployment_sync_public_with_output(app, test_free_user, test_create_workflow_deployment_public):
+    """Run a public deployment and return the run and first output id."""
+    async with get_test_client(app, test_free_user) as client:
+        deployment_id = test_create_workflow_deployment_public
+        response = await client.post(
+            "/run/deployment/sync", json={"deployment_id": deployment_id}
+        )
+        assert response.status_code == 200
+        outputs = response.json()
+        assert outputs, "No outputs returned"
+        run_id = outputs[0]["run_id"]
+        output_id = outputs[0]["id"]
+        assert run_id is not None
+        assert output_id is not None
+        yield run_id, output_id
+
+
+@pytest_asyncio.fixture(scope="session")
 async def test_free_user():
     """Fixture for a test user with free plan"""
     async with get_db_context() as db:
