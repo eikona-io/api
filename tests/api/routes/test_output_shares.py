@@ -7,35 +7,35 @@ load_dotenv()
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_success(app, paid_user, test_run_deployment_sync_public):
+async def test_create_output_share_success(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test successful creation of output share"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "visibility": "public"
         })
         
         assert response.status_code == 200
         data = response.json()
         assert data["run_id"] == str(run_id)
-        assert data["output_id"] == str(run_id)
+        assert data["output_id"] == str(output_id)
         assert data["visibility"] == "public"
         assert "output_type" in data
         assert data["output_type"] == "other"
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_default_visibility(app, paid_user, test_run_deployment_sync_public):
+async def test_create_output_share_default_visibility(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test output share creation with default visibility"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id)
+            "output_id": str(output_id)
         })
         
         assert response.status_code == 200
@@ -56,42 +56,42 @@ async def test_create_output_share_nonexistent_run(app, paid_user):
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_unauthorized_run(app, paid_user_2, test_run_deployment_sync_public):
+async def test_create_output_share_unauthorized_run(app, paid_user_2, test_run_deployment_sync_public_with_output):
     """Test creating output share for run owned by different user"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user_2) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id)
+            "output_id": str(output_id)
         })
         
         assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_unauthorized_access(app, test_run_deployment_sync_public):
+async def test_create_output_share_unauthorized_access(app, test_run_deployment_sync_public_with_output):
     """Test unauthenticated user cannot create output shares"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, None) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id)
+            "output_id": str(output_id)
         })
         
         assert response.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_list_output_shares_success(app, paid_user, test_run_deployment_sync_public):
+async def test_list_output_shares_success(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test listing output shares"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id)
+            "output_id": str(output_id)
         })
         assert share_response.status_code == 200
         
@@ -123,14 +123,14 @@ async def test_list_output_shares_isolation(app, paid_user):
 
 
 @pytest.mark.asyncio
-async def test_get_shared_outputs_success(app, paid_user, test_run_deployment_sync_public):
+async def test_get_shared_outputs_success(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test retrieving shared outputs by ID"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "visibility": "public"
         })
         assert share_response.status_code == 200
@@ -153,9 +153,9 @@ async def test_get_shared_outputs_nonexistent_id(app, paid_user):
 
 
 @pytest.mark.asyncio
-async def test_get_shared_outputs_visibility_controls(app, paid_user, test_run_deployment_sync_public):
+async def test_get_shared_outputs_visibility_controls(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test visibility controls for shared outputs"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     visibility_levels = ["link", "public", "private"]
     
@@ -165,7 +165,7 @@ async def test_get_shared_outputs_visibility_controls(app, paid_user, test_run_d
         for visibility in visibility_levels:
             share_response = await client.post("/share/output", json={
                 "run_id": str(run_id),
-                "output_id": str(run_id),
+                "output_id": str(output_id),
                 "visibility": visibility
             })
             assert share_response.status_code == 200
@@ -180,14 +180,14 @@ async def test_get_shared_outputs_visibility_controls(app, paid_user, test_run_d
 
 
 @pytest.mark.asyncio
-async def test_delete_output_share_success(app, paid_user, test_run_deployment_sync_public):
+async def test_delete_output_share_success(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test successful deletion of output share"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id)
+            "output_id": str(output_id)
         })
         assert share_response.status_code == 200
         share_id = share_response.json()["id"]
@@ -217,14 +217,14 @@ async def test_delete_output_share_unauthorized(app, paid_user):
 
 
 @pytest.mark.asyncio
-async def test_output_share_org_isolation(app, paid_user, paid_user_2, test_run_deployment_sync_public):
+async def test_output_share_org_isolation(app, paid_user, paid_user_2, test_run_deployment_sync_public_with_output):
     """Test org-level isolation of output shares"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         share_response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "visibility": "private"
         })
         assert share_response.status_code == 200
@@ -236,32 +236,32 @@ async def test_output_share_org_isolation(app, paid_user, paid_user_2, test_run_
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_with_output_type(app, paid_user, test_run_deployment_sync_public):
+async def test_create_output_share_with_output_type(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test creating output share with specific output type"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "output_type": "image"
         })
         
         assert response.status_code == 200
         data = response.json()
-        assert data["output_id"] == str(run_id)
+        assert data["output_id"] == str(output_id)
         assert data["output_type"] == "image"
 
 
 @pytest.mark.asyncio
-async def test_create_output_share_invalid_visibility(app, paid_user, test_run_deployment_sync_public):
+async def test_create_output_share_invalid_visibility(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test creating output share with invalid visibility"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         response = await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "visibility": "invalid_visibility"
         })
         
@@ -269,21 +269,21 @@ async def test_create_output_share_invalid_visibility(app, paid_user, test_run_d
 
 
 @pytest.mark.asyncio
-async def test_output_type_filtering(app, paid_user, test_run_deployment_sync_public):
+async def test_output_type_filtering(app, paid_user, test_run_deployment_sync_public_with_output):
     """Test filtering output shares by output type"""
-    run_id = test_run_deployment_sync_public
+    run_id, output_id = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, paid_user) as client:
         await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "output_type": "image",
             "visibility": "public"
         })
         
         await client.post("/share/output", json={
             "run_id": str(run_id),
-            "output_id": str(run_id),
+            "output_id": str(output_id),
             "output_type": "video",
             "visibility": "public"
         })
@@ -300,9 +300,9 @@ async def test_output_type_filtering(app, paid_user, test_run_deployment_sync_pu
 
 
 @pytest.mark.asyncio
-async def test_unauthenticated_access_public_only(app, test_run_deployment_sync_public):
+async def test_unauthenticated_access_public_only(app, test_run_deployment_sync_public_with_output):
     """Test that unauthenticated users only see public shares"""
-    run_id = test_run_deployment_sync_public
+    run_id, _ = test_run_deployment_sync_public_with_output
     
     async with get_test_client(app, None) as client:
         response = await client.get("/share/output")
