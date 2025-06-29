@@ -1,5 +1,5 @@
 {
-  "id": "efd2422e-d77d-4b66-b87b-0413135921de",
+  "id": "13d9fbb3-6745-4818-a724-56e4ab38ae5f",
   "prevId": "d3a06d62-4a46-423b-b2e4-7e364014f4fe",
   "version": "7",
   "dialect": "postgresql",
@@ -2072,17 +2072,25 @@
           "primaryKey": false,
           "notNull": true
         },
-        "shared_output_ids": {
-          "name": "shared_output_ids",
+        "output_id": {
+          "name": "output_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "output_data": {
+          "name": "output_data",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
-        "share_slug": {
-          "name": "share_slug",
-          "type": "text",
+        "output_type": {
+          "name": "output_type",
+          "type": "output_type",
+          "typeSchema": "public",
           "primaryKey": false,
-          "notNull": true
+          "notNull": true,
+          "default": "'other'"
         },
         "visibility": {
           "name": "visibility",
@@ -2090,7 +2098,7 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'link-only'"
+          "default": "'private'"
         },
         "created_at": {
           "name": "created_at",
@@ -2136,18 +2144,24 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "output_shares_output_id_workflow_run_outputs_id_fk": {
+          "name": "output_shares_output_id_workflow_run_outputs_id_fk",
+          "tableFrom": "output_shares",
+          "tableTo": "workflow_run_outputs",
+          "schemaTo": "comfyui_deploy",
+          "columnsFrom": [
+            "output_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "unique_output_share_slug": {
-          "name": "unique_output_share_slug",
-          "nullsNotDistinct": false,
-          "columns": [
-            "share_slug"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -3760,9 +3774,19 @@
       "name": "output_share_visibility",
       "schema": "public",
       "values": [
-        "link-only",
+        "private",
         "public",
-        "public-in-org"
+        "link"
+      ]
+    },
+    "public.output_type": {
+      "name": "output_type",
+      "schema": "public",
+      "values": [
+        "image",
+        "video",
+        "3d",
+        "other"
       ]
     },
     "public.output_visibility": {
