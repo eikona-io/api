@@ -213,7 +213,7 @@ async def create_output_share(
         OutputShare.output_id == share_data.output_id
     )
     duplicate_result = await db.execute(duplicate_query)
-    existing_share = duplicate_result.scalar_one_or_none()
+    existing_share = duplicate_result.scalars().first()
     if existing_share:
         raise HTTPException(status_code=400, detail="Output already shared")
 
