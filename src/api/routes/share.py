@@ -215,7 +215,18 @@ async def create_output_share(
     duplicate_result = await db.execute(duplicate_query)
     existing_share = duplicate_result.scalars().first()
     if existing_share:
-        raise HTTPException(status_code=400, detail="Output already shared")
+        return OutputShareResponse(
+            id=existing_share.id,
+            user_id=existing_share.user_id,
+            org_id=existing_share.org_id,
+            run_id=existing_share.run_id,
+            output_id=existing_share.output_id,
+            output_data=existing_share.output_data,
+            output_type=existing_share.output_type,
+            visibility=existing_share.visibility,
+            created_at=existing_share.created_at,
+            updated_at=existing_share.updated_at,
+        )
 
     if share_data.output_type == "other":
         detected_type = determine_output_type(output.data or {})
