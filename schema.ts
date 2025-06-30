@@ -1228,6 +1228,7 @@ export const outputSharesTable = dbSchema.table("output_shares", {
   run_id: uuid("run_id").references(() => workflowRunsTable.id).notNull(),
   output_id: uuid("output_id").references(() => workflowRunOutputs.id).notNull(),
   output_data: jsonb("output_data").$type<any>(),
+  inputs: jsonb("inputs").$type<any>(),
   output_type: outputType("output_type").notNull().default("other"),
   visibility: outputShareVisibility("visibility").notNull().default("private"),
   created_at: timestamp("created_at").defaultNow().notNull(),

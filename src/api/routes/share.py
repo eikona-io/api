@@ -227,7 +227,7 @@ async def create_output_share(
             visibility=existing_share.visibility,
             created_at=existing_share.created_at,
             updated_at=existing_share.updated_at,
-            inputs=run.workflow_inputs,
+            inputs=existing_share.inputs,
         )
 
     if share_data.output_type == "other":
@@ -240,6 +240,7 @@ async def create_output_share(
         run_id=share_data.run_id,
         output_id=share_data.output_id,
         output_data=output.data or {},
+        inputs=run.workflow_inputs,
         output_type=share_data.output_type,
         visibility=share_data.visibility,
     )
@@ -259,7 +260,7 @@ async def create_output_share(
         visibility=output_share.visibility,
         created_at=output_share.created_at,
         updated_at=output_share.updated_at,
-        inputs=run.workflow_inputs,
+        inputs=output_share.inputs,
     )
 
 
@@ -277,7 +278,7 @@ async def list_output_shares(
 ):
     user = getattr(request.state, "current_user", None)
 
-    query = select(OutputShare).options(joinedload(OutputShare.run))
+    query = select(OutputShare)
     conditions = []
 
     if user:
@@ -319,7 +320,7 @@ async def list_output_shares(
             visibility=share.visibility,
             created_at=share.created_at,
             updated_at=share.updated_at,
-            inputs=share.run.workflow_inputs if share.run else None,
+            inputs=share.inputs,
         )
         for share in shares
     ]
@@ -367,7 +368,7 @@ async def get_shared_output(
             visibility=share.visibility,
             created_at=share.created_at,
             updated_at=share.updated_at,
-            inputs=share.run.workflow_inputs if share.run else None,
+            inputs=share.inputs,
         ),
         "run": (
             {
