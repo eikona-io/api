@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func, and_, or_
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
@@ -141,6 +141,7 @@ class OutputShareResponse(BaseModel):
     visibility: str
     created_at: datetime
     updated_at: datetime
+    inputs: Optional[Any] = None
 
 
 def determine_output_type(output_data: dict) -> str:
@@ -226,6 +227,7 @@ async def create_output_share(
             visibility=existing_share.visibility,
             created_at=existing_share.created_at,
             updated_at=existing_share.updated_at,
+            inputs=run.workflow_inputs,
         )
 
     if share_data.output_type == "other":
@@ -257,6 +259,7 @@ async def create_output_share(
         visibility=output_share.visibility,
         created_at=output_share.created_at,
         updated_at=output_share.updated_at,
+        inputs=run.workflow_inputs,
     )
 
 
@@ -274,7 +277,7 @@ async def list_output_shares(
 ):
     user = getattr(request.state, "current_user", None)
 
-    query = select(OutputShare)
+    query = select(OutputShare).options(joinedload(OutputShare.run))
     conditions = []
 
     if user:
@@ -316,6 +319,7 @@ async def list_output_shares(
             visibility=share.visibility,
             created_at=share.created_at,
             updated_at=share.updated_at,
+            inputs=share.run.workflow_inputs if share.run else None,
         )
         for share in shares
     ]
@@ -363,6 +367,7 @@ async def get_shared_output(
             visibility=share.visibility,
             created_at=share.created_at,
             updated_at=share.updated_at,
+            inputs=share.run.workflow_inputs if share.run else None,
         ),
         "run": (
             {
