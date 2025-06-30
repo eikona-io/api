@@ -259,8 +259,10 @@ async def create_folder(
     full_path = os.path.join(parent_path, folder_data.name).replace("\\", "/")
     
     # Check if folder already exists
-    query = select(Asset).apply_org_check(request).where(
-        and_(Asset.path == full_path, Asset.is_folder == True)
+    query = (
+        select(Asset)
+        .apply_org_check(request)
+        .where(and_(Asset.path == full_path, Asset.is_folder == True, ~Asset.deleted))
     )
     existing = await db.execute(query)
     if existing.scalar_one_or_none():

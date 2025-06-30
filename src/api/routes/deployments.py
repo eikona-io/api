@@ -26,12 +26,14 @@ from api.database import get_db
 from sqlalchemy.orm import joinedload
 from pydantic import BaseModel
 from enum import Enum
+from typing import Optional
 from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
-from .share import create_dub_link, get_dub_link, update_dub_link
-from sqlalchemy import func
+from .share import get_dub_link
+from sqlalchemy import func, not_
 import asyncio
 from nanoid import generate
+from sqlalchemy import or_
 import re
 from api.utils.storage_helper import get_s3_config
 
@@ -53,6 +55,43 @@ ENVIRONMENT_TTL_MAP = {
     "production": PRODUCTION_TTL_HOURS,
 }
 
+class UserInfo(BaseModel):
+    """User authentication information extracted from request."""
+    is_authenticated: bool
+    user_id: Optional[str] = None
+    org_id: Optional[str] = None
+
+def get_user_info(request: Request) -> UserInfo:
+    """
+    Extract user information from request if authenticated.
+    
+    Returns:
+        UserInfo object with authentication status and user details
+    """
+    if not hasattr(request, "state") or not hasattr(request.state, "current_user") or request.state.current_user is None:
+        return UserInfo(
+            is_authenticated=False,
+            user_id=None,
+            org_id=None
+        )
+    
+    current_user = request.state.current_user
+    return UserInfo(
+        is_authenticated=True,
+        user_id=current_user.get("user_id"),
+        org_id=current_user.get("org_id")
+    )
+
+
+def is_authenticated(request: Request) -> bool:
+    """
+    Check if the request has valid authentication.
+    
+    Returns:
+        bool indicating if user is authenticated
+    """
+    return get_user_info(request).is_authenticated
+
 
 async def build_cover_url(request: Request, db: AsyncSession, cover_image: str) -> str:
     """Return a direct URL to the cover image.
@@ -60,7 +99,9 @@ async def build_cover_url(request: Request, db: AsyncSession, cover_image: str) 
     If the bucket is private, a temporary download URL is generated.
     """
     s3_config = await get_s3_config(request, db)
-    composed_endpoint = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com"
+    composed_endpoint = (
+        f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com"
+    )
 
     # If cover_image is already a full URL just use it directly
     if cover_image.startswith("http://") or cover_image.startswith("https://"):
@@ -79,6 +120,50 @@ async def build_cover_url(request: Request, db: AsyncSession, cover_image: str) 
         )
 
     return url
+
+
+async def process_deployment_for_response(
+    request: Request,
+    db: AsyncSession,
+    deployment: Deployment,
+    include_dub_link: bool = False,
+) -> dict:
+    """Process a deployment object into a response dict with all required fields."""
+    deployment_dict = deployment.to_dict()
+
+    # Add cover URL if cover image exists
+    if deployment_dict.get("workflow"):
+        cover_image = deployment_dict["workflow"].get("cover_image")
+        if cover_image:
+            user_info = get_user_info(request)
+            deployment_dict["workflow"]["cover_url"] = (
+                await build_cover_url(request, db, cover_image)
+                if user_info.is_authenticated
+                else cover_image
+            )
+
+    # Get workflow inputs and outputs
+    workflow_api = deployment.version.workflow_api if deployment.version else None
+    inputs = get_inputs_from_workflow_api(workflow_api)
+
+    workflow = deployment.version.workflow if deployment.version else None
+    outputs = get_outputs_from_workflow(workflow)
+
+    # Add required fields
+    deployment_dict["input_types"] = inputs
+    deployment_dict["output_types"] = outputs
+
+    # Add dub link for public share deployments if requested
+    if (
+        include_dub_link
+        and deployment.environment == "public-share"
+        and deployment.share_slug
+    ):
+        dub_link = await get_dub_link(deployment.share_slug)
+        if dub_link:
+            deployment_dict["dub_link"] = dub_link.short_link
+
+    return deployment_dict
 
 
 class GPUType(str, Enum):
@@ -112,6 +197,13 @@ class DeploymentUpdate(BaseModel):
     run_timeout: Optional[int] = None
     idle_timeout: Optional[int] = None
     keep_warm: Optional[int] = None
+
+
+class UserInfo(BaseModel):
+    """User authentication information extracted from request."""
+    is_authenticated: bool
+    user_id: Optional[str] = None
+    org_id: Optional[str] = None
 
 
 async def update_deployment_with_machine(
@@ -206,12 +298,12 @@ async def create_deployment(
     deployment_data: DeploymentCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = request.state.current_user["user_id"]
-    org_id = (
-        request.state.current_user["org_id"]
-        if "org_id" in request.state.current_user
-        else None
-    )
+    user_info = get_user_info(request)
+    if not user_info.is_authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    user_id = user_info.user_id
+    org_id = user_info.org_id
 
     if (
         deployment_data.machine_id is None
@@ -261,8 +353,10 @@ async def create_deployment(
             machine_version = result.scalar_one_or_none()
 
         isPublicShare = deployment_data.environment == "public-share"
+        isPrivateShare = deployment_data.environment == "private-share"
+        isShare = isPublicShare or isPrivateShare
 
-        if isPublicShare:
+        if isShare:
             workflow_id_for_slug = (
                 existing_deployment.workflow_id
                 if existing_deployment
@@ -279,7 +373,7 @@ async def create_deployment(
             generated_slug = await slugify(workflow_obj.name, current_user_id, from_nanoid=False)
 
         share_link = None
-        if isPublicShare and generated_slug and "_" in generated_slug:
+        if isShare and generated_slug and "_" in generated_slug:
             name_part, id_part = generated_slug.split("_", 1)
             domain = (
                 "https://www.comfydeploy.com"  # TODO: Figure out how to get the domain
@@ -486,44 +580,11 @@ async def get_deployments(
         deployments = result.scalars().all()
 
         deployments_data = []
-        dub_link_tasks = {}
-
-        for idx, deployment in enumerate(deployments):
-            deployment_dict = deployment.to_dict()
-
-            if deployment_dict.get("workflow"):
-                cover_image = deployment_dict["workflow"].get("cover_image")
-                if cover_image:
-                    deployment_dict["workflow"]["cover_url"] = await build_cover_url(
-                        request, db, cover_image
-                    )
-
-            workflow_api = (
-                deployment.version.workflow_api if deployment.version else None
+        for deployment in deployments:
+            deployment_dict = await process_deployment_for_response(
+                request, db, deployment, include_dub_link=True
             )
-            inputs = get_inputs_from_workflow_api(workflow_api)
-
-            workflow = deployment.version.workflow if deployment.version else None
-            outputs = get_outputs_from_workflow(workflow)
-
-            if inputs:
-                deployment_dict["input_types"] = inputs
-
-            if outputs:
-                deployment_dict["output_types"] = outputs
-
-            if deployment.environment == "public-share" and deployment.share_slug:
-                dub_link_tasks[idx] = asyncio.create_task(
-                    get_dub_link(deployment.share_slug)
-                )
-
             deployments_data.append(deployment_dict)
-
-        if dub_link_tasks:
-            dub_link_results = await asyncio.gather(*dub_link_tasks.values())
-            for idx, dub_link in zip(dub_link_tasks.keys(), dub_link_results):
-                if dub_link:
-                    deployments_data[idx]["dub_link"] = dub_link.short_link
 
         return deployments_data
 
@@ -543,6 +604,20 @@ async def get_share_deployment(
 ) -> DeploymentShareModel:
     slug = f"{username}_{slug}"
 
+    user_info = get_user_info(request)
+
+    if user_info.is_authenticated:
+        or_case = or_(
+            Deployment.environment == "public-share",
+            Deployment.environment == "community-share",
+            Deployment.environment == "private-share",
+        )
+    else:
+        or_case = or_(
+            Deployment.environment == "public-share",
+            Deployment.environment == "community-share",
+        )
+
     deployment_query = (
         select(Deployment)
         .options(
@@ -555,38 +630,63 @@ async def get_share_deployment(
         .join(Workflow)
         .where(
             Deployment.share_slug == slug,
-            Deployment.environment == "public-share",
-            Workflow.deleted == False,
+            or_case,
+            not_(Workflow.deleted),
         )
     )
+
+    # Apply org check if user is authenticated
+    if user_info.is_authenticated:
+        deployment_query = deployment_query.apply_org_check(request)
 
     result = await db.execute(deployment_query)
     deployment = result.scalar_one_or_none()
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    workflow_api = deployment.version.workflow_api if deployment.version else None
-    inputs = get_inputs_from_workflow_api(workflow_api)
+    # Use helper function to process deployment
+    deployment_dict = await process_deployment_for_response(request, db, deployment)
 
-    workflow = deployment.version.workflow if deployment.version else None
-    outputs = get_outputs_from_workflow(workflow)
-
-    # Just update the deployment with the additional fields
-    deployment_dict = deployment.to_dict()
-    if deployment_dict.get("workflow"):
-        cover_image = deployment_dict["workflow"].get("cover_image")
-        if cover_image:
-            has_auth = hasattr(request, "state") and hasattr(request.state, "current_user")
-            deployment_dict["workflow"]["cover_url"] = (
-                await build_cover_url(request, db, cover_image) if has_auth 
-                else cover_image
-            )
-
-    deployment_dict["input_types"] = inputs
-    deployment_dict["output_types"] = outputs
-
-    # FastAPI will automatically filter based on DeploymentModel
+    # FastAPI will automatically filter based on DeploymentShareModel
     return deployment_dict
+
+
+@router.get("/deployments/community", response_model=List[DeploymentModel])
+async def list_community_deployments(
+    request: Request,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get community share deployments"""
+    deployments_query = (
+        select(Deployment)
+        .options(
+            joinedload(Deployment.workflow).load_only(
+                Workflow.name,
+                Workflow.cover_image,
+            ),
+            joinedload(Deployment.version),
+        )
+        .join(Workflow)
+        .where(
+            Deployment.environment == "community-share",
+            Workflow.deleted == False,
+        )
+        .order_by(Deployment.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    result = await db.execute(deployments_query)
+    deployments_list = result.scalars().all()
+
+    deployments_data = []
+    for deployment in deployments_list:
+        deployment_dict = await process_deployment_for_response(request, db, deployment)
+        deployments_data.append(deployment_dict)
+
+    return deployments_data
 
 
 @router.get(
@@ -622,14 +722,7 @@ async def get_featured_deployments(
 
     deployments_data = []
     for deployment in deployments:
-        deployment_dict = deployment.to_dict()
-
-        if deployment_dict.get("workflow"):
-            cover_image = deployment_dict["workflow"].get("cover_image")
-            if cover_image:
-                deployment_dict["workflow"]["cover_url"] = await build_cover_url(
-                    request, db, cover_image
-                )
+        deployment_dict = await process_deployment_for_response(request, db, deployment)
 
         if deployment.version and hasattr(deployment.version, "workflow"):
             deployment_dict["workflow"]["workflow"] = deployment.version.workflow
@@ -777,31 +870,10 @@ async def get_deployment(
         if not deployment:
             raise HTTPException(status_code=404, detail="Deployment not found")
 
-        # Get workflow inputs and outputs
-        workflow_api = deployment.version.workflow_api if deployment.version else None
-        inputs = get_inputs_from_workflow_api(workflow_api)
-
-        workflow = deployment.version.workflow if deployment.version else None
-        outputs = get_outputs_from_workflow(workflow)
-
-        # Convert to dict and add additional fields
-        deployment_dict = deployment.to_dict()
-        if deployment_dict.get("workflow"):
-            cover_image = deployment_dict["workflow"].get("cover_image")
-            if cover_image:
-                deployment_dict["workflow"]["cover_url"] = await build_cover_url(
-                    request, db, cover_image
-                )
-        if inputs:
-            deployment_dict["input_types"] = inputs
-        if outputs:
-            deployment_dict["output_types"] = outputs
-
-        # Add dub link for public share deployments
-        if deployment.environment == "public-share" and deployment.share_slug:
-            dub_link = await get_dub_link(deployment.share_slug)
-            if dub_link:
-                deployment_dict["dub_link"] = dub_link.short_link
+        # Use helper function to process deployment
+        deployment_dict = await process_deployment_for_response(
+            request, db, deployment, include_dub_link=True
+        )
 
         return deployment_dict
 
@@ -857,12 +929,17 @@ async def delete_deployment(
 # === Helper: build v0 UI spec ==================================================
 
 import os
-from api.utils.component_templates import generate_component_code, generate_api_routes, _slugify_simple
+from api.utils.component_templates import (
+    generate_component_code,
+    generate_api_routes,
+    _slugify_simple,
+)
 
 CURRENT_API_URL = os.getenv("CURRENT_API_URL")
 
 
 # === Route: Generate v0 UI spec ===============================================
+
 
 @router.get(
     "/deployment/{deployment_id}/v0-ui-spec",
@@ -902,7 +979,9 @@ async def get_deployment_v0_ui_spec(
         component_code, deps = generate_component_code(inputs)
 
         # Build registry spec
-        workflow_name = deployment.workflow.name if deployment.workflow else "deployment"
+        workflow_name = (
+            deployment.workflow.name if deployment.workflow else "deployment"
+        )
         slug_name = _slugify_simple(workflow_name)
         block_name = f"workflow-{slug_name}"
 

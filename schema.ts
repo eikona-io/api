@@ -218,6 +218,7 @@ export const deploymentEnvironment = pgEnum("deployment_environment", [
     "production",
     "public-share",
     "private-share",
+    "community-share",
 ]);
 
 export const workflowRunOrigin = pgEnum("workflow_run_origin", [
@@ -1206,3 +1207,47 @@ export type SubscriptionStatusType = InferSelectModel<
 export type GpuEventType = InferSelectModel<typeof gpuEvents>;
 export type MachineVersionType = InferSelectModel<typeof machineVersionsTable>;
 export type SharedWorkflowType = InferSelectModel<typeof sharedWorkflowsTable>;
+
+export const outputShareVisibility = pgEnum("output_share_visibility", [
+  "private",
+  "public",
+  "link"
+]);
+
+export const outputType = pgEnum("output_type", [
+  "image",
+  "video", 
+  "3d",
+  "other"
+]);
+
+export const outputSharesTable = dbSchema.table("output_shares", {
+  id: uuid("id").primaryKey().defaultRandom().notNull(),
+  user_id: text("user_id").references(() => usersTable.id).notNull(),
+  org_id: text("org_id"),
+  run_id: uuid("run_id").references(() => workflowRunsTable.id).notNull(),
+  output_id: uuid("output_id").references(() => workflowRunOutputs.id).notNull(),
+  output_data: jsonb("output_data").$type<any>(),
+  inputs: jsonb("inputs").$type<any>(),
+  output_type: outputType("output_type").notNull().default("other"),
+  visibility: outputShareVisibility("visibility").notNull().default("private"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const outputSharesRelations = relations(outputSharesTable, ({ one }) => ({
+  run: one(workflowRunsTable, {
+    fields: [outputSharesTable.run_id],
+    references: [workflowRunsTable.id],
+  }),
+  user: one(usersTable, {
+    fields: [outputSharesTable.user_id],
+    references: [usersTable.id],
+  }),
+  output: one(workflowRunOutputs, {
+    fields: [outputSharesTable.output_id],
+    references: [workflowRunOutputs.id],
+  }),
+}));
+
+export type OutputShareType = InferSelectModel<typeof outputSharesTable>;

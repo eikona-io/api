@@ -362,6 +362,7 @@ class Deployment(SerializableMixin, Base):
             "production",
             "public-share",
             "private-share",
+            "community-share",
             "preview",
             name="deployment_environment",
         ),
@@ -634,6 +635,41 @@ class UserSettings(SerializableMixin, Base):
 
     # target_workflow = relationship("Workflow", foreign_keys=[target_workflow_id])
     # workflows = relationship("Workflow", back_populates="machine", foreign_keys=[Workflow.selected_machine_id])
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Create a UserSettings instance from a dictionary (e.g., from cache)"""
+        if data is None:
+            return None
+            
+        # Create new instance
+        instance = cls()
+        
+        # Set attributes that exist in the model
+        for key, value in data.items():
+            if hasattr(instance, key) and not key.startswith('_'):
+                # Handle datetime strings
+                if key in ['created_at', 'updated_at'] and isinstance(value, str):
+                    try:
+                        from datetime import datetime
+                        # Parse ISO format datetime string
+                        if value.endswith('Z'):
+                            value = value[:-1] + '+00:00'
+                        value = datetime.fromisoformat(value)
+                    except (ValueError, TypeError):
+                        pass  # Keep original value if parsing fails
+                
+                # Handle UUID strings
+                if key == 'id' and isinstance(value, str):
+                    try:
+                        from uuid import UUID
+                        value = UUID(value)
+                    except (ValueError, TypeError):
+                        pass  # Keep original value if parsing fails
+                        
+                setattr(instance, key, value)
+                
+        return instance
 
 
 class Model(SerializableMixin, Base):
@@ -919,3 +955,39 @@ class SharedWorkflow(SerializableMixin, Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+class OutputShare(SerializableMixin, Base):
+    __tablename__ = "output_shares"
+    metadata = metadata
+
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    org_id = Column(String)
+    run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"), nullable=False)
+    output_id = Column(UUID(as_uuid=True), ForeignKey("workflow_run_outputs.id"), nullable=False)
+    output_data = Column(JSON)
+    inputs = Column(JSON)
+    output_type = Column(
+        Enum("image", "video", "3d", "other", name="output_type"),
+        nullable=False,
+        default="other"
+    )
+    visibility = Column(
+        Enum("private", "public", "link", name="output_share_visibility"),
+        nullable=False,
+        default="private"
+    )
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    run = relationship("WorkflowRun", foreign_keys=[run_id])
+    user = relationship("User", foreign_keys=[user_id])
+    output = relationship("WorkflowRunOutput", foreign_keys=[output_id])
