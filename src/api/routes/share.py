@@ -268,6 +268,8 @@ async def list_output_shares(
     include_public: bool = Query(
         True, description="Include public shares for authenticated users"
     ),
+    limit: int = Query(20, description="Maximum number of items to return"),
+    offset: int = Query(0, description="Number of items to skip"),
     db: AsyncSession = Depends(get_db),
 ):
     user = getattr(request.state, "current_user", None)
@@ -297,7 +299,7 @@ async def list_output_shares(
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.order_by(OutputShare.created_at.desc())
+    query = query.order_by(OutputShare.created_at.desc()).paginate(limit, offset)
 
     result = await db.execute(query)
     shares = result.scalars().all()
