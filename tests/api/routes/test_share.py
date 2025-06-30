@@ -19,5 +19,5 @@ async def test_share_output_prevent_duplicate(
             "/share/output",
             json={"run_id": run_id, "output_id": output_id},
         )
-        assert response_dup.status_code == 400
-        assert "Output already shared" in response_dup.text
+        assert response_dup.status_code == 200
+        assert response_dup.json()["id"] == response.json()["id"]
