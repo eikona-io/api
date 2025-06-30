@@ -114,20 +114,37 @@ async def stream_logs(
                         status_code=404, detail=f"{id_type.capitalize()} not found"
                     )
 
-        # Check permissions based on org_id or user_id
-        has_permission = False
-        if hasattr(entity, "org_id") and entity.org_id is not None:
-            has_permission = entity.org_id == current_user.get("org_id")
-        elif hasattr(entity, "user_id") and entity.user_id is not None:
-            has_permission = (
-                entity.user_id == current_user.get("user_id")
-                and current_user.get("org_id") is None
-            )
+            # Check permissions based on workflow access for runs
+            if id_type == "run":
+                # Get the workflow associated with this run
+                workflow_query = (
+                    select(Workflow)
+                    .where(Workflow.id == entity.workflow_id)
+                    .where(~Workflow.deleted)
+                    .apply_org_check(request)
+                )
+                workflow_result = await db.execute(workflow_query)
+                workflow = workflow_result.scalar_one_or_none()
+                
+                if not workflow:
+                    raise HTTPException(
+                        status_code=403, detail="Not authorized to access these logs"
+                    )
+            else:
+                # Original permission check for workflow and machine
+                has_permission = False
+                if hasattr(entity, "org_id") and entity.org_id is not None:
+                    has_permission = entity.org_id == current_user.get("org_id")
+                elif hasattr(entity, "user_id") and entity.user_id is not None:
+                    has_permission = (
+                        entity.user_id == current_user.get("user_id")
+                        and current_user.get("org_id") is None
+                    )
 
-        if not has_permission:
-            raise HTTPException(
-                status_code=403, detail="Not authorized to access these logs"
-            )
+                if not has_permission:
+                    raise HTTPException(
+                        status_code=403, detail="Not authorized to access these logs"
+                    )
 
         # Stream logs
         last_timestamp = None
