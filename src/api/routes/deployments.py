@@ -370,9 +370,7 @@ async def create_deployment(
                 raise HTTPException(status_code=404, detail="Workflow not found")
             current_user_id = org_id if org_id else user_id
 
-            generated_slug = await slugify(
-                workflow_obj.name, current_user_id, from_nanoid=False
-            )
+            generated_slug = await slugify(workflow_obj.name, current_user_id, from_nanoid=False)
 
         share_link = None
         if isShare and generated_slug and "_" in generated_slug:
