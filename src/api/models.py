@@ -932,6 +932,7 @@ class OutputShare(SerializableMixin, Base):
     run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"), nullable=False)
     output_id = Column(UUID(as_uuid=True), ForeignKey("workflow_run_outputs.id"), nullable=False)
     output_data = Column(JSON)
+    inputs = Column(JSON)
     output_type = Column(
         Enum("image", "video", "3d", "other", name="output_type"),
         nullable=False,

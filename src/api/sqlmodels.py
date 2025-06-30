@@ -68,6 +68,7 @@ class OutputShare(SQLModel, table=True):
     run_id: uuid.UUID = Field(foreign_key="workflow_runs.id")
     output_id: uuid.UUID = Field(foreign_key="workflow_run_outputs.id")
     output_data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    inputs: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     output_type: OutputType = Field(default=OutputType.OTHER)
     visibility: OutputShareVisibility = Field(default=OutputShareVisibility.PRIVATE)
     created_at: datetime = Field()

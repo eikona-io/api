@@ -1,0 +1,1 @@
+ALTER TABLE "comfyui_deploy"."output_shares" ADD COLUMN "inputs" jsonb;
