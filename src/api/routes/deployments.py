@@ -153,15 +153,15 @@ async def process_deployment_for_response(
     deployment_dict["input_types"] = inputs
     deployment_dict["output_types"] = outputs
 
-    # Add dub link for public share deployments if requested
-    if (
-        include_dub_link
-        and deployment.environment == "public-share"
-        and deployment.share_slug
-    ):
-        dub_link = await get_dub_link(deployment.share_slug)
-        if dub_link:
-            deployment_dict["dub_link"] = dub_link.short_link
+    # # Add dub link for public share deployments if requested
+    # if (
+    #     include_dub_link
+    #     and deployment.environment == "public-share"
+    #     and deployment.share_slug
+    # ):
+    #     dub_link = await get_dub_link(deployment.share_slug)
+    #     if dub_link:
+    #         deployment_dict["dub_link"] = dub_link.short_link
 
     return deployment_dict
 
