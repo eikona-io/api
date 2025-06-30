@@ -362,6 +362,7 @@ class Deployment(SerializableMixin, Base):
             "production",
             "public-share",
             "private-share",
+            "community-share",
             "preview",
             name="deployment_environment",
         ),

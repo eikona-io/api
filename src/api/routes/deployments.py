@@ -81,6 +81,45 @@ async def build_cover_url(request: Request, db: AsyncSession, cover_image: str) 
     return url
 
 
+async def process_deployment_for_response(
+    request: Request, 
+    db: AsyncSession, 
+    deployment: Deployment, 
+    include_dub_link: bool = False
+) -> dict:
+    """Process a deployment object into a response dict with all required fields."""
+    deployment_dict = deployment.to_dict()
+    
+    # Add cover URL if cover image exists
+    if deployment_dict.get("workflow"):
+        cover_image = deployment_dict["workflow"].get("cover_image")
+        if cover_image:
+            has_auth = hasattr(request, "state") and hasattr(request.state, "current_user")
+            deployment_dict["workflow"]["cover_url"] = (
+                await build_cover_url(request, db, cover_image) if has_auth
+                else cover_image
+            )
+    
+    # Get workflow inputs and outputs
+    workflow_api = deployment.version.workflow_api if deployment.version else None
+    inputs = get_inputs_from_workflow_api(workflow_api)
+
+    workflow = deployment.version.workflow if deployment.version else None
+    outputs = get_outputs_from_workflow(workflow)
+
+    # Add required fields
+    deployment_dict["input_types"] = inputs
+    deployment_dict["output_types"] = outputs
+    
+    # Add dub link for public share deployments if requested
+    if include_dub_link and deployment.environment == "public-share" and deployment.share_slug:
+        dub_link = await get_dub_link(deployment.share_slug)
+        if dub_link:
+            deployment_dict["dub_link"] = dub_link.short_link
+    
+    return deployment_dict
+
+
 class GPUType(str, Enum):
     CPU = "CPU"
     T4 = "T4"
@@ -488,44 +527,11 @@ async def get_deployments(
         deployments = result.scalars().all()
 
         deployments_data = []
-        dub_link_tasks = {}
-
-        for idx, deployment in enumerate(deployments):
-            deployment_dict = deployment.to_dict()
-
-            if deployment_dict.get("workflow"):
-                cover_image = deployment_dict["workflow"].get("cover_image")
-                if cover_image:
-                    deployment_dict["workflow"]["cover_url"] = await build_cover_url(
-                        request, db, cover_image
-                    )
-
-            workflow_api = (
-                deployment.version.workflow_api if deployment.version else None
+        for deployment in deployments:
+            deployment_dict = await process_deployment_for_response(
+                request, db, deployment, include_dub_link=True
             )
-            inputs = get_inputs_from_workflow_api(workflow_api)
-
-            workflow = deployment.version.workflow if deployment.version else None
-            outputs = get_outputs_from_workflow(workflow)
-
-            if inputs:
-                deployment_dict["input_types"] = inputs
-
-            if outputs:
-                deployment_dict["output_types"] = outputs
-
-            # if deployment.environment == "public-share" and deployment.share_slug:
-            #    dub_link_tasks[idx] = asyncio.create_task(
-            #        get_dub_link(deployment.share_slug)
-            #    )
-
             deployments_data.append(deployment_dict)
-
-        if dub_link_tasks:
-            dub_link_results = await asyncio.gather(*dub_link_tasks.values())
-            for idx, dub_link in zip(dub_link_tasks.keys(), dub_link_results):
-                if dub_link:
-                    deployments_data[idx]["dub_link"] = dub_link.short_link
 
         return deployments_data
 
@@ -567,32 +573,16 @@ async def get_share_deployment(
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    workflow_api = deployment.version.workflow_api if deployment.version else None
-    inputs = get_inputs_from_workflow_api(workflow_api)
+    # Use helper function to process deployment
+    deployment_dict = await process_deployment_for_response(request, db, deployment)
 
-    workflow = deployment.version.workflow if deployment.version else None
-    outputs = get_outputs_from_workflow(workflow)
-
-    # Just update the deployment with the additional fields
-    deployment_dict = deployment.to_dict()
-    if deployment_dict.get("workflow"):
-        cover_image = deployment_dict["workflow"].get("cover_image")
-        if cover_image:
-            has_auth = hasattr(request, "state") and hasattr(request.state, "current_user")
-            deployment_dict["workflow"]["cover_url"] = (
-                await build_cover_url(request, db, cover_image) if has_auth
-                else cover_image
-            )
-
-    deployment_dict["input_types"] = inputs
-    deployment_dict["output_types"] = outputs
-
-    # FastAPI will automatically filter based on DeploymentModel
+    # FastAPI will automatically filter based on DeploymentShareModel
     return deployment_dict
 
 
-@router.get("/deployments/community", response_model=List[DeploymentShareModel])
+@router.get("/deployments/community", response_model=List[DeploymentModel])
 async def list_community_deployments(
+    request: Request,
     limit: int = 20,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -620,7 +610,12 @@ async def list_community_deployments(
     result = await db.execute(deployments_query)
     deployments_list = result.scalars().all()
     
-    return [deployment.to_share_dict() for deployment in deployments_list]
+    deployments_data = []
+    for deployment in deployments_list:
+        deployment_dict = await process_deployment_for_response(request, db, deployment)
+        deployments_data.append(deployment_dict)
+    
+    return deployments_data
 
 
 @router.get(
@@ -656,14 +651,7 @@ async def get_featured_deployments(
 
     deployments_data = []
     for deployment in deployments:
-        deployment_dict = deployment.to_dict()
-
-        if deployment_dict.get("workflow"):
-            cover_image = deployment_dict["workflow"].get("cover_image")
-            if cover_image:
-                deployment_dict["workflow"]["cover_url"] = await build_cover_url(
-                    request, db, cover_image
-                )
+        deployment_dict = await process_deployment_for_response(request, db, deployment)
 
         if deployment.version and hasattr(deployment.version, "workflow"):
             deployment_dict["workflow"]["workflow"] = deployment.version.workflow
@@ -811,31 +799,10 @@ async def get_deployment(
         if not deployment:
             raise HTTPException(status_code=404, detail="Deployment not found")
 
-        # Get workflow inputs and outputs
-        workflow_api = deployment.version.workflow_api if deployment.version else None
-        inputs = get_inputs_from_workflow_api(workflow_api)
-
-        workflow = deployment.version.workflow if deployment.version else None
-        outputs = get_outputs_from_workflow(workflow)
-
-        # Convert to dict and add additional fields
-        deployment_dict = deployment.to_dict()
-        if deployment_dict.get("workflow"):
-            cover_image = deployment_dict["workflow"].get("cover_image")
-            if cover_image:
-                deployment_dict["workflow"]["cover_url"] = await build_cover_url(
-                    request, db, cover_image
-                )
-        if inputs:
-            deployment_dict["input_types"] = inputs
-        if outputs:
-            deployment_dict["output_types"] = outputs
-
-        # Add dub link for public share deployments
-        if deployment.environment == "public-share" and deployment.share_slug:
-            dub_link = await get_dub_link(deployment.share_slug)
-            if dub_link:
-                deployment_dict["dub_link"] = dub_link.short_link
+        # Use helper function to process deployment
+        deployment_dict = await process_deployment_for_response(
+            request, db, deployment, include_dub_link=True
+        )
 
         return deployment_dict
 
