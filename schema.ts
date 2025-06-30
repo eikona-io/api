@@ -218,6 +218,7 @@ export const deploymentEnvironment = pgEnum("deployment_environment", [
     "production",
     "public-share",
     "private-share",
+    "community-share",
 ]);
 
 export const workflowRunOrigin = pgEnum("workflow_run_origin", [

@@ -543,6 +543,7 @@ class DeploymentEnvironment(str, Enum):
     PUBLIC_SHARE = "public-share"
     PRIVATE_SHARE = "private-share"
     PREVIEW = "preview"
+    COMMUNITY_SHARE = "community-share"
 
 class WorkflowWithName(BaseModel):
     id: UUID

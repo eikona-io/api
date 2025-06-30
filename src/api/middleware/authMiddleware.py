@@ -29,6 +29,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/user/*",
             "/api/platform/stripe/webhook",
             "/api/platform/comfyui/auth-response",
+            "/api/deployments/community",
         ]
         self.optional_auth_routes = [
             "/api/share/*",

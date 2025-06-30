@@ -589,6 +589,38 @@ async def get_share_deployment(
     return deployment_dict
 
 
+@router.get("/deployments/community", response_model=List[DeploymentShareModel])
+async def list_community_deployments(
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get community share deployments"""
+    deployments_query = (
+        select(Deployment)
+        .options(
+            joinedload(Deployment.workflow).load_only(
+                Workflow.name,
+                Workflow.cover_image,
+            ),
+            joinedload(Deployment.version),
+        )
+        .join(Workflow)
+        .where(
+            Deployment.environment == "community-share",
+            Workflow.deleted == False,
+        )
+        .order_by(Deployment.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    
+    result = await db.execute(deployments_query)
+    deployments_list = result.scalars().all()
+    
+    return [deployment.to_share_dict() for deployment in deployments_list]
+
+
 @router.get(
     "/deployments/featured",
     response_model=List[DeploymentFeaturedModel],
