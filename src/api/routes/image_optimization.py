@@ -13,7 +13,8 @@ from api.utils.retrieve_s3_config_helper import retrieve_s3_config, S3Config
 from .utils import (
     get_user_settings, 
     generate_presigned_url,
-    generate_presigned_download_url
+    generate_presigned_download_url,
+    get_user_settings_cached_as_object
 )
 from api.database import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,7 +50,7 @@ async def optimize_image_on_demand(
         transform_config = parse_transformations(transformations)
         
         # Get user settings and S3 configuration
-        user_settings = await get_user_settings(request, db)
+        user_settings = await get_user_settings_cached_as_object(request, db)
         s3_config = await retrieve_s3_config(user_settings)
         
         # Generate cache key for optimized image
@@ -98,7 +99,7 @@ async def optimize_image_on_demand(
             "error": str(e)
         })
         # Fallback to original image if we have s3_config
-        user_settings = await get_user_settings(request, db)
+        user_settings = await get_user_settings_cached_as_object(request, db)
         s3_config = await retrieve_s3_config(user_settings)
         return await get_fallback_response(s3_config, s3_key, user_settings, cache)
 
@@ -276,7 +277,13 @@ async def check_s3_object_exists(s3_config: S3Config, s3_key: str) -> bool:
             return False
         raise
 
-
+@multi_level_cached(
+    key_prefix="s3_object_public",
+    ttl_seconds=3600,  # 1 hour for memory cache
+    redis_ttl_seconds=86400,  # 24 hours for Redis cache
+    version="1.0",
+    key_builder=lambda config, s3_key: f"s3_object_public:{s3_key}",
+)
 async def check_s3_object_public(s3_config: S3Config, s3_key: str) -> bool:
     """Check if S3 object is publicly accessible"""
     import aioboto3

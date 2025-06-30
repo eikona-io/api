@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from api.utils.retrieve_s3_config_helper import retrieve_s3_config, S3Config
+from api.utils.multi_level_cache import multi_level_cached
 from upstash_redis.asyncio import Redis
 import logging
 from typing import Any, Literal, Self, TypeVar, Tuple, Union, Dict
@@ -141,13 +142,16 @@ T = TypeVar("T")
 clerk_token = os.getenv("CLERK_SECRET_KEY")
 
 
-def async_lru_cache(maxsize=128, typed=False, expire_after=None):
+def async_lru_cache(maxsize=128, typed=False, expire_after=None, key_builder=None):
     def decorator(async_func):
         cache = {}
 
         @wraps(async_func)
         async def wrapper(*args, **kwargs):
-            cache_key = args + tuple(sorted(kwargs.items()))
+            if key_builder:
+                cache_key = key_builder(*args, **kwargs)
+            else:
+                cache_key = args + tuple(sorted(kwargs.items()))
             now = datetime.now()
 
             if cache_key in cache:
@@ -564,6 +568,46 @@ async def get_user_settings(request: Request, db: AsyncSession):
         user_settings.s3_secret_access_key = secret_manager.decrypt_value(user_settings.encrypted_s3_key)
 
     return user_settings
+
+
+@multi_level_cached(
+    key_prefix="user_settings",
+    ttl_seconds=60,  # Local memory cache
+    redis_ttl_seconds=300,  # Redis cache
+    version="1.0",
+    key_builder=lambda req, db: f"user_settings:{req.state.current_user['user_id']}:{req.state.current_user.get('org_id')}"
+)
+async def get_user_settings_cached(request: Request, db: AsyncSession):
+    """
+    Cached version of get_user_settings with 60-second memory cache and 5-minute Redis cache.
+    Cache key is based on user_id and org_id from the request.
+    Uses multi-level caching with stale-while-revalidate pattern.
+    """
+    print("get_user_settings_cached")
+    result = await get_user_settings(request, db)
+    
+    # Convert UserSettings object to dict for proper caching serialization
+    if isinstance(result, UserSettings):
+        return result.to_dict()
+    
+    return result
+
+
+async def get_user_settings_cached_as_object(request: Request, db: AsyncSession):
+    """
+    Wrapper that returns a proper UserSettings object, handling reconstruction from cached dict.
+    """
+    cached_data = await get_user_settings_cached(request, db)
+    
+    # If cached data is a dict, reconstruct UserSettings object
+    if isinstance(cached_data, dict):
+        return UserSettings.from_dict(cached_data)
+    
+    # If it's already a UserSettings object (shouldn't happen with current caching), return as-is
+    if isinstance(cached_data, UserSettings):
+        return cached_data
+    
+    return cached_data
 
 
 def get_temporary_download_url(

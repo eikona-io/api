@@ -636,6 +636,41 @@ class UserSettings(SerializableMixin, Base):
     # target_workflow = relationship("Workflow", foreign_keys=[target_workflow_id])
     # workflows = relationship("Workflow", back_populates="machine", foreign_keys=[Workflow.selected_machine_id])
 
+    @classmethod
+    def from_dict(cls, data: dict):
+        """Create a UserSettings instance from a dictionary (e.g., from cache)"""
+        if data is None:
+            return None
+            
+        # Create new instance
+        instance = cls()
+        
+        # Set attributes that exist in the model
+        for key, value in data.items():
+            if hasattr(instance, key) and not key.startswith('_'):
+                # Handle datetime strings
+                if key in ['created_at', 'updated_at'] and isinstance(value, str):
+                    try:
+                        from datetime import datetime
+                        # Parse ISO format datetime string
+                        if value.endswith('Z'):
+                            value = value[:-1] + '+00:00'
+                        value = datetime.fromisoformat(value)
+                    except (ValueError, TypeError):
+                        pass  # Keep original value if parsing fails
+                
+                # Handle UUID strings
+                if key == 'id' and isinstance(value, str):
+                    try:
+                        from uuid import UUID
+                        value = UUID(value)
+                    except (ValueError, TypeError):
+                        pass  # Keep original value if parsing fails
+                        
+                setattr(instance, key, value)
+                
+        return instance
+
 
 class Model(SerializableMixin, Base):
     __tablename__ = "models"
