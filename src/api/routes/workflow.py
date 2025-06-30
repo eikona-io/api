@@ -318,19 +318,29 @@ async def get_runs_day(
     deployment_id: Optional[UUID] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    # Check if workflow exists and user has access
+    workflow = await db.execute(
+        select(Workflow)
+        .where(Workflow.id == workflow_id)
+        .where(~Workflow.deleted)
+        .apply_org_check(request)
+    )
+    workflow = workflow.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(
+            status_code=404,
+            detail="Workflow not found or you don't have access to it"
+        )
+
     params = {
         "workflow_id": workflow_id,
-        "org_id": request.state.current_user.get("org_id", None),
-        "user_id": request.state.current_user["user_id"],
     }
 
     query = """
-    SELECT r.id, r.created_at, r.status FROM comfyui_deploy.workflow_runs r
+    SELECT r.id, r.created_at, r.status 
+    FROM comfyui_deploy.workflow_runs r
     WHERE r.workflow_id = :workflow_id
-    AND (
-        (CAST(:org_id AS TEXT) IS NOT NULL AND r.org_id = CAST(:org_id AS TEXT))
-        OR (CAST(:org_id AS TEXT) IS NULL AND r.org_id IS NULL AND r.user_id = CAST(:user_id AS TEXT))
-    )
     AND r.created_at >= NOW() - INTERVAL '24 hours'
     """
 
@@ -344,6 +354,7 @@ async def get_runs_day(
 
     result = await db.execute(text(query), params)
     runs = [serialize_row(dict(row._mapping)) for row in result.fetchall()]
+    
     if not runs:
         return []
 
