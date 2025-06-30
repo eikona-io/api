@@ -261,8 +261,10 @@ async def create_deployment(
             machine_version = result.scalar_one_or_none()
 
         isPublicShare = deployment_data.environment == "public-share"
+        isPrivateShare = deployment_data.environment == "private-share"
+        isShare = isPublicShare or isPrivateShare
 
-        if isPublicShare:
+        if isShare:
             workflow_id_for_slug = (
                 existing_deployment.workflow_id
                 if existing_deployment
@@ -276,10 +278,10 @@ async def create_deployment(
                 raise HTTPException(status_code=404, detail="Workflow not found")
             current_user_id = org_id if org_id else user_id
 
-            generated_slug = await slugify(workflow_obj.name, current_user_id)
+            generated_slug = await slugify(workflow_obj.name, current_user_id, from_nanoid=False)
 
         share_link = None
-        if isPublicShare and generated_slug and "_" in generated_slug:
+        if isShare and generated_slug and "_" in generated_slug:
             name_part, id_part = generated_slug.split("_", 1)
             domain = (
                 "https://www.comfydeploy.com"  # TODO: Figure out how to get the domain
