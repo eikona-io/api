@@ -1,0 +1,1 @@
+ALTER TYPE "public"."deployment_environment" ADD VALUE 'community-share';
