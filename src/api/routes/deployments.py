@@ -923,7 +923,7 @@ async def delete_deployment(
                 detail="Share deployment not found or you can only delete share deployments",
             )
 
-        await deactivate_deployment(request, deployment_id, db)
+        # await deactivate_deployment(request, deployment_id, db)
 
         # Delete the deployment
         await db.delete(deployment)
