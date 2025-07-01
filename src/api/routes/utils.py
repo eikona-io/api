@@ -599,7 +599,7 @@ async def get_user_settings_cached_as_object(request: Request, db: AsyncSession)
     """
     Wrapper that returns a proper UserSettings object, handling reconstruction from cached dict.
     """
-    cached_data = await get_user_settings_cached(request, db)
+    cached_data = await get_user_settings_cached(request)
     
     # If cached data is a dict, reconstruct UserSettings object
     if isinstance(cached_data, dict):
