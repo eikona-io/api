@@ -64,7 +64,7 @@ class UserInfo(BaseModel):
 def get_user_info(request: Request) -> UserInfo:
     """
     Extract user information from request if authenticated.
-    
+
     Returns:
         UserInfo object with authentication status and user details
     """
@@ -74,7 +74,7 @@ def get_user_info(request: Request) -> UserInfo:
             user_id=None,
             org_id=None
         )
-    
+
     current_user = request.state.current_user
     return UserInfo(
         is_authenticated=True,
@@ -86,7 +86,7 @@ def get_user_info(request: Request) -> UserInfo:
 def is_authenticated(request: Request) -> bool:
     """
     Check if the request has valid authentication.
-    
+
     Returns:
         bool indicating if user is authenticated
     """
@@ -186,6 +186,7 @@ class DeploymentCreate(BaseModel):
     machine_version_id: Optional[str] = None
     environment: str
     description: Optional[str] = None
+d to     deployment_id: Optional[str] = None
 
 
 class DeploymentUpdate(BaseModel):
@@ -301,7 +302,7 @@ async def create_deployment(
     user_info = get_user_info(request)
     if not user_info.is_authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
-    
+
     user_id = user_info.user_id
     org_id = user_info.org_id
 
@@ -314,15 +315,23 @@ async def create_deployment(
         )
 
     try:
-        # Check for existing deployment with same environment
-        existing_deployment_query = (
-            select(Deployment)
-            .where(
-                Deployment.workflow_id == deployment_data.workflow_id,
-                Deployment.environment == deployment_data.environment,
+        # Check for existing deployment - either by deployment_id or by workflow_id + environment
+        existing_deployment = None
+        if deployment_data.deployment_id:
+            existing_deployment_query = (
+                select(Deployment)
+                .where(Deployment.id == deployment_data.deployment_id)
+                .apply_org_check(request)
             )
-            .apply_org_check(request)
-        )
+        else:
+            existing_deployment_query = (
+                select(Deployment)
+                .where(
+                    Deployment.workflow_id == deployment_data.workflow_id,
+                    Deployment.environment == deployment_data.environment,
+                )
+                .apply_org_check(request)
+            )
 
         result = await db.execute(existing_deployment_query)
         existing_deployment = result.scalar_one_or_none()
@@ -354,7 +363,8 @@ async def create_deployment(
 
         isPublicShare = deployment_data.environment == "public-share"
         isPrivateShare = deployment_data.environment == "private-share"
-        isShare = isPublicShare or isPrivateShare
+        isCommunityShare = deployment_data.environment == "community-share"
+        isShare = isPublicShare or isPrivateShare or isCommunityShare
 
         if isShare:
             workflow_id_for_slug = (
@@ -387,8 +397,8 @@ async def create_deployment(
 
         if existing_deployment:
             # Update existing deployment
-            if deployment_data.environment == "public-share":
-                existing_deployment.share_slug = previous_share_slug
+            if deployment_data.environment in ["public-share", "community-share"]:
+                existing_deployment.share_slug = previous_share_slug or generated_slug
             else:
                 existing_deployment.share_slug = None
             existing_deployment.workflow_version_id = (
@@ -899,7 +909,7 @@ async def delete_deployment(
             select(Deployment)
             .where(
                 Deployment.id == deployment_id,
-                Deployment.environment.in_(["public-share", "private-share"]),
+                Deployment.environment.in_(["public-share", "private-share", "community-share"]),
             )
             .apply_org_check(request)
         )
