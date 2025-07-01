@@ -186,7 +186,7 @@ class DeploymentCreate(BaseModel):
     machine_version_id: Optional[str] = None
     environment: str
     description: Optional[str] = None
-d to     deployment_id: Optional[str] = None
+    deployment_id: Optional[str] = None
 
 
 class DeploymentUpdate(BaseModel):
