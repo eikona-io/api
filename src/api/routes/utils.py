@@ -14,7 +14,7 @@ from sqlalchemy.sql.selectable import _ColumnsClauseArgument
 import os
 from typing import Optional, cast
 from sqlalchemy.ext.asyncio import AsyncSession
-from api.database import get_db
+from api.database import get_db, get_db_context
 from api.models import UserSettings
 from pprint import pprint
 import json
@@ -575,29 +575,31 @@ async def get_user_settings(request: Request, db: AsyncSession):
     ttl_seconds=60,  # Local memory cache
     redis_ttl_seconds=300,  # Redis cache
     version="1.0",
-    key_builder=lambda req, db: f"user_settings:{req.state.current_user['user_id']}:{req.state.current_user.get('org_id')}"
+    key_builder=lambda req: f"user_settings:{req.state.current_user['user_id']}:{req.state.current_user.get('org_id')}"
 )
-async def get_user_settings_cached(request: Request, db: AsyncSession):
+async def get_user_settings_cached(request: Request):
     """
     Cached version of get_user_settings with 60-second memory cache and 5-minute Redis cache.
     Cache key is based on user_id and org_id from the request.
     Uses multi-level caching with stale-while-revalidate pattern.
     """
     print("get_user_settings_cached")
-    result = await get_user_settings(request, db)
     
-    # Convert UserSettings object to dict for proper caching serialization
-    if isinstance(result, UserSettings):
-        return result.to_dict()
+    async with get_db_context() as db:
+        result = await get_user_settings(request, db)
     
-    return result
+        # Convert UserSettings object to dict for proper caching serialization
+        if isinstance(result, UserSettings):
+            return result.to_dict()
+        
+        return result
 
 
 async def get_user_settings_cached_as_object(request: Request, db: AsyncSession):
     """
     Wrapper that returns a proper UserSettings object, handling reconstruction from cached dict.
     """
-    cached_data = await get_user_settings_cached(request, db)
+    cached_data = await get_user_settings_cached(request)
     
     # If cached data is a dict, reconstruct UserSettings object
     if isinstance(cached_data, dict):
