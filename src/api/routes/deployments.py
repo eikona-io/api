@@ -366,21 +366,31 @@ async def create_deployment(
         isCommunityShare = deployment_data.environment == "community-share"
         isShare = isPublicShare or isPrivateShare or isCommunityShare
 
+        isUpdate = existing_deployment is not None
+        previous_share_slug = existing_deployment.share_slug if isUpdate else None
+        
+        # Only generate new slug if we don't have an existing one for share environments
+        generated_slug = None
         if isShare:
-            workflow_id_for_slug = (
-                existing_deployment.workflow_id
-                if existing_deployment
-                else deployment_data.workflow_id
-            )
-            workflow_result = await db.execute(
-                select(Workflow).where(Workflow.id == workflow_id_for_slug)
-            )
-            workflow_obj = workflow_result.scalar_one_or_none()
-            if not workflow_obj:
-                raise HTTPException(status_code=404, detail="Workflow not found")
-            current_user_id = org_id if org_id else user_id
+            if previous_share_slug:
+                # Use existing slug if we already have one
+                generated_slug = previous_share_slug
+            else:
+                # Generate new slug only if we don't have one
+                workflow_id_for_slug = (
+                    existing_deployment.workflow_id
+                    if existing_deployment
+                    else deployment_data.workflow_id
+                )
+                workflow_result = await db.execute(
+                    select(Workflow).where(Workflow.id == workflow_id_for_slug)
+                )
+                workflow_obj = workflow_result.scalar_one_or_none()
+                if not workflow_obj:
+                    raise HTTPException(status_code=404, detail="Workflow not found")
+                current_user_id = org_id if org_id else user_id
 
-            generated_slug = await slugify(workflow_obj.name, current_user_id, from_nanoid=False)
+                generated_slug = await slugify(workflow_obj.name, current_user_id, from_nanoid=False)
 
         share_link = None
         if isShare and generated_slug and "_" in generated_slug:
@@ -389,16 +399,12 @@ async def create_deployment(
                 "https://www.comfydeploy.com"  # TODO: Figure out how to get the domain
             )
             share_link = f"{domain}/share/{name_part}/{id_part}"
-        else:
-            generated_slug = None
-
-        isUpdate = existing_deployment is not None
-        previous_share_slug = existing_deployment.share_slug if isUpdate else None
 
         if existing_deployment:
             # Update existing deployment
+            existing_deployment.environment = deployment_data.environment
             if deployment_data.environment in ["public-share", "community-share"]:
-                existing_deployment.share_slug = previous_share_slug or generated_slug
+                existing_deployment.share_slug = generated_slug
             else:
                 existing_deployment.share_slug = None
             existing_deployment.workflow_version_id = (
