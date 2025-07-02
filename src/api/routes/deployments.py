@@ -30,7 +30,7 @@ from typing import Optional
 from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
 from .share import get_dub_link
-from sqlalchemy import func, not_
+from sqlalchemy import func, not_, and_
 import asyncio
 from nanoid import generate
 from sqlalchemy import or_
@@ -620,20 +620,22 @@ async def get_share_deployment(
     db: AsyncSession = Depends(get_db),
 ) -> DeploymentShareModel:
     slug = f"{username}_{slug}"
-
     user_info = get_user_info(request)
 
+    # Build environment condition based on authentication
     if user_info.is_authenticated:
-        or_case = or_(
-            Deployment.environment == "public-share",
-            Deployment.environment == "community-share",
-            Deployment.environment == "private-share",
+        # For authenticated users: include private shares with org check
+        env_condition = or_(
+            Deployment.environment.in_(["public-share", "community-share"]),
+            and_(
+                Deployment.environment == "private-share",
+                (Deployment.org_id == user_info.org_id) if user_info.org_id 
+                else and_(Deployment.user_id == user_info.user_id, Deployment.org_id.is_(None))
+            )
         )
     else:
-        or_case = or_(
-            Deployment.environment == "public-share",
-            Deployment.environment == "community-share",
-        )
+        # For unauthenticated users: only public and community shares
+        env_condition = Deployment.environment.in_(["public-share", "community-share"])
 
     deployment_query = (
         select(Deployment)
@@ -647,24 +649,18 @@ async def get_share_deployment(
         .join(Workflow)
         .where(
             Deployment.share_slug == slug,
-            or_case,
+            env_condition,
             not_(Workflow.deleted),
         )
     )
 
-    # Apply org check if user is authenticated
-    if user_info.is_authenticated:
-        deployment_query = deployment_query.apply_org_check(request)
-
     result = await db.execute(deployment_query)
     deployment = result.scalar_one_or_none()
+    
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    # Use helper function to process deployment
     deployment_dict = await process_deployment_for_response(request, db, deployment)
-
-    # FastAPI will automatically filter based on DeploymentShareModel
     return deployment_dict
 
 
