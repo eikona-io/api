@@ -130,7 +130,7 @@ async def get_run(request: Request, run_id: UUID, queue_position: bool = False, 
         deployment = deployment.unique().scalar_one_or_none()
 
     # Permission check
-    if deployment is not None and deployment.environment == "public-share":
+    if deployment is not None and (deployment.environment == "public-share" or deployment.environment == "community-share"):
         # Public share, no permission check
         if run.user_id == user_id:
             pass
@@ -1039,7 +1039,7 @@ async def _create_run(
             raise HTTPException(status_code=404, detail="Deployment not found")
 
         # Set public deployment flag
-        is_public_deployment = deployment.environment == "public-share"
+        is_public_deployment = deployment.environment == "public-share" or deployment.environment == "community-share"
 
         # If not public deployment, verify org access
         if not is_public_deployment:
