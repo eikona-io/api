@@ -151,6 +151,7 @@ api_router.include_router(log.router)
 api_router.include_router(volumes.router)
 api_router.include_router(comfy_node.router)
 api_router.include_router(comfy_proxy.router)
+api_router.include_router(share.router)
 api_router.include_router(deployments.router)
 api_router.include_router(session.router)
 api_router.include_router(session.beta_router)
@@ -162,7 +163,6 @@ api_router.include_router(search.router)
 api_router.include_router(form.router)
 api_router.include_router(admin.router)  # Add the admin router to internal API
 api_router.include_router(image_optimization.router)
-api_router.include_router(share.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)

@@ -609,6 +609,7 @@ async def get_deployments(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+# Most of the case, org name
 @router.get(
     "/share/{username}/{slug}",
 )
