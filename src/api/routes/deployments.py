@@ -622,21 +622,6 @@ async def get_share_deployment(
     slug = f"{username}_{slug}"
     user_info = get_user_info(request)
 
-    # Build environment condition based on authentication
-    if user_info.is_authenticated:
-        # For authenticated users: include private shares with org check
-        env_condition = or_(
-            Deployment.environment.in_(["public-share", "community-share"]),
-            and_(
-                Deployment.environment == "private-share",
-                (Deployment.org_id == user_info.org_id) if user_info.org_id 
-                else and_(Deployment.user_id == user_info.user_id, Deployment.org_id.is_(None))
-            )
-        )
-    else:
-        # For unauthenticated users: only public and community shares
-        env_condition = Deployment.environment.in_(["public-share", "community-share"])
-
     deployment_query = (
         select(Deployment)
         .options(
@@ -649,13 +634,25 @@ async def get_share_deployment(
         .join(Workflow)
         .where(
             Deployment.share_slug == slug,
-            env_condition,
+            Deployment.environment.in_(["public-share", "community-share", "private-share"]),
             not_(Workflow.deleted),
         )
     )
 
     result = await db.execute(deployment_query)
     deployment = result.scalar_one_or_none()
+    
+    if deployment.environment == "private-share" and not user_info.is_authenticated:
+        # Meaning the user is not authenticated and the deployment is a private share
+        raise HTTPException(status_code=401, detail="Authentication required")
+    elif deployment.environment == "private-share" and user_info.is_authenticated:
+        # Meaning the user is authenticated and the deployment is a private share
+        if deployment.org_id is not None:
+            if deployment.org_id != user_info.org_id:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        else:
+            if deployment.user_id != user_info.user_id:
+                raise HTTPException(status_code=401, detail="Unauthorized")
     
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
