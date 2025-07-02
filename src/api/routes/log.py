@@ -97,7 +97,7 @@ async def stream_logs(
                 if not event:
                     raise HTTPException(status_code=404, detail="Session not found")
                 entity = event
-                id_type = "run"
+                # id_type = "run"  # Commented out: This was overriding session type incorrectly
             else:
                 model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
                     id_type
