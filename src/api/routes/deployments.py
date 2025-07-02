@@ -642,6 +642,9 @@ async def get_share_deployment(
     result = await db.execute(deployment_query)
     deployment = result.scalar_one_or_none()
     
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    
     if deployment.environment == "private-share" and not user_info.is_authenticated:
         # Meaning the user is not authenticated and the deployment is a private share
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -654,9 +657,6 @@ async def get_share_deployment(
             if deployment.user_id != user_info.user_id:
                 raise HTTPException(status_code=401, detail="Unauthorized")
     
-    if not deployment:
-        raise HTTPException(status_code=404, detail="Deployment not found")
-
     deployment_dict = await process_deployment_for_response(request, db, deployment)
     return deployment_dict
 
