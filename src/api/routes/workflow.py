@@ -29,7 +29,7 @@ from .types import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, load_only
+from sqlalchemy.orm import joinedload
 
 from .utils import post_process_outputs, select
 from sqlalchemy import func
@@ -1217,24 +1217,7 @@ async def list_shared_workflows(
     """List shared workflows with pagination and filtering"""
     try:
         # Build the query
-        query = select(SharedWorkflow).options(
-            load_only(
-                SharedWorkflow.id,
-                SharedWorkflow.title, 
-                SharedWorkflow.description,
-                SharedWorkflow.cover_image,
-                SharedWorkflow.share_slug,
-                SharedWorkflow.user_id,
-                SharedWorkflow.org_id,
-                SharedWorkflow.workflow_id,
-                SharedWorkflow.workflow_version_id,
-                SharedWorkflow.created_at,
-                SharedWorkflow.updated_at,
-                SharedWorkflow.view_count,
-                SharedWorkflow.download_count,
-                SharedWorkflow.is_public
-            )
-        ).where(SharedWorkflow.is_public == True)
+        query = select(SharedWorkflow).options(defer(SharedWorkflow.workflow_export)).where(SharedWorkflow.is_public == True)
         
         # Add user filter if specified
         if user_id:
