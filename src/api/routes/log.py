@@ -97,7 +97,6 @@ async def stream_logs(
                 if not event:
                     raise HTTPException(status_code=404, detail="Session not found")
                 entity = event
-                id_type = "run"
             else:
                 model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
                     id_type
@@ -114,9 +113,9 @@ async def stream_logs(
                         status_code=404, detail=f"{id_type.capitalize()} not found"
                     )
 
-            # Check permissions based on workflow access for runs
-            if id_type == "run":
-                # Get the workflow associated with this run
+            # Check permissions based on workflow access for runs and sessions
+            if id_type in ["run", "session"]:
+                # Get the workflow associated with this run/session
                 workflow_query = (
                     select(Workflow)
                     .where(Workflow.id == entity.workflow_id)
