@@ -271,6 +271,12 @@ async def test_create_serverless_machine_cpu_mem_restriction(app, free_user, pai
     async with get_test_client(app, paid_user_2) as client:
         response = await client.post("/machine/serverless", json=machine_data)
         assert response.status_code == 200
+        
+        machine_id = response.json()["id"]
+        # delete
+        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
+        assert delete_response.status_code == 200
+        
 
     # Paid user (business) - allowed
     async with get_test_client(app, paid_user) as client:
