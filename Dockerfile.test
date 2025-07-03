@@ -20,24 +20,32 @@ RUN sh /uv-installer.sh && rm /uv-installer.sh
 # Ensure the installed binary is on the `PATH`
 ENV PATH="/root/.cargo/bin/:$PATH"
 
-# Copy the project into the image
-COPY src/ /app/src/
+WORKDIR /app
+
+# Copy Python dependency files first (for better caching)
 COPY pyproject.toml /app/
 COPY uv.lock /app/
 COPY requirements-test.txt /app/
 COPY README.md /app/
 
-WORKDIR /app
+# Sync Python dependencies - this layer will be cached unless dependency files change
+RUN uv sync --dev --no-install-project
 
-# Sync the project into a new environment
-RUN uv sync --dev
-
+# Copy Node.js dependency files
 COPY package.json /app/
+# Install Node.js dependencies - this layer will be cached unless package.json changes
 RUN bun install
+
+# Copy migration scripts (these change less frequently)
 COPY migrate.mts /app/
 COPY migrate-clickhouse.mts /app/
 
+# Copy source code and tests last (these change most frequently)
+COPY src/ /app/src/
 COPY tests/ /app/tests/
+
+# Install the current project in editable mode
+RUN uv pip install -e .
 
 # Use the virtual environment automatically
 ENV VIRTUAL_ENV=/app/.venv

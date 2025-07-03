@@ -17,7 +17,7 @@ services:
       build:
         context: .
         dockerfile: Dockerfile.test
-      command: /bin/sh -c "bun install && bun run migrate-local && bun run migrate-clickhouse-local && uv run pytest -s"
+      command: /bin/sh -c "bun install && bun run migrate-local && bun run migrate-clickhouse-local && uv run pytest"
       #  -v tests/api/routes/test_run.py::test_free_user_concurrent_sessions
       environment:
         # Default to host.docker.internal, override in CI
