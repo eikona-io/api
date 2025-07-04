@@ -42,10 +42,11 @@ COPY migrate-clickhouse.mts /app/
 
 # Copy source code and tests last (these change most frequently)
 COPY src/ /app/src/
-COPY tests/ /app/tests/
 
 # Install the current project in editable mode
 RUN uv pip install -e .
+
+COPY tests/ /app/tests/
 
 # Use the virtual environment automatically
 ENV VIRTUAL_ENV=/app/.venv
