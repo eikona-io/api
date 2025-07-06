@@ -532,7 +532,44 @@ async def update_user_settings(request: Request, db: AsyncSession, body: any):
 
     return JSONResponse(content=user_settings.to_dict())
 
+
+def get_default_user_settings():
+    """
+    Return default user settings for unauthenticated users.
+    These settings will use the default public bucket.
+    """
+    return UserSettings(
+        user_id=None,
+        org_id=None,
+        api_version="v2",
+        spend_limit=5,
+        max_spend_limit=5,
+        output_visibility="public",
+        custom_output_bucket=False,
+        enable_custom_output_bucket=False,
+        # These will be None, indicating to use default public bucket
+        s3_access_key_id=None,
+        s3_secret_access_key=None,
+        s3_bucket_name=None,
+        s3_region=None,
+        assumed_role_arn=None,
+        hugging_face_token=None,
+        workflow_limit=None,
+        machine_limit=None,
+        always_on_machine_limit=None,
+        max_gpu=0,
+        credit=0
+    )
+
+
 async def get_user_settings(request: Request, db: AsyncSession):
+    # Check if user is authenticated
+    current_user = getattr(request.state, 'current_user', None)
+    
+    if current_user is None:
+        # Return default settings for unauthenticated users
+        return get_default_user_settings()
+    
     user_query = select(UserSettings).apply_org_check(request).order_by(UserSettings.created_at.desc()).limit(1)
     user_settings = await db.execute(user_query)
     user_settings = user_settings.scalar_one_or_none()
@@ -575,7 +612,7 @@ async def get_user_settings(request: Request, db: AsyncSession):
     ttl_seconds=60,  # Local memory cache
     redis_ttl_seconds=300,  # Redis cache
     version="1.0",
-    key_builder=lambda req: f"user_settings:{req.state.current_user['user_id']}:{req.state.current_user.get('org_id')}"
+    key_builder=lambda req: f"user_settings:{req.state.current_user['user_id'] if req.state.current_user else 'default'}:{req.state.current_user.get('org_id') if req.state.current_user else 'none'}"
 )
 async def get_user_settings_cached(request: Request):
     """
