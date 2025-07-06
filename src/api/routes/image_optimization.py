@@ -49,6 +49,10 @@ async def optimize_image_on_demand(
         # Parse transformation parameters
         transform_config = parse_transformations(transformations)
         
+        # Check if user is authenticated
+        current_user = getattr(request.state, 'current_user', None)
+        is_authenticated = current_user is not None
+        
         # Get user settings and S3 configuration
         user_settings = await get_user_settings_cached_as_object(request, db)
         s3_config = await retrieve_s3_config(user_settings)
@@ -70,10 +74,19 @@ async def optimize_image_on_demand(
             check_s3_object_public(s3_config, s3_key)
         )
         
+        # Check if this is a private/custom bucket image and reject if not authenticated
+        is_public = public_check
+        is_custom_bucket = not s3_config.public  # Custom bucket if not using public default bucket
+        
+        if (not is_public or is_custom_bucket) and not is_authenticated:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required for private or custom bucket images"
+            )
+        
         if existence_check:
             return await get_optimized_image_response(s3_config, optimized_key, user_settings, cache)
 
-        is_public = public_check
         if is_public:
             transform_config["is_public"] = True
         
@@ -101,6 +114,21 @@ async def optimize_image_on_demand(
         # Fallback to original image if we have s3_config
         user_settings = await get_user_settings_cached_as_object(request, db)
         s3_config = await retrieve_s3_config(user_settings)
+        
+        # Check authentication for fallback as well
+        current_user = getattr(request.state, 'current_user', None)
+        is_authenticated = current_user is not None
+        
+        # Check if original image is public
+        is_public = await check_s3_object_public(s3_config, s3_key)
+        is_custom_bucket = not s3_config.public
+        
+        if (not is_public or is_custom_bucket) and not is_authenticated:
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication required for private or custom bucket images"
+            )
+        
         return await get_fallback_response(s3_config, s3_key, user_settings, cache)
 
 

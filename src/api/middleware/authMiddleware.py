@@ -35,6 +35,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/share/*",
             "/api/shared-workflows",
             "/api/shared-workflows/*",
+            "/api/optimize/*",
         ]
         # print("AuthMiddleware initialized")  # Test print
 
