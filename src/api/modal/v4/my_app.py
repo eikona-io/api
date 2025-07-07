@@ -35,6 +35,9 @@ from urllib.parse import urlparse
 public_model_volume = modal.Volume.from_name(
     config["public_model_volume"], create_if_missing=True
 )
+# Create read-only version of the public volume for protection
+read_only_public_model_volume = public_model_volume.read_only()
+
 private_volume = modal.Volume.from_name(
     config["private_model_volume"], create_if_missing=True
 )
@@ -43,7 +46,7 @@ PUBLIC_BASEMODEL_DIR = "/public_models"
 PRIVATE_BASEMODEL_DIR_SYM = "/private_models"
 
 volumes = {
-    PUBLIC_BASEMODEL_DIR: public_model_volume,
+    PUBLIC_BASEMODEL_DIR: read_only_public_model_volume,
     PRIVATE_BASEMODEL_DIR_SYM: private_volume,
 }
 
@@ -1541,7 +1544,7 @@ class BaseComfyDeployRunner:
         # private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
 
         # reload volumes
-        await public_model_volume.reload.aio()
+        await read_only_public_model_volume.reload.aio()
         await private_volume.reload.aio()
 
         # Disable specified custom nodes
