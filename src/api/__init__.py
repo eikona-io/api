@@ -198,6 +198,8 @@ allow_origin_regex = None
 if os.getenv("ENV") == "development":
     allow_origins.append("http://localhost:3000")
     allow_origins.append("http://localhost:3001")
+    # Allow wildcard subdomains for app.github.dev
+    allow_origin_regex = r"https://.*\.app\.github\.dev"
 elif os.getenv("ENV") == "staging":
     allow_origins.extend(
         [
@@ -206,8 +208,8 @@ elif os.getenv("ENV") == "staging":
             "https://staging.app.comfydeploy.com",
         ]
     )
-    # Allow preview deployments hosted on Vercel
-    allow_origin_regex = r"https://.*\.vercel\.app"
+    # Allow preview deployments hosted on Vercel and GitHub Codespaces
+    allow_origin_regex = r"https://.*\.vercel\.app|https://.*\.app\.github\.dev"
 else:
     allow_origins.extend(
         [
