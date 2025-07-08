@@ -1664,7 +1664,7 @@ async def _create_run(
         async def batch_run():
             results = []
             for _ in range(data.batch_number):
-                result = await run(None, batch_id)
+                result = await run(data.inputs, batch_id)
                 results.append(result)
             return results
 
