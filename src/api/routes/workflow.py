@@ -1217,7 +1217,7 @@ async def list_shared_workflows(
     """List shared workflows with pagination and filtering"""
     try:
         # Build the query
-        query = select(SharedWorkflow).where(SharedWorkflow.is_public == True)
+        query = select(SharedWorkflow).options(defer(SharedWorkflow.workflow_export)).where(SharedWorkflow.is_public == True)
         
         # Add user filter if specified
         if user_id:

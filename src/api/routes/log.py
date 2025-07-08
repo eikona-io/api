@@ -84,6 +84,7 @@ async def stream_logs(
     try:
         # Get the current user from the request state
         current_user = request.state.current_user
+        is_from_session = id_type == "session"
 
         async with get_db_context() as db:
             # Verify the entity exists and check permissions
@@ -115,7 +116,7 @@ async def stream_logs(
                     )
 
             # Check permissions based on workflow access for runs
-            if id_type == "run":
+            if id_type == "run" and not is_from_session:
                 # Get the workflow associated with this run
                 workflow_query = (
                     select(Workflow)

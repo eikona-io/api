@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager  # noqa: E402
 from api.models import User  # noqa: E402
 import os
 import json
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 from api.routes.utils import generate_persistent_token, generate_machine_token  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession  # noqa: E402
@@ -15,6 +16,17 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool  # noqa: E402
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Register custom markers
+def pytest_configure(config):
+    config.addinivalue_line("markers", "unit: marks tests as unit tests")
+    config.addinivalue_line("markers", "integration: marks tests as integration tests") 
+    config.addinivalue_line("markers", "smoke: marks tests as smoke tests")
+    config.addinivalue_line("markers", "slow: marks tests as slow running")
+    config.addinivalue_line("markers", "requires_redis: marks tests that require Redis")
+    config.addinivalue_line("markers", "requires_db: marks tests that require database")
+    config.addinivalue_line("markers", "paid_only: marks tests that require paid user")
+    config.addinivalue_line("markers", "free_only: marks tests that require free user")
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -579,3 +591,25 @@ async def test_custom_machine(app, paid_user):
         # Cleanup after test is done
         delete_response = await client.delete(f"/machine/{machine_id}")
         assert delete_response.status_code == 200
+
+
+# Fixture for indirect parametrization - resolves fixture names to actual fixtures
+@pytest.fixture
+def user_fixture(request):
+    """Intermediary fixture for indirect parametrization with user fixtures"""
+    fixture_name = request.param
+    
+    # Get the actual fixture based on the parameter value
+    if fixture_name == "free_user":
+        return request.getfixturevalue("free_user")
+    elif fixture_name == "paid_user":
+        return request.getfixturevalue("paid_user")
+    elif fixture_name == "paid_user_2":
+        return request.getfixturevalue("paid_user_2")
+    elif fixture_name == "test_free_user":
+        return request.getfixturevalue("test_free_user")
+    else:
+        raise ValueError(f"Unknown user fixture: {fixture_name}")
+
+
+

@@ -30,7 +30,7 @@ from typing import Optional
 from api.modal.builder import GPUType, KeepWarmBody, set_machine_always_on
 from .platform import slugify
 from .share import get_dub_link
-from sqlalchemy import func, not_
+from sqlalchemy import func, not_, and_
 import asyncio
 from nanoid import generate
 from sqlalchemy import or_
@@ -620,20 +620,7 @@ async def get_share_deployment(
     db: AsyncSession = Depends(get_db),
 ) -> DeploymentShareModel:
     slug = f"{username}_{slug}"
-
     user_info = get_user_info(request)
-
-    if user_info.is_authenticated:
-        or_case = or_(
-            Deployment.environment == "public-share",
-            Deployment.environment == "community-share",
-            Deployment.environment == "private-share",
-        )
-    else:
-        or_case = or_(
-            Deployment.environment == "public-share",
-            Deployment.environment == "community-share",
-        )
 
     deployment_query = (
         select(Deployment)
@@ -647,24 +634,30 @@ async def get_share_deployment(
         .join(Workflow)
         .where(
             Deployment.share_slug == slug,
-            or_case,
+            Deployment.environment.in_(["public-share", "community-share", "private-share"]),
             not_(Workflow.deleted),
         )
     )
 
-    # Apply org check if user is authenticated
-    if user_info.is_authenticated:
-        deployment_query = deployment_query.apply_org_check(request)
-
     result = await db.execute(deployment_query)
     deployment = result.scalar_one_or_none()
+    
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
-
-    # Use helper function to process deployment
+    
+    if deployment.environment == "private-share" and not user_info.is_authenticated:
+        # Meaning the user is not authenticated and the deployment is a private share
+        raise HTTPException(status_code=401, detail="Authentication required")
+    elif deployment.environment == "private-share" and user_info.is_authenticated:
+        # Meaning the user is authenticated and the deployment is a private share
+        if deployment.org_id is not None:
+            if deployment.org_id != user_info.org_id:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+        else:
+            if deployment.user_id != user_info.user_id:
+                raise HTTPException(status_code=401, detail="Unauthorized")
+    
     deployment_dict = await process_deployment_for_response(request, db, deployment)
-
-    # FastAPI will automatically filter based on DeploymentShareModel
     return deployment_dict
 
 

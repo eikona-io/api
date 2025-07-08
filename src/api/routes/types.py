@@ -639,7 +639,7 @@ class SharedWorkflowModel(BaseModel):
     org_id: Optional[str]
     workflow_id: UUID
     workflow_version_id: Optional[UUID]
-    workflow_export: Dict[str, Any]
+    workflow_export: Optional[Dict[str, Any]] = None
     share_slug: str
     title: str
     description: Optional[str] = None

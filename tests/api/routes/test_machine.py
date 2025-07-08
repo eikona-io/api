@@ -20,8 +20,12 @@ Paid user
 """
 
 
+@pytest.mark.parametrize("user_fixture,expected_status", [
+    ("free_user", 403),
+    ("paid_user", 200),
+], indirect=["user_fixture"])
 @pytest.mark.asyncio
-async def test_create_custom_machine(app, paid_user, free_user):
+async def test_create_custom_machine_access(app, user_fixture, expected_status):
     machine_data = {
         "name": "test-machine",
         "type": "classic",
@@ -29,19 +33,15 @@ async def test_create_custom_machine(app, paid_user, free_user):
         "auth_token": "test_auth_token",
     }
 
-    # Test with free user - should be forbidden
-    async with get_test_client(app, free_user) as client:
+    async with get_test_client(app, user_fixture) as client:
         response = await client.post("/machine/custom", json=machine_data)
-        assert response.status_code == 403
-
-    # Test with paid user - should succeed
-    async with get_test_client(app, paid_user) as client:
-        response = await client.post("/machine/custom", json=machine_data)
-        assert response.status_code == 200
-        machine_id = response.json()["id"]
-
-        delete_response = await client.delete(f"/machine/{machine_id}")
-        assert delete_response.status_code == 200
+        assert response.status_code == expected_status
+        
+        # Only cleanup if creation was successful
+        if expected_status == 200:
+            machine_id = response.json()["id"]
+            delete_response = await client.delete(f"/machine/{machine_id}")
+            assert delete_response.status_code == 200
 
 
 # get and delete
@@ -106,27 +106,27 @@ Paid user
 """
 
 
+@pytest.mark.parametrize("user_fixture,expected_status", [
+    ("free_user", 403),
+    ("paid_user", 200),
+], indirect=["user_fixture"])
 @pytest.mark.asyncio
-async def test_create_serverless_machine(app, paid_user, free_user):
+async def test_create_serverless_machine_access(app, user_fixture, expected_status):
     machine_data = {
         "name": "test-serverless-machine",
         "gpu": "CPU",
         "wait_for_build": True,
     }
 
-    # Test with free user - should be forbidden
-    async with get_test_client(app, free_user) as client:
+    async with get_test_client(app, user_fixture) as client:
         response = await client.post("/machine/serverless", json=machine_data)
-        assert response.status_code == 403
-
-    # Test with paid user - should succeed
-    async with get_test_client(app, paid_user) as client:
-        response = await client.post("/machine/serverless", json=machine_data)
-        assert response.status_code == 200
-        machine_id = response.json()["id"]
-
-        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
-        assert delete_response.status_code == 200
+        assert response.status_code == expected_status
+        
+        # Only cleanup if creation was successful
+        if expected_status == 200:
+            machine_id = response.json()["id"]
+            delete_response = await client.delete(f"/machine/{machine_id}?force=true")
+            assert delete_response.status_code == 200
 
 
 # get and delete
@@ -249,8 +249,13 @@ async def test_update_serverless_machine(app, paid_user, test_serverless_machine
             == update_data["docker_command_steps"]
         )
 
+@pytest.mark.parametrize("user_fixture,expected_status,validate_values", [
+    ("free_user", 403, False),
+    ("paid_user", 200, True),
+    ("paid_user_2", 200, False),
+], indirect=["user_fixture"])
 @pytest.mark.asyncio
-async def test_create_serverless_machine_cpu_mem_restriction(app, free_user, paid_user, paid_user_2):
+async def test_create_serverless_machine_cpu_mem_restriction(app, user_fixture, expected_status, validate_values):
     # Test data with cpu/mem fields
     machine_data = {
         "name": "test-serverless-machine-cpu-mem",
@@ -262,32 +267,27 @@ async def test_create_serverless_machine_cpu_mem_restriction(app, free_user, pai
         "memory_limit": 8192,
     }
 
-    # Free user - forbidden
-    async with get_test_client(app, free_user) as client:
+    async with get_test_client(app, user_fixture) as client:
         response = await client.post("/machine/serverless", json=machine_data)
-        assert response.status_code == 403
-
-    # Paid user 2 (business) - allowed
-    async with get_test_client(app, paid_user_2) as client:
-        response = await client.post("/machine/serverless", json=machine_data)
-        assert response.status_code == 200
-
-    # Paid user (business) - allowed
-    async with get_test_client(app, paid_user) as client:
-        response = await client.post("/machine/serverless", json=machine_data)
-        assert response.status_code == 200
-        machine_id = response.json()["id"]
-        # Check the values are set
-        get_response = await client.get(f"/machine/{machine_id}")
-        assert get_response.status_code == 200
-        machine = get_response.json()
-        assert machine["cpu_request"] == 2.0
-        assert machine["cpu_limit"] == 4.0
-        assert machine["memory_request"] == 4096
-        assert machine["memory_limit"] == 8192
-        # Cleanup
-        delete_response = await client.delete(f"/machine/{machine_id}?force=true")
-        assert delete_response.status_code == 200
+        assert response.status_code == expected_status
+        
+        # Only cleanup and validate if creation was successful
+        if expected_status == 200:
+            machine_id = response.json()["id"]
+            
+            # Validate values for specific user types
+            if validate_values:
+                get_response = await client.get(f"/machine/{machine_id}")
+                assert get_response.status_code == 200
+                machine = get_response.json()
+                assert machine["cpu_request"] == 2.0
+                assert machine["cpu_limit"] == 4.0
+                assert machine["memory_request"] == 4096
+                assert machine["memory_limit"] == 8192
+            
+            # Cleanup
+            delete_response = await client.delete(f"/machine/{machine_id}?force=true")
+            assert delete_response.status_code == 200
 
 @pytest.mark.asyncio
 async def test_update_serverless_machine_cpu_mem_restriction(app, paid_user, test_serverless_machine):
