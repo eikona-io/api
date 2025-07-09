@@ -36,6 +36,11 @@ from nanoid import generate
 from sqlalchemy import or_
 import re
 from api.utils.storage_helper import get_s3_config
+from datetime import datetime
+from fastapi.responses import JSONResponse
+from .types import WorkflowRunModel
+from .utils import clean_up_outputs, post_process_outputs
+from .utils import get_user_settings
 
 logger = logging.getLogger(__name__)
 
@@ -1036,3 +1041,124 @@ async def get_deployment_v0_ui_spec(
     except Exception as e:
         logger.error(f"Error generating v0 UI spec: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/deployment/{deployment_id}/runs",
+    response_model=List[WorkflowRunModel],
+    openapi_extra={
+        "x-speakeasy-name-override": "getRuns",
+    },
+)
+async def get_deployment_runs(
+    request: Request,
+    deployment_id: str,
+    limit: int = 60,
+    offset: int = 0,
+    status: Optional[str] = None,
+    created_at: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get runs for a specific deployment with outputs."""
+    try:
+        # First verify deployment exists and user has access
+        deployment_query = (
+            select(Deployment)
+            .where(
+                Deployment.id == deployment_id,
+                Deployment.environment.in_(["public-share", "community-share", "private-share", "preview", "staging", "production"])
+            )
+            .apply_org_check(request)
+        )
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+
+        # Process datetime variables upfront
+        start_datetime = None
+        end_datetime = None
+        if created_at:
+            try:
+                # Validate format
+                if "-" not in created_at:
+                    raise ValueError("Time range must be in format 'start-end'")
+
+                start_time, end_time = created_at.split("-")
+
+                # Convert to timestamps
+                start_datetime = datetime.fromtimestamp(int(start_time) / 1000)
+                end_datetime = datetime.fromtimestamp(int(end_time) / 1000)
+
+                # Validate time range
+                if start_datetime > end_datetime:
+                    raise ValueError("Start time cannot be later than end time")
+
+            except (ValueError, TypeError) as e:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": f"Invalid time range format: {str(e)}"},
+                )
+
+        # Create base query with joins and outputs
+        base_query = (
+            select(WorkflowRun)
+            .options(joinedload(WorkflowRun.outputs))
+            .where(WorkflowRun.deployment_id == deployment_id)
+        )
+
+        # Handle filters
+        if status:
+            status_list = [s.strip().lower() for s in status.split(",")]
+            base_query = base_query.filter(WorkflowRun.status.in_(status_list))
+
+        if start_datetime and end_datetime:
+            base_query = base_query.filter(
+                WorkflowRun.created_at.between(start_datetime, end_datetime)
+            )
+
+        # Get total count for this deployment
+        count_query = select(func.count()).select_from(base_query.subquery())
+        total_count = await db.scalar(count_query)
+
+        # Add pagination and ordering
+        query = base_query.order_by(WorkflowRun.created_at.desc()).paginate(limit, offset)
+        result = await db.execute(query)
+        runs = result.unique().all()
+
+        if not runs:
+            return JSONResponse(
+                content={
+                    "data": [],
+                    "meta": {
+                        "totalRowCount": total_count,
+                    },
+                }
+            )
+
+        # Process runs and their outputs
+        runs_data = []
+        user_settings = await get_user_settings(request, db)
+        
+        for run in runs:
+            # Clean up and post-process outputs
+            clean_up_outputs(run.outputs)
+            await post_process_outputs(run.outputs, user_settings)
+            
+            # Convert run to dict
+            run_dict = run.to_dict()
+            runs_data.append(run_dict)
+
+        return JSONResponse(
+            content={
+                "data": runs_data,
+                "meta": {
+                    "totalRowCount": total_count,
+                },
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting deployment runs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
