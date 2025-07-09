@@ -43,6 +43,7 @@ async def get_runs(
     duration: Optional[str] = None,
     created_at: Optional[str] = None,
     machine_id: Optional[str] = None,
+    deployment_id: Optional[str] = None,
 ):
     # Process filter lists upfront
     gpu_list = [g.strip() for g in gpu.split(",")] if gpu else []
@@ -97,6 +98,7 @@ async def get_runs(
             WorkflowRun.gpu,
             WorkflowRun.origin,
             WorkflowRun.user_id,
+            WorkflowRun.deployment_id,  # Add deployment_id to selected fields
             case(
                 (
                     WorkflowRun.ended_at.isnot(None)
@@ -129,6 +131,9 @@ async def get_runs(
     if machine_id:
         base_query = base_query.filter(WorkflowRun.machine_id == machine_id)
 
+    if deployment_id:  # Add deployment_id filter
+        base_query = base_query.filter(WorkflowRun.deployment_id == deployment_id)
+
     if start_datetime and end_datetime:
         base_query = base_query.filter(
             WorkflowRun.created_at.between(start_datetime, end_datetime)
@@ -156,6 +161,7 @@ async def get_runs(
             origin_list,
             workflow_id,
             machine_id,
+            deployment_id,  # Add deployment_id to filter check
             start_datetime and end_datetime,  # Only count if both dates are present
             duration,
         ]
@@ -197,6 +203,7 @@ async def get_runs(
                 gpu,
                 origin,
                 user_id,
+                deployment_id,  # Add deployment_id to unpacking
                 duration,
             ) in runs:
                 run_dict = {
@@ -213,6 +220,7 @@ async def get_runs(
                     "gpu": gpu,
                     "origin": origin,
                     "user_id": str(user_id) if user_id else None,
+                    "deployment_id": str(deployment_id) if deployment_id else None,  # Add deployment_id to response
                     "duration": str(duration) if duration else None,
                 }
                 runs_data.append(run_dict)
@@ -241,6 +249,8 @@ async def get_runs(
                 chart_query = chart_query.filter(WorkflowRun.workflow_id == workflow_id)
             if machine_id:
                 chart_query = chart_query.filter(WorkflowRun.machine_id == machine_id)
+            if deployment_id:  # Add deployment_id filter to chart query
+                chart_query = chart_query.filter(WorkflowRun.deployment_id == deployment_id)
             if start_datetime and end_datetime:
                 chart_query = chart_query.filter(
                     WorkflowRun.created_at.between(start_datetime, end_datetime)
