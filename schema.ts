@@ -1244,6 +1244,10 @@ export const outputSharesTable = dbSchema.table("output_shares", {
 }, (table) => {
   return {
     deploymentIdIndex: index("output_shares_deployment_id_index").on(table.deployment_id),
+    userVisibilityCreatedIndex: index("output_shares_user_visibility_created_idx").on(table.user_id, table.visibility, table.created_at),
+    visibilityCreatedIndex: index("output_shares_visibility_created_idx").on(table.visibility, table.created_at),
+    typeCreatedIndex: index("output_shares_type_created_idx").on(table.output_type, table.created_at),
+    deploymentCreatedIndex: index("output_shares_deployment_created_idx").on(table.deployment_id, table.created_at),
   };
 });
 
