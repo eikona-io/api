@@ -1,0 +1,3 @@
+ALTER TABLE "comfyui_deploy"."output_shares" ADD COLUMN "deployment_id" uuid;--> statement-breakpoint
+ALTER TABLE "comfyui_deploy"."output_shares" ADD CONSTRAINT "output_shares_deployment_id_deployments_id_fk" FOREIGN KEY ("deployment_id") REFERENCES "comfyui_deploy"."deployments"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "output_shares_deployment_id_index" ON "comfyui_deploy"."output_shares" USING btree ("deployment_id");

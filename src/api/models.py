@@ -966,6 +966,7 @@ class OutputShare(SerializableMixin, Base):
     org_id = Column(String)
     run_id = Column(UUID(as_uuid=True), ForeignKey("workflow_runs.id"), nullable=False)
     output_id = Column(UUID(as_uuid=True), ForeignKey("workflow_run_outputs.id"), nullable=False)
+    deployment_id = Column(UUID(as_uuid=True), ForeignKey("deployments.id"), nullable=True)
     output_data = Column(JSON)
     inputs = Column(JSON)
     output_type = Column(
@@ -991,3 +992,4 @@ class OutputShare(SerializableMixin, Base):
     run = relationship("WorkflowRun", foreign_keys=[run_id])
     user = relationship("User", foreign_keys=[user_id])
     output = relationship("WorkflowRunOutput", foreign_keys=[output_id])
+    deployment = relationship("Deployment", foreign_keys=[deployment_id])
