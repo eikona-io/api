@@ -13,7 +13,11 @@ from .types import (
     DeploymentFeaturedModel,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from .utils import select, get_temporary_download_url
+from .utils import (
+    get_user_settings_cached_as_object,
+    select,
+    get_temporary_download_url,
+)
 from api.models import (
     Deployment,
     Machine,
@@ -36,6 +40,12 @@ from nanoid import generate
 from sqlalchemy import or_
 import re
 from api.utils.storage_helper import get_s3_config
+from datetime import datetime
+from fastapi.responses import JSONResponse
+from .types import WorkflowRunModel
+from .utils import clean_up_outputs, post_process_outputs
+from .utils import get_user_settings
+from sqlalchemy import case
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +65,14 @@ ENVIRONMENT_TTL_MAP = {
     "production": PRODUCTION_TTL_HOURS,
 }
 
+
 class UserInfo(BaseModel):
     """User authentication information extracted from request."""
+
     is_authenticated: bool
     user_id: Optional[str] = None
     org_id: Optional[str] = None
+
 
 def get_user_info(request: Request) -> UserInfo:
     """
@@ -68,18 +81,18 @@ def get_user_info(request: Request) -> UserInfo:
     Returns:
         UserInfo object with authentication status and user details
     """
-    if not hasattr(request, "state") or not hasattr(request.state, "current_user") or request.state.current_user is None:
-        return UserInfo(
-            is_authenticated=False,
-            user_id=None,
-            org_id=None
-        )
+    if (
+        not hasattr(request, "state")
+        or not hasattr(request.state, "current_user")
+        or request.state.current_user is None
+    ):
+        return UserInfo(is_authenticated=False, user_id=None, org_id=None)
 
     current_user = request.state.current_user
     return UserInfo(
         is_authenticated=True,
         user_id=current_user.get("user_id"),
-        org_id=current_user.get("org_id")
+        org_id=current_user.get("org_id"),
     )
 
 
@@ -202,6 +215,7 @@ class DeploymentUpdate(BaseModel):
 
 class UserInfo(BaseModel):
     """User authentication information extracted from request."""
+
     is_authenticated: bool
     user_id: Optional[str] = None
     org_id: Optional[str] = None
@@ -368,7 +382,7 @@ async def create_deployment(
 
         isUpdate = existing_deployment is not None
         previous_share_slug = existing_deployment.share_slug if isUpdate else None
-        
+
         # Only generate new slug if we don't have an existing one for share environments
         generated_slug = None
         if isShare:
@@ -390,7 +404,9 @@ async def create_deployment(
                     raise HTTPException(status_code=404, detail="Workflow not found")
                 current_user_id = org_id if org_id else user_id
 
-                generated_slug = await slugify(workflow_obj.name, current_user_id, from_nanoid=False)
+                generated_slug = await slugify(
+                    workflow_obj.name, current_user_id, from_nanoid=False
+                )
 
         share_link = None
         if isShare and generated_slug and "_" in generated_slug:
@@ -634,17 +650,19 @@ async def get_share_deployment(
         .join(Workflow)
         .where(
             Deployment.share_slug == slug,
-            Deployment.environment.in_(["public-share", "community-share", "private-share"]),
+            Deployment.environment.in_(
+                ["public-share", "community-share", "private-share"]
+            ),
             not_(Workflow.deleted),
         )
     )
 
     result = await db.execute(deployment_query)
     deployment = result.scalar_one_or_none()
-    
+
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
-    
+
     if deployment.environment == "private-share" and not user_info.is_authenticated:
         # Meaning the user is not authenticated and the deployment is a private share
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -656,7 +674,7 @@ async def get_share_deployment(
         else:
             if deployment.user_id != user_info.user_id:
                 raise HTTPException(status_code=401, detail="Unauthorized")
-    
+
     deployment_dict = await process_deployment_for_response(request, db, deployment)
     return deployment_dict
 
@@ -909,7 +927,9 @@ async def delete_deployment(
             select(Deployment)
             .where(
                 Deployment.id == deployment_id,
-                Deployment.environment.in_(["public-share", "private-share", "community-share"]),
+                Deployment.environment.in_(
+                    ["public-share", "private-share", "community-share"]
+                ),
             )
             .apply_org_check(request)
         )
@@ -1036,3 +1056,160 @@ async def get_deployment_v0_ui_spec(
     except Exception as e:
         logger.error(f"Error generating v0 UI spec: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/deployment/{deployment_id}/runs",
+    response_model=List[WorkflowRunModel],
+    openapi_extra={
+        "x-speakeasy-name-override": "getRuns",
+    },
+)
+async def get_deployment_runs(
+    request: Request,
+    deployment_id: str,
+    limit: int = 60,
+    offset: int = 0,
+    status: Optional[str] = None,
+    filter_user_runs: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get runs for a specific deployment with outputs."""
+    user_info = get_user_info(request)
+
+    try:
+        # First verify deployment exists and user has access
+        deployment_query = select(Deployment).where(
+            Deployment.id == deployment_id,
+            Deployment.environment.in_(
+                [
+                    "public-share",
+                    "community-share",
+                    "private-share",
+                    "preview",
+                    "staging",
+                    "production",
+                ]
+            ),
+        )
+        # if filter_user_runs:
+        #     deployment_query = deployment_query.where(WorkflowRun.user_id == request.state.current_user.get("user_id"))
+        # else:
+        #     deployment_query = deployment_query.apply_org_check(request)
+
+        result = await db.execute(deployment_query)
+        deployment = result.scalar_one_or_none()
+
+        if deployment.environment in [
+            "private-share",
+            "preview",
+            "staging",
+            "production",
+        ]:
+            # If the org didnt match, check if the user is the owner of the deployment
+            if deployment.org_id != user_info.org_id:
+                # Check if the user is the owner of the deployment
+                if deployment.user_id != user_info.user_id:
+                    raise HTTPException(
+                        status_code=401, detail="Unauthorized access to deployment"
+                    )
+
+        if not deployment:
+            raise HTTPException(status_code=404, detail="Deployment not found")
+
+        # Create base query with joins and outputs
+        base_query = (
+            select(
+                WorkflowRun.id,
+                WorkflowRun.status,
+                WorkflowRun.created_at,
+                WorkflowRun.started_at,
+                WorkflowRun.ended_at,
+                WorkflowRun.workflow_id,
+                WorkflowRun.workflow_version_id,
+                WorkflowRun.machine_id,
+                WorkflowRun.gpu,
+                WorkflowRun.origin,
+                WorkflowRun.user_id,
+                WorkflowRun.deployment_id,
+                case(
+                    (
+                        WorkflowRun.ended_at.isnot(None)
+                        & WorkflowRun.started_at.isnot(None),
+                        func.extract(
+                            "epoch", WorkflowRun.ended_at - WorkflowRun.started_at
+                        ),
+                    ),
+                    else_=None,
+                ).label("duration"),
+            )
+            .where(WorkflowRun.deployment_id == deployment_id)
+        )
+
+        if filter_user_runs:
+            base_query = base_query.where(WorkflowRun.user_id == user_info.user_id)
+        else:
+            base_query = base_query.apply_org_check(request)
+
+        # Handle status filter
+        # if status:
+        #     status_list = [s.strip().lower() for s in status.split(",")]
+        #     base_query = base_query.filter(WorkflowRun.status.in_(status_list))
+
+        # Add pagination and ordering
+        query = base_query.order_by(WorkflowRun.created_at.desc()).paginate(
+            limit, offset
+        )
+        result = await db.execute(query)
+        runs = result.unique().all()
+
+        runs_data = []
+
+        for (
+            id,
+            status,
+            created_at,
+            started_at,
+            ended_at,
+            workflow_id,
+            workflow_version_id,
+            machine_id,
+            gpu,
+            origin,
+            user_id,
+            deployment_id,  # Add deployment_id to unpacking
+            duration,
+        ) in runs:
+            run_dict = {
+                "id": str(id),
+                "status": status,
+                "created_at": created_at.isoformat() if created_at else None,
+                "started_at": started_at.isoformat() if started_at else None,
+                "ended_at": ended_at.isoformat() if ended_at else None,
+                "workflow_id": str(workflow_id),
+                "workflow_version_id": str(workflow_version_id)
+                if workflow_version_id
+                else None,
+                "machine_id": str(machine_id) if machine_id else None,
+                "gpu": gpu,
+                "origin": origin,
+                "user_id": str(user_id) if user_id else None,
+                "deployment_id": str(deployment_id) if deployment_id else None,  # Add deployment_id to response
+                "duration": str(duration) if duration else None,
+            }
+            runs_data.append(run_dict)
+
+        return JSONResponse(
+            content={
+                "data": runs_data,
+                "meta": {
+                    "totalRowCount": 0,
+                    "filterRowCount": 0,  # Use total_count as fallback
+                    "chartData": [],
+                },
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting deployment runs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

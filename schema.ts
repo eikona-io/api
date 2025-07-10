@@ -346,6 +346,13 @@ export const workflowRunsTable = dbSchema.table(
                 table.status,
                 table.created_at
             ),
+
+            // Index for optimizing deployment_id queries with common filters
+            idx_workflow_run_deployment: index("idx_workflow_run_deployment").on(
+                table.deployment_id,
+                table.status,
+                desc(table.created_at)
+            ),
         };
     },
 );
