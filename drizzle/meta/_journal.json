@@ -1412,15 +1412,8 @@
     {
       "idx": 201,
       "version": "7",
-      "when": 1752138116749,
-      "tag": "0201_tiny_centennial",
-      "breakpoints": true
-    },
-    {
-      "idx": 202,
-      "version": "7",
-      "when": 1752141988859,
-      "tag": "0202_nervous_slipstream",
+      "when": 1752151390131,
+      "tag": "0201_fantastic_pandemic",
       "breakpoints": true
     }
   ]

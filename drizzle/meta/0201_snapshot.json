@@ -1,5 +1,5 @@
 {
-  "id": "de3b78a7-e1e5-495e-a402-10f91826504b",
+  "id": "de79000f-87e8-498e-b59e-ceb069b3e579",
   "prevId": "1121ce0c-cf2e-42bb-9771-6c968da1ad09",
   "version": "7",
   "dialect": "postgresql",
@@ -2133,6 +2133,96 @@
           "columns": [
             {
               "expression": "deployment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "output_shares_user_visibility_created_idx": {
+          "name": "output_shares_user_visibility_created_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "visibility",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "output_shares_visibility_created_idx": {
+          "name": "output_shares_visibility_created_idx",
+          "columns": [
+            {
+              "expression": "visibility",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "output_shares_type_created_idx": {
+          "name": "output_shares_type_created_idx",
+          "columns": [
+            {
+              "expression": "output_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "output_shares_deployment_created_idx": {
+          "name": "output_shares_deployment_created_idx",
+          "columns": [
+            {
+              "expression": "deployment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
