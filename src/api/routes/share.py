@@ -242,7 +242,7 @@ async def create_output_share(
         org_id=user.get("org_id"),
         run_id=share_data.run_id,
         output_id=share_data.output_id,
-        deployment_id=run_result.deployment_id,
+        deployment_id=run.deployment_id,
         output_data=output.data or {},
         inputs=run.workflow_inputs,
         output_type=share_data.output_type,
