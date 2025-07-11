@@ -383,6 +383,21 @@ async def create_deployment(
         isUpdate = existing_deployment is not None
         previous_share_slug = existing_deployment.share_slug if isUpdate else None
 
+        workflow_id_for_lookup = (
+            existing_deployment.workflow_id
+            if existing_deployment
+            else deployment_data.workflow_id
+        )
+        workflow_result = await db.execute(
+            select(Workflow).where(Workflow.id == workflow_id_for_lookup)
+        )
+        workflow_obj = workflow_result.scalar_one_or_none()
+        if not workflow_obj:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        # Always use workflow description to override deployment description
+        final_description = workflow_obj.description
+
         # Only generate new slug if we don't have an existing one for share environments
         generated_slug = None
         if isShare:
@@ -391,17 +406,6 @@ async def create_deployment(
                 generated_slug = previous_share_slug
             else:
                 # Generate new slug only if we don't have one
-                workflow_id_for_slug = (
-                    existing_deployment.workflow_id
-                    if existing_deployment
-                    else deployment_data.workflow_id
-                )
-                workflow_result = await db.execute(
-                    select(Workflow).where(Workflow.id == workflow_id_for_slug)
-                )
-                workflow_obj = workflow_result.scalar_one_or_none()
-                if not workflow_obj:
-                    raise HTTPException(status_code=404, detail="Workflow not found")
                 current_user_id = org_id if org_id else user_id
 
                 generated_slug = await slugify(
@@ -426,7 +430,7 @@ async def create_deployment(
             existing_deployment.workflow_version_id = (
                 deployment_data.workflow_version_id
             )
-            existing_deployment.description = deployment_data.description
+            existing_deployment.description = final_description
             deployment = await update_deployment_with_machine(
                 existing_deployment, machine_id, machine_version, db
             )
@@ -439,7 +443,7 @@ async def create_deployment(
                 workflow_version_id=deployment_data.workflow_version_id,
                 workflow_id=deployment_data.workflow_id,
                 environment=deployment_data.environment,
-                description=deployment_data.description,
+                description=final_description,
                 share_slug=generated_slug,
             )
             deployment = await update_deployment_with_machine(

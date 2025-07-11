@@ -1234,12 +1234,21 @@ export const outputSharesTable = dbSchema.table("output_shares", {
   org_id: text("org_id"),
   run_id: uuid("run_id").references(() => workflowRunsTable.id).notNull(),
   output_id: uuid("output_id").references(() => workflowRunOutputs.id).notNull(),
+  deployment_id: uuid("deployment_id").references(() => deploymentsTable.id),
   output_data: jsonb("output_data").$type<any>(),
   inputs: jsonb("inputs").$type<any>(),
   output_type: outputType("output_type").notNull().default("other"),
   visibility: outputShareVisibility("visibility").notNull().default("private"),
   created_at: timestamp("created_at").defaultNow().notNull(),
   updated_at: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => {
+  return {
+    deploymentIdIndex: index("output_shares_deployment_id_index").on(table.deployment_id),
+    userVisibilityCreatedIndex: index("output_shares_user_visibility_created_idx").on(table.user_id, table.visibility, table.created_at),
+    visibilityCreatedIndex: index("output_shares_visibility_created_idx").on(table.visibility, table.created_at),
+    typeCreatedIndex: index("output_shares_type_created_idx").on(table.output_type, table.created_at),
+    deploymentCreatedIndex: index("output_shares_deployment_created_idx").on(table.deployment_id, table.created_at),
+  };
 });
 
 export const outputSharesRelations = relations(outputSharesTable, ({ one }) => ({
@@ -1254,6 +1263,10 @@ export const outputSharesRelations = relations(outputSharesTable, ({ one }) => (
   output: one(workflowRunOutputs, {
     fields: [outputSharesTable.output_id],
     references: [workflowRunOutputs.id],
+  }),
+  deployment: one(deploymentsTable, {
+    fields: [outputSharesTable.deployment_id],
+    references: [deploymentsTable.id],
   }),
 }));
 

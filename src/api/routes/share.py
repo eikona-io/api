@@ -126,6 +126,7 @@ router = APIRouter()
 class OutputShareCreate(BaseModel):
     run_id: uuid.UUID
     output_id: uuid.UUID
+    # deployment_id: Optional[uuid.UUID] = None
     output_type: str = "other"
     visibility: str = "private"
 
@@ -136,6 +137,7 @@ class OutputShareResponse(BaseModel):
     org_id: Optional[str]
     run_id: uuid.UUID
     output_id: uuid.UUID
+    deployment_id: Optional[uuid.UUID]
     output_data: dict
     output_type: str
     visibility: str
@@ -222,6 +224,7 @@ async def create_output_share(
             org_id=existing_share.org_id,
             run_id=existing_share.run_id,
             output_id=existing_share.output_id,
+            deployment_id=existing_share.deployment_id,
             output_data=existing_share.output_data,
             output_type=existing_share.output_type,
             visibility=existing_share.visibility,
@@ -239,6 +242,7 @@ async def create_output_share(
         org_id=user.get("org_id"),
         run_id=share_data.run_id,
         output_id=share_data.output_id,
+        deployment_id=run.deployment_id,
         output_data=output.data or {},
         inputs=run.workflow_inputs,
         output_type=share_data.output_type,
@@ -255,6 +259,7 @@ async def create_output_share(
         org_id=output_share.org_id,
         run_id=output_share.run_id,
         output_id=output_share.output_id,
+        deployment_id=output_share.deployment_id,
         output_data=output_share.output_data,
         output_type=output_share.output_type,
         visibility=output_share.visibility,
@@ -269,6 +274,7 @@ async def list_output_shares(
     request: Request,
     output_type: Optional[str] = Query(None, description="Filter by output type"),
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
+    deployment_id: Optional[str] = Query(None, description="Filter by deployment ID"),
     include_public: bool = Query(
         True, description="Include public shares for authenticated users"
     ),
@@ -300,6 +306,9 @@ async def list_output_shares(
     if visibility:
         conditions.append(OutputShare.visibility == visibility)
 
+    if deployment_id:
+        conditions.append(OutputShare.deployment_id == deployment_id)
+
     if conditions:
         query = query.where(and_(*conditions))
 
@@ -315,6 +324,7 @@ async def list_output_shares(
             org_id=share.org_id,
             run_id=share.run_id,
             output_id=share.output_id,
+            deployment_id=share.deployment_id,
             output_data=share.output_data,
             output_type=share.output_type,
             visibility=share.visibility,
@@ -363,6 +373,7 @@ async def get_shared_output(
             org_id=share.org_id,
             run_id=share.run_id,
             output_id=share.output_id,
+            deployment_id=share.deployment_id,
             output_data=share.output_data,
             output_type=share.output_type,
             visibility=share.visibility,
