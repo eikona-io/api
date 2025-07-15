@@ -1464,6 +1464,10 @@ async def delete_session(
     # and this will make sure it let it pass thru and contiune and turn off the session in our system
     # Still there could be a case when it really get stuck in buildng and modal continue to start it afterawrd..
     if modal_function_id is None and not is_modal:
+        gpuEvent.start_time = gpuEvent.created_at
+        gpuEvent.end_time = gpuEvent.created_at
+        await db.commit()
+        await db.refresh(gpuEvent)
         raise HTTPException(status_code=400, detail="Modal function id not found")
 
     is_sandbox = modal_function_id.startswith("sb-")
