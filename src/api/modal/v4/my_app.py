@@ -2038,7 +2038,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         # asyncio.set_event_loop(loop)
         loop = asyncio.get_running_loop()
         server = server.PromptServer(loop)
-        q = execution.PromptQueue(server)
+        # q = execution.PromptQueue(server)
 
         print("Initializing extra nodes")
         t = time.time()
@@ -2052,7 +2052,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             target=self.prompt_worker,
             daemon=True,
             args=(
-                q,
+                server.prompt_queue,
                 server,
             ),
         ).start()
