@@ -44,10 +44,12 @@ async def get_workflows(
     limit: int = 100,
     offset: int = 0,
     user_ids: Optional[str] = None,
+    machine_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     # Base query with conditional user_ids filter
     user_filter = "AND wf.user_id = ANY(:user_ids)" if user_ids else ""
+    machine_filter = "AND wf.selected_machine_id = CAST(:machine_id AS UUID)" if machine_id else ""
     
     raw_query = text(f"""
     WITH RECURSIVE search_param(term) AS (
@@ -61,7 +63,8 @@ async def get_workflows(
         wf.pinned AS pinned,
         wf.cover_image AS cover_image,
         users.name AS user_name,
-        users.id AS user_id
+        users.id AS user_id,
+        wf.selected_machine_id AS selected_machine_id
     FROM 
         comfyui_deploy.workflows AS wf
     INNER JOIN 
@@ -71,6 +74,7 @@ async def get_workflows(
             OR (CAST(:org_id AS TEXT) IS NULL AND org_id IS NULL AND wf.user_id = CAST(:user_id AS TEXT)))
             AND (CAST(:search AS TEXT) IS NULL OR lower(wf.name) LIKE '%' || (SELECT term FROM search_param) || '%')
             {user_filter}
+            {machine_filter}
     ORDER BY 
         wf.pinned DESC,
         wf.updated_at DESC
@@ -94,6 +98,10 @@ async def get_workflows(
     # Only add user_ids to params if it's provided
     if user_ids:
         params["user_ids"] = user_ids.split(',')
+        
+    # Only add machine_id to params if it's provided
+    if machine_id:
+        params["machine_id"] = machine_id
 
     # Execute the query
     result = await db.execute(raw_query, params)

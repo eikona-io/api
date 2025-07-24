@@ -144,10 +144,15 @@ async def delete_workflow(
 
     return {"message": "Workflow deleted successfully"}
 
+
+class CloneWorkflowRequest(BaseModel):
+    name: Optional[str] = None
+
 @router.post("/workflow/{workflow_id}/clone")
 async def clone_workflow(
     request: Request,
     workflow_id: str,
+    body: CloneWorkflowRequest,
     db: AsyncSession = Depends(get_db),
 ):
     # Get the original workflow
@@ -163,6 +168,10 @@ async def clone_workflow(
 
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
+    
+    current_user = request.state.current_user
+    current_user_id = current_user["user_id"]
+    current_org_id = current_user.get("org_id")
 
     # Get the latest workflow version
     version_query = (
@@ -178,9 +187,9 @@ async def clone_workflow(
     # Create new workflow as a clone
     new_workflow = Workflow(
         id=uuid4(),
-        name=f"{workflow.name} (Cloned)",
-        org_id=workflow.org_id,
-        user_id=workflow.user_id,
+        name=body.name or f"{workflow.name} (Cloned)",
+        org_id=current_org_id or None,
+        user_id=current_user_id,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
