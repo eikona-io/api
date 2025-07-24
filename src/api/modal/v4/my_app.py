@@ -1897,23 +1897,37 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     def hijack_progress(self, server_instance):
         import comfy
         from server import BinaryEventTypes
+        from comfy_execution.progress import get_progress_state
+        from comfy_execution.utils import get_executing_context
+        from comfy_api import feature_flags
 
-        def hook(value, total, preview_image):
+        def hook(value, total, preview_image, prompt_id=None, node_id=None):
+            executing_context = get_executing_context()
+            if prompt_id is None and executing_context is not None:
+                prompt_id = executing_context.prompt_id
+            if node_id is None and executing_context is not None:
+                node_id = executing_context.node_id
             comfy.model_management.throw_exception_if_processing_interrupted()
-            progress = {
-                "value": value,
-                "max": total,
-                "prompt_id": server_instance.last_prompt_id,
-                "node": server_instance.last_node_id,
-            }
+            if prompt_id is None:
+                prompt_id = server_instance.last_prompt_id
+            if node_id is None:
+                node_id = server_instance.last_node_id
+            progress = {"value": value, "max": total, "prompt_id": prompt_id, "node": node_id}
+            get_progress_state().update_progress(node_id, value, total, preview_image)
 
             server_instance.send_sync("progress", progress, server_instance.client_id)
             if preview_image is not None:
-                server_instance.send_sync(
-                    BinaryEventTypes.UNENCODED_PREVIEW_IMAGE,
-                    preview_image,
+                # Only send old method if client doesn't support preview metadata
+                if not feature_flags.supports_feature(
+                    server_instance.sockets_metadata,
                     server_instance.client_id,
-                )
+                    "supports_preview_metadata",
+                ):
+                    server_instance.send_sync(
+                        BinaryEventTypes.UNENCODED_PREVIEW_IMAGE,
+                        preview_image,
+                        server_instance.client_id,
+                    )
 
         comfy.utils.set_progress_bar_global_hook(hook)
 
@@ -1983,7 +1997,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         original_validate_prompt = execution.validate_prompt
 
-        def custom_validate_prompt(prompt):
+        async def custom_validate_prompt(prompt_id, prompt):
             if self.skip_workflow_api_validation:
                 outputs = set()
                 for x in prompt:
@@ -2030,7 +2044,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
                         good_outputs.add(o)
 
                 return (True, None, list(good_outputs), node_errors)
-            return original_validate_prompt(prompt)
+            return await original_validate_prompt(prompt_id, prompt)
 
         execution.validate_prompt = custom_validate_prompt
 
@@ -2038,7 +2052,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         # asyncio.set_event_loop(loop)
         loop = asyncio.get_running_loop()
         server = server.PromptServer(loop)
-        q = execution.PromptQueue(server)
+        # q = execution.PromptQueue(server)
 
         print("Initializing extra nodes")
         t = time.time()
@@ -2052,7 +2066,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
             target=self.prompt_worker,
             daemon=True,
             args=(
-                q,
+                server.prompt_queue,
                 server,
             ),
         ).start()
