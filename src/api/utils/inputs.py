@@ -105,6 +105,17 @@ def get_inputs_from_workflow_api(
                 "display_name": value["inputs"].get("display_name", ""),
                 "description": value["inputs"].get("description", ""),
             }
+            
+            # Handle options for ComfyUIDeployExternalEnum
+            if value["class_type"] == "ComfyUIDeployExternalEnum":
+                options_str = value["inputs"].get("options")
+                if options_str:
+                    try:
+                        input_data["enum_options"] = json.loads(options_str)
+                    except json.JSONDecodeError:
+                        # If parsing fails, keep the original string
+                        input_data["enum_options"] = options_str
+            
             inputs.append(input_data)
 
     return inputs if inputs else []
