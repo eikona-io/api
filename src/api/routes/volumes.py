@@ -160,7 +160,7 @@ async def get_downloading_models(request: Request, db: AsyncSession):
         .where(
             ModelDB.deleted == False,
             ModelDB.download_progress != 100,
-            ModelDB.status.notin_(["failed", "cancelled"]),
+            ModelDB.status.notin_(["cancelled"]),
             ModelDB.created_at > datetime.now() - timedelta(hours=24),
         )
     )
