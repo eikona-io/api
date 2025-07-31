@@ -63,6 +63,8 @@ async def stream_logs(
         # Get the current user from the request state
         current_user = request.state.current_user
         is_from_session = id_type == "session"
+        # default to 2 hours ago
+        last_timestamp = dt.datetime.now() - dt.timedelta(hours=2)
 
         async with get_db_context() as db:
             # Verify the entity exists and check permissions
@@ -77,6 +79,7 @@ async def stream_logs(
                     raise HTTPException(status_code=404, detail="Session not found")
                 entity = event
                 id_type = "run"
+                last_timestamp = event.created_at
             else:
                 model = {
                     "run": WorkflowRun,
@@ -94,6 +97,11 @@ async def stream_logs(
                     raise HTTPException(
                         status_code=404, detail=f"{id_type.capitalize()} not found"
                     )
+
+                if id_type == "run":
+                    last_timestamp = entity.created_at
+                elif id_type == "machine":
+                    last_timestamp = entity.updated_at
 
             # Check permissions based on workflow access for runs
             if id_type == "run" and not is_from_session:
@@ -128,7 +136,6 @@ async def stream_logs(
                     )
 
         # Stream logs
-        last_timestamp = None
         while True:
             query = f"""
             SELECT timestamp, log_level, message
