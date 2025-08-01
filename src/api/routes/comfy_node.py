@@ -31,7 +31,7 @@ async def extract_repo_name(repo_url: str) -> str:
 
 
 async def fetch_github_data(url: str, headers: Dict[str, str]) -> Dict[str, Any]:
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
