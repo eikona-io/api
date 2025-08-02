@@ -43,7 +43,6 @@ COMMON_CLS_CONFIG = {
 @app.cls(
     **COMMON_CLS_CONFIG,
     enable_memory_snapshot=True,
-    experimental_options={"gpu_memory_snapshot": True},
 )
 class ComfyDeployRunner(_ComfyDeployRunnerModelsDownloadOptimzedImports):
     # @modal.build()

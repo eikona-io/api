@@ -29,7 +29,6 @@ COMMON_CLS_CONFIG = {
 @app.cls(
     **COMMON_CLS_CONFIG,
     enable_memory_snapshot=True,
-    experimental_options={"gpu_memory_snapshot": True},
 )
 class ComfyDeployRunnerOptimizedModels(_ComfyDeployRunnerOptimizedModels):
     models_to_cache = ["/comfyui/models/checkpoints/v1-5-pruned-emaonly.ckpt"]
@@ -37,7 +36,6 @@ class ComfyDeployRunnerOptimizedModels(_ComfyDeployRunnerOptimizedModels):
 @app.cls(
     **COMMON_CLS_CONFIG,
     enable_memory_snapshot=True,
-    experimental_options={"gpu_memory_snapshot": True},
 )
 class ComfyDeployRunner(_ComfyDeployRunnerOptimizedImports):
     pass
