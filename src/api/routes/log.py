@@ -1,21 +1,6 @@
 import asyncio
-import datetime
-import os
-import uuid
-from .types import (
-    CreateRunRequest,
-    CreateRunResponse,
-    DeploymentRunRequest,
-    WorkflowRunModel,
-    WorkflowRunOutputModel,
-    WorkflowRunRequest,
-    WorkflowRunVersionRequest,
-)
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-import modal
-from sqlalchemy import func
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, select
@@ -24,22 +9,16 @@ from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, 
 from api.models import (
     GPUEvent,
     WorkflowRun,
-    Deployment,
     Machine,
-    WorkflowRunOutput,
     WorkflowRunWithExtra,
-    WorkflowVersion,
     Workflow,
 )
-from api.database import get_db, get_clickhouse_client, get_db_context
-from typing import Optional, Union, cast
-from typing import Dict, Any
+from api.database import get_clickhouse_client, get_db_context
+from typing import Optional, cast
 from uuid import UUID
 import logging
-import logfire
 import json
-import httpx
-from typing import Optional, List
+from typing import Optional
 from uuid import UUID
 import datetime as dt
 
