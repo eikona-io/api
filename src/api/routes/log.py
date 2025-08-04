@@ -1,4 +1,5 @@
 import asyncio
+import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import joinedload
@@ -15,15 +16,330 @@ from api.models import (
     Workflow,
 )
 from api.database import get_clickhouse_client, get_db_context, get_db
-from typing import Optional, cast
+from typing import Optional, cast, Any
 from uuid import UUID
 import logging
 import json
 import datetime as dt
+import uuid
+from upstash_redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Log"])
+
+# Initialize Redis client for log streaming
+redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG"))
+
+# Initialize consumer group helper
+consumer_group = None
+
+# Active streams are now tracked in Redis with keys like "active_stream:<run_id>"
+
+def get_consumer_group():
+    global consumer_group
+    if consumer_group is None:
+        from ..utils.redis_consumer_group import RedisStreamConsumerGroup
+        consumer_group = RedisStreamConsumerGroup(redis)
+    return consumer_group
+
+
+# ==================== ACTIVE STREAM MANAGEMENT ====================
+
+async def register_active_stream(run_id: str, client_id: str = "default"):
+    """Register an active stream in Redis with TTL."""
+    try:
+        stream_key = f"active_stream:{run_id}"
+        stream_data = {
+            "client_id": client_id,
+            "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "status": "active"
+        }
+        # Set with 2-hour TTL to auto-cleanup stale entries
+        await redis.set(stream_key, json.dumps(stream_data), ex=7200)
+        logger.debug(f"Registered active stream for run {run_id}, client {client_id}")
+    except Exception as e:
+        logger.warning(f"Failed to register active stream for {run_id}: {e}")
+
+
+async def unregister_active_stream(run_id: str):
+    """Remove active stream registration from Redis."""
+    try:
+        stream_key = f"active_stream:{run_id}"
+        await redis.execute(["DEL", stream_key])
+        logger.debug(f"Unregistered active stream for run {run_id}")
+    except Exception as e:
+        logger.warning(f"Failed to unregister active stream for {run_id}: {e}")
+
+
+async def is_stream_active(run_id: str) -> bool:
+    """Check if a stream is currently active."""
+    try:
+        stream_key = f"active_stream:{run_id}"
+        result = await redis.get(stream_key)
+        return result is not None
+    except Exception as e:
+        logger.warning(f"Failed to check stream status for {run_id}: {e}")
+        return False
+
+
+async def mark_stream_for_cancellation(run_id: str):
+    """Mark a stream for cancellation by updating its status in Redis."""
+    try:
+        stream_key = f"active_stream:{run_id}"
+        
+        # Get current stream data
+        current_data = await redis.get(stream_key)
+        if current_data:
+            if isinstance(current_data, bytes):
+                current_data = current_data.decode('utf-8')
+            
+            stream_data = json.loads(current_data)
+            stream_data["status"] = "cancelled"
+            stream_data["cancelled_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            
+            # Update with shorter TTL (5 minutes) since it's being cancelled
+            await redis.set(stream_key, json.dumps(stream_data), ex=300)
+            logger.info(f"Marked stream for cancellation: {run_id}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to mark stream for cancellation {run_id}: {e}")
+    
+    return False
+
+
+async def should_cancel_stream(run_id: str) -> bool:
+    """Check if a stream should be cancelled."""
+    try:
+        stream_key = f"active_stream:{run_id}"
+        result = await redis.get(stream_key)
+        
+        if result:
+            if isinstance(result, bytes):
+                result = result.decode('utf-8')
+            
+            stream_data = json.loads(result)
+            return stream_data.get("status") == "cancelled"
+    except Exception as e:
+        logger.warning(f"Failed to check cancellation status for {run_id}: {e}")
+    
+    return False
+
+
+@router.get("/v2/stream-logs")
+async def stream_logs_endpoint_smart(
+    request: Request,
+    run_id: str,
+    log_level: Optional[str] = None,
+    client_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    run_query = select(WorkflowRun).where(WorkflowRun.id == run_id)
+    run_result = await db.execute(run_query)
+    run = run_result.scalar_one_or_none()
+
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    # Check if the workflow exists
+    workflow_exists_query = select(
+        (
+            select(1)
+            .where(Workflow.id == run.workflow_id)
+            .where(~Workflow.deleted)
+            .apply_org_check_by_type(Workflow, request)
+        ).exists()
+    )
+    workflow_exists = await db.scalar(workflow_exists_query)
+
+    if not workflow_exists:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access these logs"
+        )
+        
+    """
+    Smart log streaming that checks for archived logs first.
+    If archived logs exist, streams from cache. Otherwise, streams live.
+    """
+    # Generate unique client ID if not provided
+    if client_id is None:
+        client_id = f"client_{uuid.uuid4().hex[:8]}"
+    
+    # First check if logs are archived
+    archived_logs = await get_archived_logs(run_id)
+    
+    if archived_logs:
+        # Stream from archived logs
+        return StreamingResponse(
+            stream_archived_logs(archived_logs, log_level),
+            media_type="text/event-stream",
+        )
+    else:
+        # Stream live logs
+        return StreamingResponse(
+            stream_logs_from_redis_with_client_tracking(run_id, log_level, client_id),
+            media_type="text/event-stream",
+        )
+
+
+async def stream_logs_from_redis_with_client_tracking(run_id: str, log_level: Optional[str] = None, client_id: str = "default"):
+    """
+    Stream logs from Redis with per-client position tracking.
+    Compatible with Upstash Redis REST API.
+    """
+    # Register this stream as active in Redis
+    await register_active_stream(run_id, client_id)
+    
+    stream_name = run_id
+    last_id_key = f"last_stream_id:{run_id}:{client_id}"
+    
+    # Get the last stream ID for this specific client
+    try:
+        last_id = await redis.get(last_id_key) or "0"
+        if isinstance(last_id, bytes):
+            last_id = last_id.decode('utf-8')
+    except Exception:
+        last_id = "0"  # Fallback to beginning if Redis get fails
+    
+    try:
+        while True:
+            # Check if stream should be cancelled
+            if await should_cancel_stream(run_id):
+                logger.info(f"Stream cancelled for run {run_id}, client {client_id}")
+                yield f"data: {json.dumps({'type': 'stream_cancelled', 'reason': 'run_completed'})}\n\n"
+                break
+            
+            # Use non-blocking XREAD command
+            entries = await redis.execute(["XREAD", "STREAMS", stream_name, last_id])
+            
+            if entries and len(entries) > 0:
+                # Process each stream entry
+                for stream, items in entries:
+                    for message_id, fields in items:
+                        try:
+                            # Parse the Redis stream entry
+                            if len(fields) >= 2:
+                                # Parse the serialized value
+                                serialized_value = fields[1]
+                                if isinstance(serialized_value, bytes):
+                                    serialized_value = serialized_value.decode('utf-8')
+                                    
+                                # Try to parse as JSON, fallback to string
+                                try:
+                                    log_data = json.loads(serialized_value)
+                                except json.JSONDecodeError:
+                                    log_data = serialized_value
+                                
+                                # Normalize the data to the expected schema
+                                normalized_logs = normalize_log_data(log_data, log_level)
+                                
+                                # Yield each normalized log entry
+                                for log_entry in normalized_logs:
+                                    yield f"data: {json.dumps(log_entry)}\n\n"
+                                
+                                # Update last_id to avoid re-reading
+                                last_id = message_id
+                                
+                                # Store the updated last_id for this specific client
+                                try:
+                                    await redis.set(last_id_key, last_id, ex=3600)  # Expire after 1 hour
+                                except Exception as e:
+                                    logger.warning(f"Failed to update last_id for client {client_id}: {e}")
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing Redis stream entry: {e}")
+                            continue
+            else:
+                # No new messages, wait a bit before polling again
+                await asyncio.sleep(0.1)
+                
+    except asyncio.CancelledError:
+        logger.info(f"Client {client_id} stream cancelled for run {run_id}")
+        raise
+    except Exception as e:
+        logger.error(f"Error in Redis stream for client {client_id}: {e}")
+        raise
+    finally:
+        # Remove from active streams when done
+        await unregister_active_stream(run_id)
+
+
+def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) -> list:
+    """
+    Normalize different log data formats to the expected schema.
+    Returns a list of log entries in the format:
+    {"message": message, "level": level, "timestamp": timestamp.isoformat()[:-3] + 'Z'}
+    """
+    normalized_logs = []
+    current_time = dt.datetime.now(dt.timezone.utc)
+    
+    if isinstance(log_data, list):
+        # Handle array of log entries (body.logs format)
+        for entry in log_data:
+            if isinstance(entry, dict):
+                # Expected format: {"timestamp": unix_timestamp, "logs": "message"}
+                message = entry.get("logs", str(entry))
+                level = "info"  # Default level as used in internal.py
+                
+                # Parse timestamp
+                if "timestamp" in entry:
+                    try:
+                        timestamp = dt.datetime.fromtimestamp(entry["timestamp"], tz=dt.timezone.utc)
+                    except (ValueError, TypeError):
+                        timestamp = current_time
+                else:
+                    timestamp = current_time
+                
+                # Apply log level filter if specified
+                if log_level_filter is None or level == log_level_filter:
+                    normalized_logs.append({
+                        "message": message,
+                        "level": level,
+                        "timestamp": timestamp.isoformat()[:-3] + 'Z'
+                    })
+    elif isinstance(log_data, dict):
+        # Handle single log entry or ws_event format
+        if "logs" in log_data and "timestamp" in log_data:
+            # Single log entry format
+            message = log_data["logs"]
+            level = "info"
+            try:
+                timestamp = dt.datetime.fromtimestamp(log_data["timestamp"], tz=dt.timezone.utc)
+            except (ValueError, TypeError):
+                timestamp = current_time
+        else:
+            # ws_event or other dict format - convert to string
+            message = json.dumps(log_data)
+            level = "info"
+            timestamp = current_time
+        
+        # Apply log level filter if specified
+        if log_level_filter is None or level == log_level_filter:
+            normalized_logs.append({
+                "message": message,
+                "level": level,
+                "timestamp": timestamp.isoformat()[:-3] + 'Z'
+            })
+    elif isinstance(log_data, str):
+        # Handle string data
+        # Apply log level filter if specified
+        if log_level_filter is None or "info" == log_level_filter:
+            normalized_logs.append({
+                "message": log_data,
+                "level": "info",
+                "timestamp": current_time.isoformat()[:-3] + 'Z'
+            })
+    else:
+        # Handle any other data type
+        # Apply log level filter if specified
+        if log_level_filter is None or "info" == log_level_filter:
+            normalized_logs.append({
+                "message": str(log_data),
+                "level": "info",
+                "timestamp": current_time.isoformat()[:-3] + 'Z'
+            })
+    
+    return normalized_logs
 
 
 @router.get("/stream-logs")
@@ -407,3 +723,215 @@ async def get_clickhouse_run_logs(
     ]
 
     return formatted_rows
+
+
+@router.get("/v2/clickhouse-run-logs/{run_id}")
+async def get_run_logs_v2(
+    run_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    v2 version that fetches logs from Redis instead of Clickhouse.
+    Returns archived logs if available, otherwise returns empty list.
+    """
+    # Validate run exists and user has access
+    run_query = (
+        select(WorkflowRun.created_at)
+        .where(WorkflowRun.id == run_id)
+        .apply_org_check(request)
+        .limit(1)
+    )
+    run_result = await db.execute(run_query)
+    run_created_at = run_result.scalar_one_or_none()
+    if not run_created_at:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Get archived logs from Redis
+    archived_logs = await get_archived_logs(str(run_id))
+    
+    if not archived_logs:
+        # Return empty list if no logs found in Redis
+        return []
+    
+    # Since logs are stored per run_id in Redis and we already validated
+    # user access to this run, we only need to filter by log type/content
+    filtered_logs = []
+    for log_entry in archived_logs:
+        # Filter out input logs and empty logs (same as v1)
+        if (
+            # log_entry.get("log_type") != "input"
+            log_entry.get("message", "").strip() != ""
+        ):
+            # Ensure consistent format with v1 endpoint
+            formatted_entry = {
+                "run_id": str(log_entry.get("run_id", run_id)),
+                "timestamp": log_entry.get("timestamp"),
+                "log": log_entry.get("message"),
+                "user_id": log_entry.get("user_id"),
+                "org_id": log_entry.get("org_id"),
+                "log_type": log_entry.get("log_type"),
+            }
+            filtered_logs.append(formatted_entry)
+    
+    # Sort by timestamp (same as v1)
+    filtered_logs.sort(key=lambda x: x.get("timestamp", ""))
+    
+    return filtered_logs
+
+
+# ==================== LOG ARCHIVAL FUNCTIONS ====================
+
+async def archive_logs_for_run(run_id: str):
+    """
+    Archive all logs for a completed run to Redis with 30-day TTL.
+    This should be called when a run reaches a terminal state.
+    """
+    try:
+        # Collect all logs from the stream
+        stream_name = run_id
+        archived_logs = []
+        
+        # Read all entries from the stream (from beginning)
+        entries = await redis.execute(["XREAD", "STREAMS", stream_name, "0"])
+        
+        if entries and len(entries) > 0:
+            # Process each stream entry
+            for stream, items in entries:
+                for message_id, fields in items:
+                    if len(fields) >= 2:
+                        try:
+                            # Parse the serialized value
+                            serialized_value = fields[1]
+                            if isinstance(serialized_value, bytes):
+                                serialized_value = serialized_value.decode('utf-8')
+                            
+                            # Try to parse as JSON, fallback to string
+                            try:
+                                log_data = json.loads(serialized_value)
+                            except json.JSONDecodeError:
+                                log_data = serialized_value
+                            
+                            # Normalize the data to the expected schema
+                            normalized_logs = normalize_log_data(log_data)
+                            archived_logs.extend(normalized_logs)
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing log entry for archival: {e}")
+                            continue
+        
+        if archived_logs:
+            # Store archived logs with 30-day TTL (2592000 seconds)
+            archive_key = f"log:{run_id}"
+            await redis.set(archive_key, json.dumps(archived_logs), ex=2592000)
+            logger.info(f"Archived {len(archived_logs)} log entries for run {run_id}")
+            
+            # Clean up the stream after archiving
+            await cleanup_stream(run_id)
+            
+        return len(archived_logs)
+        
+    except Exception as e:
+        logger.error(f"Error archiving logs for run {run_id}: {e}")
+        return 0
+
+
+async def get_archived_logs(run_id: str):
+    """
+    Retrieve archived logs for a run from Redis.
+    Returns None if no archived logs exist.
+    """
+    try:
+        archive_key = f"log:{run_id}"
+        archived_data = await redis.get(archive_key)
+        
+        if archived_data:
+            if isinstance(archived_data, bytes):
+                archived_data = archived_data.decode('utf-8')
+            return json.loads(archived_data)
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error retrieving archived logs for run {run_id}: {e}")
+        return None
+
+
+async def stream_archived_logs(archived_logs: list, log_level: Optional[str] = None):
+    """
+    Simulate streaming from archived logs.
+    """
+    try:
+        for log_entry in archived_logs:
+            # Apply log level filter if specified
+            if log_level and log_entry.get("level", "").lower() != log_level.lower():
+                continue
+                
+            yield f"data: {json.dumps(log_entry)}\n\n"
+            # Small delay to simulate streaming
+            # await asyncio.sleep(0.01)
+            
+        # Send completion signal
+        yield f"data: {json.dumps({'type': 'stream_complete', 'source': 'archive'})}\n\n"
+        
+    except Exception as e:
+        logger.error(f"Error streaming archived logs: {e}")
+        yield f"data: {json.dumps({'error': 'Error streaming archived logs'})}\n\n"
+
+
+async def cleanup_stream(run_id: str):
+    """
+    Clean up the Redis stream and related data after archiving.
+    """
+    try:
+        stream_name = run_id
+        
+        # Delete the stream
+        await redis.execute(["DEL", stream_name])
+        
+        # Clean up any last_id tracking keys for this run
+        pattern_keys = [
+            f"last_stream_id:{run_id}",
+            f"last_stream_id:{run_id}:*"
+        ]
+        
+        for pattern in pattern_keys:
+            try:
+                keys = await redis.execute(["KEYS", pattern])
+                if keys:
+                    await redis.execute(["DEL"] + keys)
+            except Exception as e:
+                logger.warning(f"Error cleaning up keys with pattern {pattern}: {e}")
+        
+        # Clean up active stream key
+        await unregister_active_stream(run_id)
+        
+        logger.info(f"Cleaned up stream and related data for run {run_id}")
+        
+    except Exception as e:
+        logger.error(f"Error cleaning up stream for run {run_id}: {e}")
+
+
+async def cancel_active_streams(run_id: str):
+    """
+    Cancel any active streams for a run ID.
+    This should be called when a run reaches terminal state.
+    """
+    try:
+        # Check if there's an active stream for this run
+        if await is_stream_active(run_id):
+            # Mark the stream for cancellation
+            await mark_stream_for_cancellation(run_id)
+            logger.info(f"Marked active stream for cancellation: run {run_id}")
+        else:
+            logger.debug(f"No active stream found for run {run_id}")
+    except Exception as e:
+        logger.error(f"Error cancelling stream for run {run_id}: {e}")
+
+
+def is_terminal_status(status: str) -> bool:
+    """
+    Check if a status is a terminal state.
+    """
+    terminal_statuses = ["success", "failed", "timeout", "cancelled"]
+    return status in terminal_statuses
