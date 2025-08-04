@@ -14,6 +14,7 @@ from api.routes.utils import (
     update_user_settings as update_user_settings_util,
     select,
 )
+from api.utils.autumn import get_autumn_data
 
 from api.middleware.auth import (
   get_api_keys as get_api_keys_auth,
@@ -61,6 +62,73 @@ async def get_user_settings(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_user_settings_util(request, db)
+
+
+@router.get("/platform/autumn-data")
+async def get_autumn_data_endpoint(
+    request: Request,
+):
+    print(request.state.current_user)
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+    
+    autumn_data = await get_autumn_customer(org_id or user_id, include_features=True)
+    autumn_query = await get_autumn_data(org_id or user_id)
+    
+    # Get the credit schema from customer's features
+    credit_schema = {}
+    if autumn_data and autumn_data.get("features") and autumn_data["features"].get("gpu-credit"):
+        gpu_credit_feature = autumn_data["features"]["gpu-credit"]
+        if gpu_credit_feature.get("credit_schema"):
+            for credit_item in gpu_credit_feature["credit_schema"]:
+                feature_id = credit_item.get("feature_id") or credit_item.get("metered_feature_id")
+                credit_amount = credit_item.get("credit_amount") or credit_item.get("credit_cost")
+                if feature_id and credit_amount:
+                    credit_schema[feature_id] = credit_amount
+    
+    # Transform the usage list using the credit schema
+    transformed_list = []
+    usage_list = autumn_query.get("list", [])
+    
+    # First pass: identify GPU types that have zero usage across all periods
+    gpu_totals = {}
+    for usage_item in usage_list:
+        for gpu_type, usage_value in usage_item.items():
+            if gpu_type == "period":
+                continue
+            if gpu_type not in gpu_totals:
+                gpu_totals[gpu_type] = 0
+            gpu_totals[gpu_type] += usage_value if usage_value else 0
+    
+    # Identify GPU types that are all zero and filter them out
+    zero_gpu_types = [gpu_type for gpu_type, total in gpu_totals.items() if total == 0]
+    gpu_types_to_filter = zero_gpu_types  # Filter out all zero GPU types
+    
+    # Second pass: transform and filter the data
+    for usage_item in usage_list:
+        transformed_item = {"period": usage_item.get("period")}
+        
+        # Transform each GPU usage value using the credit multiplier
+        for gpu_type, usage_value in usage_item.items():
+            if gpu_type == "period":
+                continue
+            
+            # Skip GPU types that we're filtering out
+            if gpu_type in gpu_types_to_filter:
+                continue
+                
+            # Map the usage value using credit schema if available
+            credit_multiplier = credit_schema.get(gpu_type, 1.0)
+            transformed_value = usage_value * credit_multiplier if usage_value else 0
+            transformed_item[gpu_type] = transformed_value
+            
+        transformed_list.append(transformed_item)
+    
+    return {
+        "autumn_data": autumn_data,
+        "list": transformed_list,
+        "credit_schema": credit_schema,  # Include for debugging/reference
+    }
 
 
 @router.get("/user/{user_id}")

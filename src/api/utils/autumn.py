@@ -81,12 +81,57 @@ async def send_autumn_usage_event(
     except Exception as e:
         logfire.error(f"Error sending usage data to Autumn: {str(e)}")
         return False
-
-async def get_autumn_customer(customer_id: str) -> Optional[dict]:
+    
+    
+async def get_autumn_data(customer_id: str, range: str = "30d") -> Optional[dict]:
     autumn_api_key = os.getenv("AUTUMN_SECRET_KEY")
     if not autumn_api_key:
         logfire.error("AUTUMN_SECRET_KEY not found in environment variables")
         return None
+    
+    data = {
+        "customer_id": customer_id,
+        "feature_id": [
+  "gpu-b200",
+  "gpu-h200", 
+  "cpu",
+  "gpu-h100",
+  "gpu-a100-80gb",
+  "gpu-a100",
+  "gpu-l4",
+  "gpu-t4",
+  "gpu-l40s",
+  "gpu-a10g"
+],
+        "range": range
+    }
+
+    autumn_headers = {
+        "Authorization": f"Bearer {autumn_api_key}",
+        "Content-Type": "application/json",
+    }
+    
+    try:
+        url = f"https://api.useautumn.com/v1/query"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=autumn_headers, json=data) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    error_text = await response.text()
+                    logfire.error(f"Failed to get customer data from Autumn: {error_text}")
+                    return None
+    except Exception as e:
+        logfire.error(f"Error retrieving customer data from Autumn: {str(e)}")
+        return None
+    
+
+async def get_autumn_customer(customer_id: str, include_features: bool = False) -> Optional[dict]:
+    autumn_api_key = os.getenv("AUTUMN_SECRET_KEY")
+    if not autumn_api_key:
+        logfire.error("AUTUMN_SECRET_KEY not found in environment variables")
+        return None
+    
 
     try:
         # Prepare Autumn API request
@@ -94,7 +139,10 @@ async def get_autumn_customer(customer_id: str) -> Optional[dict]:
             "Authorization": f"Bearer {autumn_api_key}",
             "Content-Type": "application/json",
         }
-
+        
+        if (include_features):
+            autumn_headers["x-api-version"] = "1.2"
+            
         url = f"https://api.useautumn.com/v1/customers/{customer_id}"
 
         async with aiohttp.ClientSession() as session:
