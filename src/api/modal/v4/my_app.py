@@ -12,7 +12,7 @@ from modal import (
     enter,
     exit,
 )
-from typing import Optional, cast, Union
+from typing import Optional, cast
 import json
 import urllib.request
 import urllib.parse
