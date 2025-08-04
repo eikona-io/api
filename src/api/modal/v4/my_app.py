@@ -12,7 +12,7 @@ from modal import (
     enter,
     exit,
 )
-from typing import Optional, cast
+from typing import Optional, cast, Union
 import json
 import urllib.request
 import urllib.parse
@@ -31,6 +31,7 @@ from collections import deque
 from contextlib import contextmanager
 from io import StringIO
 from urllib.parse import urlparse
+import inspect
 
 public_model_volume = modal.Volume.from_name(
     config["public_model_volume"], create_if_missing=True
@@ -1997,14 +1998,14 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         original_validate_prompt = execution.validate_prompt
 
-        async def custom_validate_prompt(prompt_id, prompt):
+        async def custom_validate_prompt(prompt_id, prompt, partial_execution_list: Optional[list[str]] = None):
             if self.skip_workflow_api_validation:
                 outputs = set()
                 for x in prompt:
                     if "class_type" not in prompt[x]:
                         error = {
                             "type": "invalid_prompt",
-                            "message": f"Cannot execute because a node is missing the class_type property.",
+                            "message": "Cannot execute because a node is missing the class_type property.",
                             "details": f"Node ID '#{x}'",
                             "extra_info": {},
                         }
@@ -2022,7 +2023,9 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
                         return (False, error, [], [])
 
                     if hasattr(class_, "OUTPUT_NODE") and class_.OUTPUT_NODE is True:
-                        outputs.add(x)
+                        # Handle both versions: with and without partial_execution_list logic
+                        if partial_execution_list is None or x in partial_execution_list:
+                            outputs.add(x)
 
                 if len(outputs) == 0:
                     error = {
@@ -2044,7 +2047,14 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
                         good_outputs.add(o)
 
                 return (True, None, list(good_outputs), node_errors)
-            return await original_validate_prompt(prompt_id, prompt)
+            
+            sig = inspect.signature(original_validate_prompt)
+            if len(sig.parameters) >= 3:
+                # for v0.3.48
+                return await original_validate_prompt(prompt_id, prompt, partial_execution_list)
+            else:
+                # for v0.3.45 ~ v0.3.47
+                return await original_validate_prompt(prompt_id, prompt)
 
         execution.validate_prompt = custom_validate_prompt
 
@@ -2056,7 +2066,12 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         print("Initializing extra nodes")
         t = time.time()
-        nodes.init_extra_nodes()
+        if asyncio.iscoroutinefunction(nodes.init_extra_nodes):
+            # for v0.3.48
+            await nodes.init_extra_nodes()
+        else:
+            # for v0.3.45 ~ v0.3.47
+            nodes.init_extra_nodes()
         self.loading_time["init_extra_nodes"] = time.time() - t
         print("Adding routes")
         server.add_routes()
