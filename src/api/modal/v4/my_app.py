@@ -2118,6 +2118,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
     enable_memory_snapshot=True,
+    # experimental_options={"gpu_memory_snapshot": True},
     secrets=base_secrets,
     cpu=cpu,
     memory=memory,

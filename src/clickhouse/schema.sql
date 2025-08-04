@@ -24,10 +24,7 @@ CREATE TABLE default.workflow_events
         'output' = 11,
         'ws-event' = 12),
     `progress` Float32,
-    `log` String,
-    
-    INDEX idx_run_id_timestamp (run_id, timestamp) TYPE minmax GRANULARITY 1,
-    INDEX idx_machine_id_timestamp (machine_id, timestamp) TYPE minmax GRANULARITY 1
+    `log` String
 )
 ENGINE = MergeTree()
 ORDER BY (workflow_id, run_id, user_id)
@@ -42,10 +39,7 @@ CREATE TABLE default.log_entries
     `machine_id` UUID,
     `timestamp` DateTime64(3),
     `log_level` Enum8('debug' = 1, 'info' = 2, 'warning' = 3, 'error' = 4, 'ws_event' = 5, 'builder' = 6, 'webhook' = 7),
-    `message` String,
-    
-    INDEX idx_run_id_timestamp (run_id, timestamp) TYPE minmax GRANULARITY 1,
-    INDEX idx_machine_id_timestamp (machine_id, timestamp) TYPE minmax GRANULARITY 1
+    `message` String
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (run_id, timestamp)
