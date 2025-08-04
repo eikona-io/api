@@ -197,16 +197,41 @@ router = APIRouter()
 
 async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
     await client.insert(table=table, data=data)
+    
+from upstash_redis.asyncio import Redis
 
+redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG"))
 
-# async def insert_to_clickhouse_multi(client: AsyncClient, table: str, data: list):
-#     # Prepare the data for batch insert
-#     columns = list(data[0].keys())
-#     values = [list(item.values()) for item in data]
+from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status
 
-#     # Perform batch insert
-#     result = await client.insert(table=table, data=values, column_names=columns)
-#     print("result", result)
+async def insert_log_entry_to_redis(run_id: str, value: Any):
+    # Serialize the value to JSON if it's not already a string
+    if isinstance(value, str):
+        serialized_value = value
+    else:
+        serialized_value = json.dumps(value)
+        
+    # generated_id = str(uuid4())
+    
+    # last_id_key = f"last_stream_id:{run_id}"
+    
+    # await redis.set(last_id_key, generated_id)
+    
+    updated_at = dt.datetime.now(dt.UTC)
+    
+    # Check if this is the first entry in the stream
+    try:
+        stream_info = await redis.execute(["XINFO", "STREAM", run_id])
+        stream_exists = True
+    except:
+        stream_exists = False
+    
+    await redis.execute(["XADD", run_id, "*", "message", serialized_value])
+    
+    # Set TTL only if this is a new stream
+    if not stream_exists:
+        await redis.execute(["EXPIRE", run_id, "43200"])
+    
 endStatuses = ["success", "failed", "timeout", "cancelled"]
 
 
@@ -256,7 +281,8 @@ async def update_run(
                     )
                 ]
                 # Add ClickHouse insert to background tasks
-                background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.ws_event)
                 return {"status": "success"}
 
             if body.logs is not None:
@@ -281,8 +307,8 @@ async def update_run(
                     # print("data", log_entry["logs"])
                     log_data.append(data)
 
-                background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-
+                # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.logs)
                 return {"status": "success"}
 
             # Updating the progress
@@ -621,6 +647,12 @@ async def update_run(
                 background_tasks.add_task(
                     insert_to_clickhouse, client, "workflow_events", progress_data
                 )
+
+                # Archive logs if run reached terminal state
+                if is_terminal_status(body.status):
+                    logger.info(f"Run {body.run_id} reached terminal state {body.status}, triggering log archival")
+                    background_tasks.add_task(cancel_active_streams, body.run_id)
+                    background_tasks.add_task(archive_logs_for_run, body.run_id)
 
                 # Get all outputs for the workflow run
                 outputs_query = select(WorkflowRunOutput).where(
