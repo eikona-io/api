@@ -126,103 +126,37 @@ async def should_cancel_stream(run_id: str) -> bool:
     return False
 
 
-# @router.get("/v2/stream-logs")
-# async def stream_logs_endpoint_v2(
-#     request: Request,
-#     run_id: str,
-#     log_level: Optional[str] = None,
-# ):
-#     """
-#     Stream logs from Redis for a specific run ID using Server-Sent Events.
-#     This endpoint uses Redis streams for real-time log streaming.
-#     """
-#     # Verify the run exists and check permissions
-#     async with get_db_context() as db:
-#         run_query = (
-#             select(WorkflowRun)
-#             .where(WorkflowRun.id == run_id)
-#             .apply_org_check(request)
-#         )
-#         result = await db.execute(run_query)
-#         workflow_run = result.scalar_one_or_none()
-        
-#         if not workflow_run:
-#             raise HTTPException(status_code=404, detail="WorkflowRun not found")
-    
-#     return StreamingResponse(
-#         stream_logs_from_redis(run_id, log_level),
-#         media_type="text/event-stream",
-#     )
-
-
-# @router.get("/v2/stream-logs-consumer-group")
-# async def stream_logs_endpoint_with_consumer_group(
-#     request: Request,
-#     run_id: str,
-#     log_level: Optional[str] = None,
-#     consumer_id: Optional[str] = None,
-# ):
-#     """
-#     Stream logs using Redis consumer groups for reliable delivery.
-#     This endpoint uses Redis streams with consumer groups to ensure each message 
-#     is delivered exactly once, even with multiple consumers.
-    
-#     Note: This requires a Redis server that supports consumer groups.
-#     For Upstash Redis REST API, use /v2/stream-logs-reliable instead.
-    
-#     Args:
-#         run_id: The workflow run ID to stream logs for
-#         log_level: Optional filter for log level
-#         consumer_id: Optional unique consumer identifier (auto-generated if not provided)
-#     """
-#     # Generate unique consumer ID if not provided
-#     if consumer_id is None:
-#         consumer_id = f"consumer_{uuid.uuid4().hex[:8]}"
-    
-#     # Use consumer group for reliable streaming
-#     consumer_group_instance = get_consumer_group()
-    
-#     return StreamingResponse(
-#         consumer_group_instance.stream_logs_with_consumer_group(
-#             run_id, consumer_id, log_level
-#         ),
-#         media_type="text/event-stream",
-#     )
-
-
-# @router.get("/v2/stream-logs-reliable")
-# async def stream_logs_endpoint_reliable(
-#     request: Request,
-#     run_id: str,
-#     log_level: Optional[str] = None,
-#     client_id: Optional[str] = None,
-# ):
-#     """
-#     Stream logs with reliable delivery using per-client last ID tracking.
-#     Compatible with Upstash Redis REST API.
-    
-#     Args:
-#         run_id: The workflow run ID to stream logs for
-#         log_level: Optional filter for log level  
-#         client_id: Optional unique client identifier for tracking position
-#     """
-#     # Generate unique client ID if not provided
-#     if client_id is None:
-#         client_id = f"client_{uuid.uuid4().hex[:8]}"
-    
-#     return StreamingResponse(
-#         stream_logs_from_redis_with_client_tracking(run_id, log_level, client_id),
-#         media_type="text/event-stream",
-#     )
-
-
 @router.get("/v2/stream-logs")
 async def stream_logs_endpoint_smart(
     request: Request,
     run_id: str,
     log_level: Optional[str] = None,
     client_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
 ):
+    run_query = select(WorkflowRun).where(WorkflowRun.id == run_id)
+    run_result = await db.execute(run_query)
+    run = run_result.scalar_one_or_none()
+
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    # Check if the workflow exists
+    workflow_exists_query = select(
+        (
+            select(1)
+            .where(Workflow.id == run.workflow_id)
+            .where(~Workflow.deleted)
+            .apply_org_check_by_type(Workflow, request)
+        ).exists()
+    )
+    workflow_exists = await db.scalar(workflow_exists_query)
+
+    if not workflow_exists:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access these logs"
+        )
+        
     """
     Smart log streaming that checks for archived logs first.
     If archived logs exist, streams from cache. Otherwise, streams live.
@@ -325,96 +259,6 @@ async def stream_logs_from_redis_with_client_tracking(run_id: str, log_level: Op
     except Exception as e:
         logger.error(f"Error in Redis stream for client {client_id}: {e}")
         raise
-    finally:
-        # Remove from active streams when done
-        await unregister_active_stream(run_id)
-
-
-async def stream_logs_from_redis(run_id: str, log_level: Optional[str] = None):
-    """
-    Stream logs from Redis for a specific run ID using non-blocking polling.
-    Normalizes different data formats to match the existing schema:
-    {"message": message, "level": level, "timestamp": timestamp.isoformat()[:-3] + 'Z'}
-    """
-    # Register this stream as active in Redis
-    await register_active_stream(run_id, "default")
-    
-    stream_name = run_id
-    last_id_key = f"last_stream_id:{run_id}"
-    
-    # Get the last stream ID from Redis, or start from beginning
-    try:
-        last_id = await redis.get(last_id_key) or "0"
-        if isinstance(last_id, bytes):
-            last_id = last_id.decode('utf-8')
-    except Exception:
-        last_id = "0"  # Fallback to beginning if Redis get fails
-    
-    try:
-        while True:
-            # Check if stream should be cancelled
-            if await should_cancel_stream(run_id):
-                logger.info(f"Stream cancelled for run {run_id}")
-                yield f"data: {json.dumps({'type': 'stream_cancelled', 'reason': 'run_completed'})}\n\n"
-                break
-            
-            # Use non-blocking XREAD command (no BLOCK parameter)
-            # Note: XREAD command format: XREAD STREAMS stream_name last_id
-            entries = await redis.execute(["XREAD", "STREAMS", stream_name, last_id])
-            
-            if entries and len(entries) > 0:
-                # Process each stream entry
-                for stream, items in entries:
-                    for message_id, fields in items:
-                        # print(f"message_id: {message_id}, fields: {fields}")
-                        # Parse the Redis stream entry
-                        # fields format: [run_id, generated_id, serialized_value]
-                        if len(fields) >= 2:
-                            try:
-                                # Parse the serialized value
-                                serialized_value = fields[1]
-                                if isinstance(serialized_value, bytes):
-                                    serialized_value = serialized_value.decode('utf-8')
-                                    
-                                # print(f"serialized_value: {serialized_value}")
-                                
-                                # Try to parse as JSON, fallback to string
-                                try:
-                                    log_data = json.loads(serialized_value)
-                                except json.JSONDecodeError:
-                                    log_data = serialized_value
-                                
-                                # Normalize the data to the expected schema
-                                normalized_logs = normalize_log_data(log_data, log_level)
-                                
-                                # print(f"log_data: {log_data}")
-                                
-                                # Yield each normalized log entry
-                                for log_entry in normalized_logs:
-                                    yield f"data: {json.dumps(log_entry)}\n\n"
-                                
-                                # Update last_id to avoid re-reading
-                                last_id = message_id
-                                
-                                # Store the updated last_id in Redis for persistence
-                                try:
-                                    await redis.set(last_id_key, last_id)
-                                except Exception as e:
-                                    logger.warning(f"Failed to update last_id in Redis: {e}")
-                                
-                            except Exception as e:
-                                logger.error(f"Error processing Redis stream entry: {e}")
-                                continue
-            else:
-                # No new messages, send keepalive
-                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
-            
-            # Sleep for 1 second before polling again (non-blocking polling)
-            await asyncio.sleep(1)
-                
-    except Exception as e:
-        logger.error(f"Error in Redis stream: {e}")
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
     finally:
         # Remove from active streams when done
         await unregister_active_stream(run_id)
