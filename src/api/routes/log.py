@@ -881,6 +881,61 @@ async def get_clickhouse_run_logs(
     return formatted_rows
 
 
+@router.get("/v2/clickhouse-run-logs/{run_id}")
+async def get_run_logs_v2(
+    run_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    v2 version that fetches logs from Redis instead of Clickhouse.
+    Returns archived logs if available, otherwise returns empty list.
+    """
+    # Validate run exists and user has access
+    run_query = (
+        select(WorkflowRun.created_at)
+        .where(WorkflowRun.id == run_id)
+        .apply_org_check(request)
+        .limit(1)
+    )
+    run_result = await db.execute(run_query)
+    run_created_at = run_result.scalar_one_or_none()
+    if not run_created_at:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Get archived logs from Redis
+    archived_logs = await get_archived_logs(str(run_id))
+    
+    if not archived_logs:
+        # Return empty list if no logs found in Redis
+        return []
+    
+    # Since logs are stored per run_id in Redis and we already validated
+    # user access to this run, we only need to filter by log type/content
+    filtered_logs = []
+    for log_entry in archived_logs:
+        # Filter out input logs and empty logs (same as v1)
+        if (
+            # log_entry.get("log_type") != "input"
+            log_entry.get("message", "").strip() != ""
+        ):
+            # Ensure consistent format with v1 endpoint
+            formatted_entry = {
+                "run_id": str(log_entry.get("run_id", run_id)),
+                "timestamp": log_entry.get("timestamp"),
+                "log": log_entry.get("message"),
+                "user_id": log_entry.get("user_id"),
+                "org_id": log_entry.get("org_id"),
+                "log_type": log_entry.get("log_type"),
+            }
+            filtered_logs.append(formatted_entry)
+    
+    # Sort by timestamp (same as v1)
+    filtered_logs.sort(key=lambda x: x.get("timestamp", ""))
+    
+    return filtered_logs
+
+
 # ==================== LOG ARCHIVAL FUNCTIONS ====================
 
 async def archive_logs_for_run(run_id: str):

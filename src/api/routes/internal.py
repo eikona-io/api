@@ -219,7 +219,18 @@ async def insert_log_entry_to_redis(run_id: str, value: Any):
     
     updated_at = dt.datetime.now(dt.UTC)
     
+    # Check if this is the first entry in the stream
+    try:
+        stream_info = await redis.execute(["XINFO", "STREAM", run_id])
+        stream_exists = True
+    except:
+        stream_exists = False
+    
     await redis.execute(["XADD", run_id, "*", "message", serialized_value])
+    
+    # Set TTL only if this is a new stream
+    if not stream_exists:
+        await redis.execute(["EXPIRE", run_id, "43200"])
     
 endStatuses = ["success", "failed", "timeout", "cancelled"]
 
