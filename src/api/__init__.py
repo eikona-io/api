@@ -95,6 +95,7 @@ set_global_textmap(NullPropagator())
 logger = logfire
 logfire.configure(
     service_name="comfydeploy-api",
+    # send_to_logfire=False,
     # additional_span_processors=[span_processor]
 )
 

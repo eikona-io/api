@@ -276,7 +276,8 @@ async def update_run(
             fixed_time = updated_at
 
             workflow_run = await get_cached_workflow_run(body.run_id, db)
-            if workflow_run.user_id in blocking_log_streaming_user_id:
+            
+            if workflow_run is not None and workflow_run.user_id in blocking_log_streaming_user_id:
                 is_blocking_log_update = True
             
             if body.ws_event is not None:
