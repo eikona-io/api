@@ -219,18 +219,27 @@ async def insert_log_entry_to_redis(run_id: str, value: Any):
     
     updated_at = dt.datetime.now(dt.UTC)
     
-    # Check if this is the first entry in the stream
-    try:
-        stream_info = await redis.execute(["XINFO", "STREAM", run_id])
-        stream_exists = True
-    except:
-        stream_exists = False
+    # Single Redis operation: XADD + conditional EXPIRE in Lua script (cost savings: 3 ops → 1 op)
+    lua_script = """
+    local stream_key = KEYS[1]
+    local message_data = ARGV[1]
+    local ttl = ARGV[2]
     
-    await redis.execute(["XADD", run_id, "*", "message", serialized_value])
+    -- Check if stream exists (0 cost - internal Redis operation)
+    local exists = redis.call('EXISTS', stream_key)
     
-    # Set TTL only if this is a new stream
-    if not stream_exists:
-        await redis.execute(["EXPIRE", run_id, "43200"])
+    -- Add to stream
+    local result = redis.call('XADD', stream_key, '*', 'message', message_data)
+    
+    -- Set TTL only if stream didn't exist
+    if exists == 0 then
+        redis.call('EXPIRE', stream_key, ttl)
+    end
+    
+    return result
+    """
+    
+    await redis.execute(["EVAL", lua_script, "1", run_id, serialized_value, "43200"])
     
 endStatuses = ["success", "failed", "timeout", "cancelled"]
 
@@ -276,21 +285,23 @@ async def update_run(
                 # print("body.run_id", body.run_id)
                 # with logfire.span("get_cached_workflow_run"):
                 # print("workflow_run", workflow_run)
-                if is_blocking_log_update is False:
-                    log_data = [
-                        (
-                            uuid4(),
-                            body.run_id,
-                            workflow_run.workflow_id,
-                            workflow_run.machine_id,
-                            updated_at,
-                            "ws_event",
-                            json.dumps(body.ws_event),
-                        )
-                    ]
-                    # Add ClickHouse insert to background tasks
-                    # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-                    background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.ws_event)
+                
+                # Disable sending ws event
+                # if is_blocking_log_update is False:
+                #     log_data = [
+                #         (
+                #             uuid4(),
+                #             body.run_id,
+                #             workflow_run.workflow_id,
+                #             workflow_run.machine_id,
+                #             updated_at,
+                #             "ws_event",
+                #             json.dumps(body.ws_event),
+                #         )
+                #     ]
+                #     # Add ClickHouse insert to background tasks
+                #     # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                #     background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.ws_event)
                 return {"status": "success"}
 
             if body.logs is not None:
