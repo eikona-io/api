@@ -126,12 +126,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         org_id = current_user.get('org_id', 'unknown') if isinstance(current_user, dict) else 'unknown'
         
         try:
-            # Skip logfire logging for update-run
-            if request.url.path != "/api/update-run":
-                if org_id != "unknown":
-                    logfire.info("Organization", user_id=user_id, org_id=org_id)
-                elif user_id != "unknown":
-                    logfire.info("User", user_id=user_id)
+            # # Skip logfire logging for update-run
+            # if request.url.path != "/api/update-run":
+            #     if org_id != "unknown":
+            #         logfire.info("Organization", user_id=user_id, org_id=org_id)
+            #     elif user_id != "unknown":
+            #         logfire.info("User", user_id=user_id)
                 
             response = await call_next(request)
             
