@@ -366,9 +366,10 @@ async def update_run(
                     )
                 ]
 
-                background_tasks.add_task(
-                    insert_to_clickhouse, client, "workflow_events", progress_data
-                )
+                if is_blocking_log_update is False:
+                    background_tasks.add_task(
+                        insert_to_clickhouse, client, "workflow_events", progress_data
+                    )
 
                 if (
                     workflow_run.webhook is not None
@@ -500,9 +501,11 @@ async def update_run(
                         json.dumps(body.output_data),
                     )
                 ]
-                background_tasks.add_task(
-                    insert_to_clickhouse, client, "workflow_events", output_data
-                )
+                
+                if is_blocking_log_update is False:
+                    background_tasks.add_task(
+                        insert_to_clickhouse, client, "workflow_events", output_data
+                    )
 
             elif body.status is not None:
                 # Get existing run
@@ -653,9 +656,10 @@ async def update_run(
                         body.live_status if body.live_status is not None else "",
                     )
                 ]
-                background_tasks.add_task(
-                    insert_to_clickhouse, client, "workflow_events", progress_data
-                )
+                if is_blocking_log_update is False:
+                    background_tasks.add_task(
+                        insert_to_clickhouse, client, "workflow_events", progress_data
+                    )
 
                 # Archive logs if run reached terminal state
                 if is_terminal_status(body.status):
