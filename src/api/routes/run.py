@@ -907,6 +907,9 @@ async def run_model_async(
         "run_id": run_id,
     }
 
+blocking_log_streaming_user_id = [
+    "user_2brwfPwcb1swinRg8mfUsG0rFc5"
+]
 
 async def retry_post_request(
     client: httpx.AsyncClient,
@@ -1308,28 +1311,35 @@ async def _create_run(
             # )
 
             # Sending to clickhouse
-            progress_data = [
-                (
-                    user_id,
-                    org_id,
-                    machine_id,
-                    data.gpu_event_id if data.gpu_event_id is not None else None,
-                    workflow_id,
-                    workflow_version_id,
-                    new_run.id,
-                    dt.datetime.now(dt.UTC),
-                    "input",
-                    0,
-                    json.dumps(inputs),
+            
+            is_blocking_log_update = False
+            
+            if user_id in blocking_log_streaming_user_id:
+                is_blocking_log_update = True
+            
+            if is_blocking_log_update is False:
+                progress_data = [
+                    (
+                        user_id,
+                        org_id,
+                        machine_id,
+                        data.gpu_event_id if data.gpu_event_id is not None else None,
+                        workflow_id,
+                        workflow_version_id,
+                        new_run.id,
+                        dt.datetime.now(dt.UTC),
+                        "input",
+                        0,
+                        json.dumps(inputs),
+                    )
+                ]
+
+                print("INPUT")
+                print("progress_data", progress_data)
+
+                background_tasks.add_task(
+                    insert_to_clickhouse, client, "workflow_events", progress_data
                 )
-            ]
-
-            print("INPUT")
-            print("progress_data", progress_data)
-
-            background_tasks.add_task(
-                insert_to_clickhouse, client, "workflow_events", progress_data
-            )
 
             token = generate_temporary_token(
                 request.state.current_user["user_id"], org_id, expires_in="12h"
