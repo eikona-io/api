@@ -3,7 +3,6 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import joinedload
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, select
 
@@ -20,9 +19,12 @@ from typing import Optional, cast, Any
 from uuid import UUID
 import logging
 import json
+from typing import Optional
+from uuid import UUID
 import datetime as dt
 import uuid
 from upstash_redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -360,10 +362,10 @@ async def stream_logs_endpoint(
 
     id_type = "run" if run_id else "workflow" if workflow_id else "machine"
     id_value = run_id or workflow_id or machine_id or session_id
-
+    
     if session_id:
         id_type = "session"
-
+        
     print(f"id_type: {id_type}, id_value: {id_value}")
 
     return StreamingResponse(
@@ -379,29 +381,24 @@ async def stream_logs(
         # Get the current user from the request state
         current_user = request.state.current_user
         is_from_session = id_type == "session"
-        # default to 2 hours ago
-        last_timestamp = dt.datetime.now() - dt.timedelta(hours=2)
 
         async with get_db_context() as db:
             # Verify the entity exists and check permissions
             if id_type == "session":
                 event = await db.execute(
-                    select(GPUEvent)
-                    .where(GPUEvent.session_id == id_value)
-                    .apply_org_check(request)
-                )
+                select(GPUEvent)
+                .where(GPUEvent.session_id == id_value)
+                .apply_org_check(request)
+            )
                 event = event.scalars().first()
                 if not event:
                     raise HTTPException(status_code=404, detail="Session not found")
                 entity = event
                 id_type = "run"
-                last_timestamp = event.created_at
             else:
-                model = {
-                    "run": WorkflowRun,
-                    "workflow": Workflow,
-                    "machine": Machine,
-                }.get(id_type)
+                model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(
+                    id_type
+                )
                 if not model:
                     raise HTTPException(status_code=400, detail="Invalid ID type")
 
@@ -414,11 +411,6 @@ async def stream_logs(
                         status_code=404, detail=f"{id_type.capitalize()} not found"
                     )
 
-                if id_type == "run":
-                    last_timestamp = entity.created_at
-                elif id_type == "machine":
-                    last_timestamp = entity.updated_at
-
             # Check permissions based on workflow access for runs
             if id_type == "run" and not is_from_session:
                 # Get the workflow associated with this run
@@ -430,7 +422,7 @@ async def stream_logs(
                 )
                 workflow_result = await db.execute(workflow_query)
                 workflow = workflow_result.scalar_one_or_none()
-
+                
                 if not workflow:
                     raise HTTPException(
                         status_code=403, detail="Not authorized to access these logs"
@@ -452,6 +444,7 @@ async def stream_logs(
                     )
 
         # Stream logs
+        last_timestamp = None
         while True:
             query = f"""
             SELECT timestamp, log_level, message
@@ -488,9 +481,11 @@ async def stream_progress_endpoint(
     machine_id: Optional[str] = None,
     return_run: Optional[bool] = False,
     from_start: Optional[bool] = False,
+
     # filter params
     status: Optional[str] = None,
     deployment_id: Optional[str] = None,
+
     client=Depends(get_clickhouse_client),
 ):
     if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
@@ -502,16 +497,7 @@ async def stream_progress_endpoint(
     id_value = run_id or workflow_id or machine_id
 
     return StreamingResponse(
-        stream_progress(
-            id_type,
-            id_value,
-            request,
-            client,
-            return_run,
-            from_start,
-            status,
-            deployment_id,
-        ),
+        stream_progress(id_type, id_value, request, client, return_run, from_start, status, deployment_id),
         media_type="text/event-stream",
     )
 
@@ -523,6 +509,7 @@ async def stream_progress(
     client,
     return_run: Optional[bool] = False,
     from_start: Optional[bool] = False,
+
     # filter params
     status: Optional[str] = None,
     deployment_id: Optional[str] = None,
@@ -609,9 +596,7 @@ async def stream_progress(
                             query = query.where(WorkflowRun.status == status)
 
                         if deployment_id:
-                            query = query.where(
-                                WorkflowRun.deployment_id == deployment_id
-                            )
+                            query = query.where(WorkflowRun.deployment_id == deployment_id)
 
                         result = await db.execute(query)
                         run = result.unique().scalar_one_or_none()
@@ -663,25 +648,12 @@ async def stream_progress(
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
         raise
 
-
 @router.get("/clickhouse-run-logs/{run_id}")
 async def get_clickhouse_run_logs(
     run_id: UUID,
     request: Request,
-    db: AsyncSession = Depends(get_db),
     client=Depends(get_clickhouse_client),
 ):
-    run_query = (
-        select(WorkflowRun.created_at)
-        .where(WorkflowRun.id == run_id)
-        .apply_org_check(request)
-        .limit(1)
-    )
-    run_result = await db.execute(run_query)
-    run_created_at = run_result.scalar_one_or_none()  # Rename for clarity
-    if not run_created_at:
-        raise HTTPException(status_code=404, detail="Run not found")
-
     org_id = request.state.current_user.get("org_id", None)
     user_id = request.state.current_user.get("user_id")
 
@@ -689,7 +661,6 @@ async def get_clickhouse_run_logs(
         SELECT run_id, timestamp, log, user_id, org_id, log_type
         FROM workflow_events
         WHERE run_id = %(run_id)s
-        AND timestamp >= %(created_at)s
         AND log_type != 'input'
         AND log != ''
         AND (
@@ -704,9 +675,8 @@ async def get_clickhouse_run_logs(
         parameters={
             "run_id": str(run_id),
             "org_id": str(org_id) if org_id else None,
-            "user_id": str(user_id),
-            "created_at": run_created_at,  # Use the datetime directly
-        },
+            "user_id": str(user_id)
+        }
     )
 
     # Convert rows to list of dicts with properly formatted timestamps
@@ -717,7 +687,7 @@ async def get_clickhouse_run_logs(
             "log": row[2],
             "user_id": str(row[3]) if row[3] else None,
             "org_id": str(row[4]) if row[4] else None,
-            "log_type": row[5],
+            "log_type": row[5]
         }
         for row in result.result_rows
     ]
