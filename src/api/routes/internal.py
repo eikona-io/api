@@ -242,6 +242,9 @@ async def get_cached_workflow_run(run_id: str, db: AsyncSession):
     workflow_run = cast(WorkflowRun, workflow_run)
     return workflow_run
 
+blocking_log_streaming_user_id = [
+    "user_2brwfPwcb1swinRg8mfUsG0rFc5"
+]
 
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
@@ -252,6 +255,8 @@ async def update_run(
     client: AsyncClient = Depends(get_clickhouse_client),
 ):
     # Use suppress_instrumentation for successful calls
+    is_blocking_log_update = False
+    
     try:
         with logfire.suppress_instrumentation():
             # updated_at = datetime.utcnow()
@@ -261,54 +266,58 @@ async def update_run(
             # fixed_time = request.time.replace(tzinfo=timezone.utc) if request.time and request.time.tzinfo is None else request.time
             fixed_time = updated_at
 
+            workflow_run = await get_cached_workflow_run(body.run_id, db)
+            if workflow_run.user_id in blocking_log_streaming_user_id:
+                is_blocking_log_update = True
+            
             if body.ws_event is not None:
                 # print("body.ws_event", body.ws_event)
                 # Get the workflow run
                 # print("body.run_id", body.run_id)
                 # with logfire.span("get_cached_workflow_run"):
-                workflow_run = await get_cached_workflow_run(body.run_id, db)
                 # print("workflow_run", workflow_run)
-
-                log_data = [
-                    (
-                        uuid4(),
-                        body.run_id,
-                        workflow_run.workflow_id,
-                        workflow_run.machine_id,
-                        updated_at,
-                        "ws_event",
-                        json.dumps(body.ws_event),
-                    )
-                ]
-                # Add ClickHouse insert to background tasks
-                # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-                background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.ws_event)
+                if is_blocking_log_update is False:
+                    log_data = [
+                        (
+                            uuid4(),
+                            body.run_id,
+                            workflow_run.workflow_id,
+                            workflow_run.machine_id,
+                            updated_at,
+                            "ws_event",
+                            json.dumps(body.ws_event),
+                        )
+                    ]
+                    # Add ClickHouse insert to background tasks
+                    # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                    background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.ws_event)
                 return {"status": "success"}
 
             if body.logs is not None:
                 # Get the workflow run
-                workflow_run = await get_cached_workflow_run(body.run_id, db)
+                # workflow_run = await get_cached_workflow_run(body.run_id, db)
 
                 # if not workflow_run:
                 #     raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
                 # Prepare data for ClickHouse insert
-                log_data = []
-                for log_entry in body.logs:
-                    data = (
-                        uuid4(),
-                        body.run_id if body.session_id is None else body.session_id,
-                        workflow_run.workflow_id if workflow_run else None,
-                        body.machine_id,
-                        datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
-                        "info",
-                        log_entry["logs"],
-                    )
-                    # print("data", log_entry["logs"])
-                    log_data.append(data)
+                if is_blocking_log_update is False:
+                    log_data = []
+                    for log_entry in body.logs:
+                        data = (
+                            uuid4(),
+                            body.run_id if body.session_id is None else body.session_id,
+                            workflow_run.workflow_id if workflow_run else None,
+                            body.machine_id,
+                            datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
+                            "info",
+                            log_entry["logs"],
+                        )
+                        # print("data", log_entry["logs"])
+                        log_data.append(data)
 
-                # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-                background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.logs)
+                    # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
+                    background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.logs)
                 return {"status": "success"}
 
             # Updating the progress
