@@ -204,42 +204,26 @@ redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPST
 
 from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status
 
+async def ensure_redis_stream_expires(run_id: str):
+    # Set TTL (this will fail silently if key already has TTL, but that's fine)
+    try:
+        await redis.execute(["EXPIRE", run_id, "43200"])
+    except:
+        # Key already has TTL or other non-critical error, safe to ignore
+        pass
+
 async def insert_log_entry_to_redis(run_id: str, value: Any):
     # Serialize the value to JSON if it's not already a string
     if isinstance(value, str):
         serialized_value = value
     else:
         serialized_value = json.dumps(value)
-        
-    # generated_id = str(uuid4())
     
-    # last_id_key = f"last_stream_id:{run_id}"
-    
-    # await redis.set(last_id_key, generated_id)
-    
-    updated_at = dt.datetime.now(dt.UTC)
-    
-    # Single Redis operation: XADD + conditional EXPIRE in Lua script (cost savings: 3 ops → 1 op)
-    lua_script = """
-    local stream_key = KEYS[1]
-    local message_data = ARGV[1]
-    local ttl = ARGV[2]
-    
-    -- Check if stream exists (0 cost - internal Redis operation)
-    local exists = redis.call('EXISTS', stream_key)
-    
-    -- Add to stream
-    local result = redis.call('XADD', stream_key, '*', 'message', message_data)
-    
-    -- Set TTL only if stream didn't exist
-    if exists == 0 then
-        redis.call('EXPIRE', stream_key, ttl)
-    end
-    
-    return result
-    """
-    
-    await redis.execute(["EVAL", lua_script, "1", run_id, serialized_value, "43200"])
+    # Use XADD directly - Redis streams handle auto-creation
+    # Set maxlen to prevent unlimited growth (approximate trimming with ~)
+    await redis.execute([
+        "XADD", run_id, "MAXLEN", "~", "1000", "*", "message", serialized_value
+    ])
     
 endStatuses = ["success", "failed", "timeout", "cancelled"]
 
@@ -279,6 +263,9 @@ async def update_run(
             
             if workflow_run is not None and workflow_run.user_id in blocking_log_streaming_user_id:
                 is_blocking_log_update = True
+                
+            if body.status == WorkflowRunStatus.NOT_STARTED:
+                await ensure_redis_stream_expires(body.run_id)
             
             if body.ws_event is not None:
                 # print("body.ws_event", body.ws_event)
