@@ -24,6 +24,7 @@ from uuid import UUID
 import datetime as dt
 import uuid
 from upstash_redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
