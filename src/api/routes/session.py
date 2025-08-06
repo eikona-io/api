@@ -244,6 +244,11 @@ async def get_machine_sessions(
     for event in gpu_events:
         # Skipping this for now to save performance
         timeout_end = await redis.get(f"session:{event.session_id}:timeout_end")
+        
+        # Skip sessions where Redis cannot get the timeout_end
+        if not timeout_end:
+            continue
+            
         sessions.append(
             SessionResponse(
                 session_id=str(event.session_id),
@@ -257,7 +262,7 @@ async def get_machine_sessions(
                 timeout=event.session_timeout,
                 machine_id=str(event.machine_id) if event.machine_id else None,
                 machine_version_id=str(event.machine_version_id) if event.machine_version_id else None,
-                timeout_end=datetime.fromisoformat(timeout_end) if timeout_end else None,
+                timeout_end=datetime.fromisoformat(timeout_end),
             )
         )
     return sessions

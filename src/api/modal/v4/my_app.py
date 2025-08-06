@@ -1240,10 +1240,18 @@ class BaseComfyDeployRunner:
             # Wait for the server process to exit
             try:
                 while True:
-                    await asyncio.sleep(1)  # Check every 1 seconds
+                    # if self.kill_session_asap:
+                    #     ok = await interrupt_comfyui()
+                    #     break
+                    # if self.start_time + self.session_timeout < time.time():
+                    #     await self.timeout_and_exit(0, True)
+                    await asyncio.sleep(1)  # Che  ck every 1 seconds
             except asyncio.CancelledError:
                 print("cancelled")
-                await self.timeout_and_exit(0, False)
+                try:
+                    ok = await interrupt_comfyui()
+                except Exception as e:
+                    pass
 
         # Ended
         self.current_tunnel_url = "exhausted"
