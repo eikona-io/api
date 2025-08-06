@@ -79,22 +79,10 @@ if logtail_host and logtail_source_token:
     logger.addHandler(handler)
 
 
-class NullPropagator(TextMapPropagator):
-    def extract(self, *args, **kwargs):
-        return get_current()
-
-    def inject(self, *args, **kwargs):
-        pass
-
-    @property
-    def fields(self):
-        return set()
-
-
-set_global_textmap(NullPropagator())
 logger = logfire
 logfire.configure(
     service_name="comfydeploy-api",
+    distributed_tracing=False,
     # send_to_logfire=False,
     # additional_span_processors=[span_processor]
 )
@@ -232,7 +220,7 @@ app.add_middleware(
 
 logfire.instrument_fastapi(
     app,
-    excluded_urls=r".*/api/update-run$"
+    excluded_urls=r".*/api/update-run$",
 )
 # logfire.instrument_sqlalchemy(
 #     engine=engine.sync_engine,
