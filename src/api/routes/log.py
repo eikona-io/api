@@ -37,9 +37,9 @@ redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPST
 # Initialize Redis client for pub/sub using TCP connection
 def get_redis_pubsub_client():
     """Get Redis client for pub/sub operations using TCP Redis URL."""
-    redis_tcp_url = os.getenv("REDIS_URL_LOG")
+    redis_tcp_url = os.getenv("REDIS_URL_REALTIME")
     if not redis_tcp_url:
-        raise ValueError("REDIS_URL_LOG environment variable not set")
+        raise ValueError("REDIS_URL_REALTIME environment variable not set")
     
     return redis_asyncio.from_url(redis_tcp_url)
 

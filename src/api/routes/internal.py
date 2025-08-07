@@ -201,6 +201,7 @@ async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
 from upstash_redis.asyncio import Redis
 
 redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG"))
+redis_realtime = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_REALTIME"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_REALTIME"))
 
 from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status
 
@@ -241,12 +242,12 @@ async def publish_progress_update(run_id: str, progress_data: dict):
         
         # Publish to both specific run channel and general workflow events channel
         channels_to_publish = [
-            f"progress:{run_id}",  # Specific run channel
+            # f"progress:{run_id}",  # Specific run channel
             "workflow_events"      # General events channel
         ]
         
         for channel in channels_to_publish:
-            await redis.execute(["PUBLISH", channel, serialized_data])
+            await redis_realtime.execute(["PUBLISH", channel, serialized_data])
             
         logger.debug(f"Published progress update for run {run_id} to {len(channels_to_publish)} channels")
         
