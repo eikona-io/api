@@ -397,9 +397,9 @@ async def update_run(
                 ]
 
                 if is_blocking_log_update is False:
-                    background_tasks.add_task(
-                        insert_to_clickhouse, client, "workflow_events", progress_data
-                    )
+                    # background_tasks.add_task(
+                    #     insert_to_clickhouse, client, "workflow_events", progress_data
+                    # )
                     
                     # Also publish to Redis for real-time streaming
                     progress_event = {
@@ -533,26 +533,26 @@ async def update_run(
                         logging.error(f"Error processing webhook URL parameters: {str(e)}")
 
                 # TODO: Send to upload to clickhouse
-                output_data = [
-                    (
-                        workflow_run.user_id,
-                        workflow_run.org_id,
-                        workflow_run.machine_id,
-                        body.gpu_event_id,
-                        workflow_run.workflow_id,
-                        workflow_run.workflow_version_id,
-                        body.run_id,
-                        updated_at,
-                        "output",
-                        body.progress if body.progress is not None else -1,
-                        json.dumps(body.output_data),
-                    )
-                ]
+                # output_data = [
+                #     (
+                #         workflow_run.user_id,
+                #         workflow_run.org_id,
+                #         workflow_run.machine_id,
+                #         body.gpu_event_id,
+                #         workflow_run.workflow_id,
+                #         workflow_run.workflow_version_id,
+                #         body.run_id,
+                #         updated_at,
+                #         "output",
+                #         body.progress if body.progress is not None else -1,
+                #         json.dumps(body.output_data),
+                #     )
+                # ]
                 
                 if is_blocking_log_update is False:
-                    background_tasks.add_task(
-                        insert_to_clickhouse, client, "workflow_events", output_data
-                    )
+                    # background_tasks.add_task(
+                    #     insert_to_clickhouse, client, "workflow_events", output_data
+                    # )
                     
                     # Also publish to Redis for real-time streaming
                     output_event = {
@@ -721,9 +721,9 @@ async def update_run(
                     )
                 ]
                 if is_blocking_log_update is False:
-                    background_tasks.add_task(
-                        insert_to_clickhouse, client, "workflow_events", progress_data
-                    )
+                    # background_tasks.add_task(
+                    #     insert_to_clickhouse, client, "workflow_events", progress_data
+                    # )
                     
                     # Also publish to Redis for real-time streaming
                     status_event = {

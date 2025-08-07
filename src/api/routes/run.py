@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
 import fal_client
-from .internal import insert_to_clickhouse, send_webhook, publish_progress_update
+from .internal import send_webhook, publish_progress_update
 from .utils import (
     apply_org_check_direct,
     clean_up_outputs,
@@ -636,25 +636,25 @@ async def update_status(
         )
         await db.execute(update_stmt)
 
-    progress_data = [
-        (
-            workflow_run.user_id,
-            workflow_run.org_id,
-            workflow_run.machine_id,
-            None,
-            # body.gpu_event_id,
-            workflow_run.workflow_id,
-            workflow_run.workflow_version_id,
-            workflow_run.run_id,
-            updated_at,
-            status,
-            -1,
-            "",
-        )
-    ]
-    background_tasks.add_task(
-        insert_to_clickhouse, client, "workflow_events", progress_data
-    )
+    # progress_data = [
+    #     (
+    #         workflow_run.user_id,
+    #         workflow_run.org_id,
+    #         workflow_run.machine_id,
+    #         None,
+    #         # body.gpu_event_id,
+    #         workflow_run.workflow_id,
+    #         workflow_run.workflow_version_id,
+    #         workflow_run.run_id,
+    #         updated_at,
+    #         status,
+    #         -1,
+    #         "",
+    #     )
+    # ]
+    # background_tasks.add_task(
+    #     insert_to_clickhouse, client, "workflow_events", progress_data
+    # )
     
     # Also publish to Redis for real-time streaming
     status_event = {
@@ -1335,28 +1335,28 @@ async def _create_run(
                 is_blocking_log_update = True
             
             if is_blocking_log_update is False:
-                progress_data = [
-                    (
-                        user_id,
-                        org_id,
-                        machine_id,
-                        data.gpu_event_id if data.gpu_event_id is not None else None,
-                        workflow_id,
-                        workflow_version_id,
-                        new_run.id,
-                        dt.datetime.now(dt.UTC),
-                        "input",
-                        0,
-                        json.dumps(inputs),
-                    )
-                ]
+                # progress_data = [
+                #     (
+                #         user_id,
+                #         org_id,
+                #         machine_id,
+                #         data.gpu_event_id if data.gpu_event_id is not None else None,
+                #         workflow_id,
+                #         workflow_version_id,
+                #         new_run.id,
+                #         dt.datetime.now(dt.UTC),
+                #         "input",
+                #         0,
+                #         json.dumps(inputs),
+                #     )
+                # ]
 
-                print("INPUT")
-                print("progress_data", progress_data)
+                # print("INPUT")
+                # print("progress_data", progress_data)
 
-                background_tasks.add_task(
-                    insert_to_clickhouse, client, "workflow_events", progress_data
-                )
+                # background_tasks.add_task(
+                #     insert_to_clickhouse, client, "workflow_events", progress_data
+                # )
                 
                 # Also publish to Redis for real-time streaming
                 input_event = {
