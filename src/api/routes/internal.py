@@ -102,26 +102,22 @@ async def send_webhook(
     response = await retry_fetch(url, options)
     latency_ms = (time.time() - start_time) * 1000
 
-    webhook_clickhouse_data = [
-        (
-            uuid4(),
-            workflow_run["id"],
-            workflow_run["workflow_id"],
-            workflow_run["machine_id"],
-            datetime.fromtimestamp(start_time, tz=timezone.utc),
-            "webhook",
-            json.dumps({
-                "status": json_safe_value(response.status),
-                "latency_ms": latency_ms,
-                "url": url,
-                "message": json_safe_value(response.text) if not response.ok else None,
-                "payload": json.dumps(payload),
-            }),
-        )
-    ]
+    # Prepare webhook log entry for Redis
+    webhook_log_entry = {
+        "timestamp": start_time,
+        "level": "webhook",  # Set webhook level for proper filtering
+        "logs": json.dumps({
+            "type": "webhook",
+            "status": json_safe_value(response.status),
+            "latency_ms": latency_ms,
+            "url": url,
+            "message": json_safe_value(response.text) if not response.ok else None,
+            "payload": json.dumps(payload),
+        })
+    }
 
     asyncio.create_task(
-        insert_to_clickhouse(client, "log_entries", webhook_clickhouse_data)
+        insert_log_entry_to_redis(workflow_run["id"], [webhook_log_entry])
     )
 
     if response.ok:
