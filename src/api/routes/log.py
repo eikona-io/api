@@ -156,11 +156,12 @@ async def stream_logs_endpoint_smart(
     request: Request,
     run_id: Optional[str] = None,
     machine_id_version: Optional[str] = None,
+    session_id: Optional[str] = None,
     log_level: Optional[str] = None,
     client_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    target_id = run_id or machine_id_version
+    target_id = run_id or machine_id_version or session_id
     
     if run_id:
         run_query = select(WorkflowRun).where(WorkflowRun.id == run_id)
@@ -199,6 +200,14 @@ async def stream_logs_endpoint_smart(
 
         if not machine_exist:
             raise HTTPException(status_code=404, detail="Machine not found")
+
+    elif session_id:
+        session_query = select(GPUEvent).where(GPUEvent.session_id == session_id).apply_org_check(request)
+        session_result = await db.execute(session_query)
+        session = session_result.scalar_one_or_none()
+        
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
         
     """
     Smart log streaming that checks for archived logs first.
