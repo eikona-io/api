@@ -75,7 +75,7 @@ async def send_webhook(
     updated_at: datetime,
     run_id: str,
     type: str = "run.updated",
-    client: AsyncClient = Depends(get_clickhouse_client),
+    # client: AsyncClient = Depends(get_clickhouse_client),
 ):
     # try:
     url = workflow_run["webhook"]
@@ -195,8 +195,8 @@ class UpdateRunBody(BaseModel):
 router = APIRouter()
 
 
-async def insert_to_clickhouse(client: AsyncClient, table: str, data: list):
-    await client.insert(table=table, data=data)
+# Deprecated: ClickHouse inserts are no longer used. Keep stub for compatibility if imported elsewhere.
+# Removed: ClickHouse insert function is no longer used. All write paths now go through Redis streams.
     
 from upstash_redis.asyncio import Redis
 
@@ -267,7 +267,7 @@ async def get_cached_workflow_run(run_id: str, db: AsyncSession):
     return workflow_run
 
 blocking_log_streaming_user_id = [
-    "user_2brwfPwcb1swinRg8mfUsG0rFc5"
+    "user_2brwfPwcb1swinRg8mfUsG0rFc5", "user_2f5PZAkathVKRgYWo4wVY0sQVjI"
 ]
 
 @router.post("/update-run", include_in_schema=False)
@@ -276,7 +276,7 @@ async def update_run(
     body: UpdateRunBody,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
+    # client: AsyncClient = Depends(get_clickhouse_client),
 ):
     # Use suppress_instrumentation for successful calls
     is_blocking_log_update = False
@@ -295,7 +295,7 @@ async def update_run(
             if workflow_run is not None and workflow_run.user_id in blocking_log_streaming_user_id:
                 is_blocking_log_update = True
                 
-            if body.status == WorkflowRunStatus.NOT_STARTED:
+            if body.status == WorkflowRunStatus.STARTED:
                 await ensure_redis_stream_expires(body.run_id)
             
             if body.ws_event is not None:
@@ -380,21 +380,21 @@ async def update_run(
                 # )
 
                 # Sending to clickhouse
-                progress_data = [
-                    (
-                        workflow_run.user_id,
-                        workflow_run.org_id,
-                        workflow_run.machine_id,
-                        body.gpu_event_id,
-                        workflow_run.workflow_id,
-                        workflow_run.workflow_version_id,
-                        body.run_id,
-                        updated_at,
-                        "executing",  # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
-                        body.progress,
-                        body.live_status,
-                    )
-                ]
+                # progress_data = [
+                #     (
+                #         workflow_run.user_id,
+                #         workflow_run.org_id,
+                #         workflow_run.machine_id,
+                #         body.gpu_event_id,
+                #         workflow_run.workflow_id,
+                #         workflow_run.workflow_version_id,
+                #         body.run_id,
+                #         updated_at,
+                #         "executing",  # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
+                #         body.progress,
+                #         body.live_status,
+                #     )
+                # ]
 
                 if is_blocking_log_update is False:
                     background_tasks.add_task(
@@ -427,7 +427,7 @@ async def update_run(
                             workflow_run=workflow_run.to_dict(),
                             updated_at=updated_at,
                             run_id=workflow_run.id,
-                            client=client,
+                            # client=client,
                         )
                     )
                     # background_tasks.add_task(
@@ -524,7 +524,7 @@ async def update_run(
                                         updated_at=updated_at,
                                         run_id=workflow_run.id,
                                         type="run.output",
-                                        client=client,
+                                        # client=client,
                                     )
                                 )
                                 # logfire.info("No outputs to send", workflow_run_id=workflow_run.id)
@@ -705,21 +705,21 @@ async def update_run(
                 workflow_run = cast(WorkflowRun, workflow_run)
 
                 # Sending to clickhouse
-                progress_data = [
-                    (
-                        workflow_run.user_id,
-                        workflow_run.org_id,
-                        workflow_run.machine_id,
-                        body.gpu_event_id,
-                        workflow_run.workflow_id,
-                        workflow_run.workflow_version_id,
-                        body.run_id,
-                        updated_at,
-                        body.status,
-                        body.progress if body.progress is not None else -1,
-                        body.live_status if body.live_status is not None else "",
-                    )
-                ]
+                # progress_data = [
+                #     (
+                #         workflow_run.user_id,
+                #         workflow_run.org_id,
+                #         workflow_run.machine_id,
+                #         body.gpu_event_id,
+                #         workflow_run.workflow_id,
+                #         workflow_run.workflow_version_id,
+                #         body.run_id,
+                #         updated_at,
+                #         body.status,
+                #         body.progress if body.progress is not None else -1,
+                #         body.live_status if body.live_status is not None else "",
+                #     )
+                # ]
                 if is_blocking_log_update is False:
                     background_tasks.add_task(
                         insert_to_clickhouse, client, "workflow_events", progress_data
@@ -770,7 +770,7 @@ async def update_run(
                             workflow_run=workflow_run_data,
                             updated_at=updated_at,
                             run_id=workflow_run.id,
-                            client=client,
+                            # client=client,
                         )
                     )
                     # background_tasks.add_task(

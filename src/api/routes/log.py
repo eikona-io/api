@@ -9,6 +9,7 @@ from .utils import ensure_run_timeout, get_user_settings, post_process_outputs, 
 # from sqlalchemy import select
 from api.models import (
     GPUEvent,
+    MachineVersion,
     WorkflowRun,
     Machine,
     WorkflowRunWithExtra,
@@ -138,36 +139,66 @@ async def should_cancel_stream(run_id: str) -> bool:
     return False
 
 
+def _to_iso_z(ts: dt.datetime) -> str:
+    """Format a timezone-aware datetime to ISO 8601 with milliseconds and 'Z'."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=dt.timezone.utc)
+    ts_utc = ts.astimezone(dt.timezone.utc)
+    try:
+        return ts_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    except TypeError:
+        # For older Python versions without timespec support
+        return ts_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
 @router.get("/v2/stream-logs")
 async def stream_logs_endpoint_smart(
     request: Request,
-    run_id: str,
+    run_id: Optional[str] = None,
+    machine_id_version: Optional[str] = None,
     log_level: Optional[str] = None,
     client_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    run_query = select(WorkflowRun).where(WorkflowRun.id == run_id)
-    run_result = await db.execute(run_query)
-    run = run_result.scalar_one_or_none()
-
-    if not run:
-        raise HTTPException(status_code=404, detail="Run not found")
+    target_id = run_id or machine_id_version
     
-    # Check if the workflow exists
-    workflow_exists_query = select(
-        (
-            select(1)
-            .where(Workflow.id == run.workflow_id)
-            .where(~Workflow.deleted)
-            .apply_org_check_by_type(Workflow, request)
-        ).exists()
-    )
-    workflow_exists = await db.scalar(workflow_exists_query)
+    if run_id:
+        run_query = select(WorkflowRun).where(WorkflowRun.id == run_id)
+        run_result = await db.execute(run_query)
+        run = run_result.scalar_one_or_none()
 
-    if not workflow_exists:
-        raise HTTPException(
-            status_code=403, detail="Not authorized to access these logs"
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        
+        # Check if the workflow exists
+        workflow_exists_query = select(
+            (
+                select(1)
+                .where(Workflow.id == run.workflow_id)
+                .where(~Workflow.deleted)
+                .apply_org_check_by_type(Workflow, request)
+            ).exists()
         )
+        workflow_exists = await db.scalar(workflow_exists_query)
+
+        if not workflow_exists:
+            raise HTTPException(
+                status_code=403, detail="Not authorized to access these logs"
+            )
+    elif machine_id_version:
+        machine_version_query = select(MachineVersion).where(MachineVersion.id == machine_id_version)
+        machine_version_result = await db.execute(machine_version_query)
+        machine_version = machine_version_result.scalar_one_or_none()
+        
+        if not machine_version:
+            raise HTTPException(status_code=404, detail="Machine version not found")
+        
+        machine_exist_query = select(Machine).where(Machine.id == machine_version.machine_id).apply_org_check(request)
+        machine_exist_result = await db.execute(machine_exist_query)
+        machine_exist = machine_exist_result.scalar_one_or_none()
+
+        if not machine_exist:
+            raise HTTPException(status_code=404, detail="Machine not found")
         
     """
     Smart log streaming that checks for archived logs first.
@@ -178,7 +209,7 @@ async def stream_logs_endpoint_smart(
         client_id = f"client_{uuid.uuid4().hex[:8]}"
     
     # First check if logs are archived
-    archived_logs = await get_archived_logs(run_id)
+    archived_logs = await get_archived_logs(target_id)
     
     if archived_logs:
         # Stream from archived logs
@@ -189,7 +220,7 @@ async def stream_logs_endpoint_smart(
     else:
         # Stream live logs
         return StreamingResponse(
-            stream_logs_from_redis_with_client_tracking(run_id, log_level, client_id),
+            stream_logs_from_redis_with_client_tracking(target_id, log_level, client_id),
             media_type="text/event-stream",
         )
 
@@ -280,7 +311,7 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
     """
     Normalize different log data formats to the expected schema.
     Returns a list of log entries in the format:
-    {"message": message, "level": level, "timestamp": timestamp.isoformat()[:-3] + 'Z'}
+    {"message": message, "level": level, "timestamp": _to_iso_z(timestamp)}
     """
     normalized_logs = []
     current_time = dt.datetime.now(dt.timezone.utc)
@@ -307,7 +338,7 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
                     normalized_logs.append({
                         "message": message,
                         "level": level,
-                        "timestamp": timestamp.isoformat()[:-3] + 'Z'
+                        "timestamp": _to_iso_z(timestamp)
                     })
     elif isinstance(log_data, dict):
         # Handle single log entry or ws_event format
@@ -330,7 +361,7 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
             normalized_logs.append({
                 "message": message,
                 "level": level,
-                "timestamp": timestamp.isoformat()[:-3] + 'Z'
+                "timestamp": _to_iso_z(timestamp)
             })
     elif isinstance(log_data, str):
         # Handle string data
@@ -339,7 +370,7 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
             normalized_logs.append({
                 "message": log_data,
                 "level": "info",
-                "timestamp": current_time.isoformat()[:-3] + 'Z'
+                "timestamp": _to_iso_z(current_time)
             })
     else:
         # Handle any other data type
@@ -348,7 +379,7 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
             normalized_logs.append({
                 "message": str(log_data),
                 "level": "info",
-                "timestamp": current_time.isoformat()[:-3] + 'Z'
+                "timestamp": _to_iso_z(current_time)
             })
     
     return normalized_logs
@@ -469,7 +500,7 @@ async def stream_logs(
             for row in result.result_rows:
                 timestamp, level, message = row
                 last_timestamp = timestamp
-                yield f"data: {json.dumps({'message': message, 'level': level, 'timestamp': timestamp.isoformat()[:-3] + 'Z'})}\n\n"
+                yield f"data: {json.dumps({'message': message, 'level': level, 'timestamp': _to_iso_z(timestamp)})}\n\n"
 
             if not result.result_rows:
                 yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
@@ -658,51 +689,51 @@ async def stream_progress(
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
         raise
 
-@router.get("/clickhouse-run-logs/{run_id}")
-async def get_clickhouse_run_logs(
-    run_id: UUID,
-    request: Request,
-    client=Depends(get_clickhouse_client),
-):
-    org_id = request.state.current_user.get("org_id", None)
-    user_id = request.state.current_user.get("user_id")
+# @router.get("/clickhouse-run-logs/{run_id}")
+# async def get_clickhouse_run_logs(
+#     run_id: UUID,
+#     request: Request,
+#     client=Depends(get_clickhouse_client),
+# ):
+#     org_id = request.state.current_user.get("org_id", None)
+#     user_id = request.state.current_user.get("user_id")
 
-    query = """
-        SELECT run_id, timestamp, log, user_id, org_id, log_type
-        FROM workflow_events
-        WHERE run_id = %(run_id)s
-        AND log_type != 'input'
-        AND log != ''
-        AND (
-            (%(org_id)s IS NOT NULL AND org_id = %(org_id)s)
-            OR (%(org_id)s IS NULL AND org_id IS NULL AND user_id = %(user_id)s)
-        )
-        ORDER BY timestamp ASC
-    """
+#     query = """
+#         SELECT run_id, timestamp, log, user_id, org_id, log_type
+#         FROM workflow_events
+#         WHERE run_id = %(run_id)s
+#         AND log_type != 'input'
+#         AND log != ''
+#         AND (
+#             (%(org_id)s IS NOT NULL AND org_id = %(org_id)s)
+#             OR (%(org_id)s IS NULL AND org_id IS NULL AND user_id = %(user_id)s)
+#         )
+#         ORDER BY timestamp ASC
+#     """
 
-    result = await client.query(
-        query,
-        parameters={
-            "run_id": str(run_id),
-            "org_id": str(org_id) if org_id else None,
-            "user_id": str(user_id)
-        }
-    )
+#     result = await client.query(
+#         query,
+#         parameters={
+#             "run_id": str(run_id),
+#             "org_id": str(org_id) if org_id else None,
+#             "user_id": str(user_id)
+#         }
+#     )
 
-    # Convert rows to list of dicts with properly formatted timestamps
-    formatted_rows = [
-        {
-            "run_id": str(row[0]),
-            "timestamp": row[1].isoformat(),
-            "log": row[2],
-            "user_id": str(row[3]) if row[3] else None,
-            "org_id": str(row[4]) if row[4] else None,
-            "log_type": row[5]
-        }
-        for row in result.result_rows
-    ]
+#     # Convert rows to list of dicts with properly formatted timestamps
+#     formatted_rows = [
+#         {
+#             "run_id": str(row[0]),
+#             "timestamp": row[1].isoformat(),
+#             "log": row[2],
+#             "user_id": str(row[3]) if row[3] else None,
+#             "org_id": str(row[4]) if row[4] else None,
+#             "log_type": row[5]
+#         }
+#         for row in result.result_rows
+#     ]
 
-    return formatted_rows
+#     return formatted_rows
 
 
 @router.get("/v2/clickhouse-run-logs/{run_id}")

@@ -1,11 +1,9 @@
-from collections import deque
 from pprint import pprint
 from typing import Optional, Dict, List, Any
-from uuid import uuid4
 
 from api.database import get_db_context
 from sqlalchemy import func, update, select
-from api.database import get_clickhouse_client
+from api.routes.internal import insert_log_entry_to_redis, ensure_redis_stream_expires
 from api.models import Deployment, Machine, MachineVersion
 from api.routes.utils import select
 from pydantic import BaseModel, Field, field_validator
@@ -42,7 +40,7 @@ from api.database import get_clickhouse_client
 from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime as dt
-from asyncio import Queue
+# from asyncio import Queue
 
 logger = logging.getLogger(__name__)
 
@@ -512,10 +510,7 @@ async def send_json_to_ws(machine_id, event, data):
         )
 
 
-async def insert_to_clickhouse(table: str, data: list):
-    # logger.info(f"Inserting to clickhouse: {table}, {data}")
-    client = await get_clickhouse_client()
-    await client.insert(table=table, data=data)
+# ClickHouse inserts removed; using Redis streams instead via insert_log_entry_to_redis
 
 
 async def update_machine_version_build_time(
@@ -717,33 +712,24 @@ async def build_logic(item: BuildMachineItem):
 
         build_info_queue = asyncio.Queue()
 
-        # Initialize a buffer for logs
-        log_buffer = deque()
-        FLUSH_INTERVAL = 1  # Flush every 5 seconds
-        buffer_lock = asyncio.Lock()
-        flush_task = None
+        # Send builder logs to Redis streams keyed by machine_id
+        async def send_builder_log(machine_id: str, message: str):
+            try:
+                log_entry = {
+                    "timestamp": time.time(),
+                    "logs": message,
+                    "level": "builder",
+                    "machine_id": machine_id,
+                }
+                await insert_log_entry_to_redis(str(item.machine_version_id), [log_entry])
+            except Exception:
+                # Best effort only
+                pass
 
-        async def flush_log_buffer():
-            nonlocal flush_task, log_buffer
-            async with buffer_lock:
-                if log_buffer:
-                    await insert_to_clickhouse("log_entries", list(log_buffer))
-                    log_buffer.clear()
-
-        async def periodic_flush():
-            while True:
-                await asyncio.sleep(FLUSH_INTERVAL)
-                await flush_log_buffer()
-
-        async def add_to_log_buffer(log_entry):
-            nonlocal flush_task, log_buffer
-            async with buffer_lock:
-                log_buffer.append(log_entry)
-
-            if flush_task is None or flush_task.done():
-                flush_task = asyncio.create_task(periodic_flush())
+        ttl_ensured = False
 
         async def read_stream(stream, isStderr, build_info_queue: asyncio.Queue):
+            nonlocal ttl_ensured
             while True:
                 line = await stream.readline()
                 if line:
@@ -752,17 +738,14 @@ async def build_logic(item: BuildMachineItem):
                     if l == "":
                         continue
 
-                    updated_at = dt.datetime.now(dt.UTC)
-                    log_entry = (
-                        uuid4(),
-                        None,
-                        None,
-                        item.machine_id,
-                        updated_at,
-                        "builder",
-                        l,
-                    )
-                    await add_to_log_buffer(log_entry)
+                    await send_builder_log(item.machine_id, l)
+                    if not ttl_ensured:
+                        try:
+                            await ensure_redis_stream_expires(str(item.machine_version_id))
+                        except Exception:
+                            # Non-critical; continue streaming logs
+                            pass
+                        ttl_ensured = True
 
                     if not isStderr:
                         logger.info(l)
@@ -837,10 +820,7 @@ async def build_logic(item: BuildMachineItem):
                 else:
                     break
 
-            # Ensure any remaining logs in the buffer are flushed
-            await flush_log_buffer()
-            if flush_task:
-                flush_task.cancel()
+            # Nothing to flush when using Redis
 
         stdout_task = asyncio.create_task(
             read_stream(process.stdout, False, build_info_queue)

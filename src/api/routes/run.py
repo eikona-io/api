@@ -499,7 +499,7 @@ async def cancel_run(
     run_id: str,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client)
+    # client: AsyncClient = Depends(get_clickhouse_client)
 ):
     try:
         # Cancel the modal function
@@ -561,7 +561,7 @@ async def cancel_run(
                             workflow_run=workflow_run_data,
                             updated_at=now,
                             run_id=workflow_run.id,
-                            client=client,
+                            # client=client,
                         )
                     )
 
@@ -925,7 +925,7 @@ async def run_model_async(
     }
 
 blocking_log_streaming_user_id = [
-    "user_2brwfPwcb1swinRg8mfUsG0rFc5"
+    "user_2brwfPwcb1swinRg8mfUsG0rFc5", "user_2f5PZAkathVKRgYWo4wVY0sQVjI"
 ]
 
 async def retry_post_request(

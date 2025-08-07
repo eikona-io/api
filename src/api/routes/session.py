@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import inspect
 import os
 from pprint import pprint
-from api.modal.builder import insert_to_clickhouse
+from .internal import insert_log_entry_to_redis
 from api.routes.machines import (
     GitCommitHash,
     redeploy_machine,
@@ -61,19 +61,15 @@ class CustomOutputManager(OutputManager):
         # print(f"[Intercepted Modal Log] {context_info}_print_log", fd, data)
 
         if self._context_id is not None:
-            item = [
-                (
-                    uuid4(),
-                    self._context_id,
-                    None,
-                    self._machine_id,
-                    datetime.now(),
-                    "info",
-                    data,
-                )
-            ]
-            # print("inserting to clickhouse")
-            asyncio.create_task(insert_to_clickhouse("log_entries", item))
+            # Forward modal logs to Redis streams keyed by session/context id
+            log_entry = {
+                "timestamp": datetime.now().timestamp(),
+                "logs": data,
+                "level": "info",
+                "machine_id": self._machine_id,
+                "session_id": str(self._context_id),
+            }
+            asyncio.create_task(insert_log_entry_to_redis(str(self._context_id), [log_entry]))
 
         super()._print_log(fd, data)
 
@@ -87,8 +83,8 @@ from api.models import (
     MachineVersion,
     get_machine_columns,
 )
-from api.database import get_clickhouse_client, get_db, get_db_context
-from typing import Any, ClassVar, Dict, Generator, List, Optional, cast, Union
+from api.database import get_db, get_db_context
+from typing import Any, Dict, List, Optional, cast, Union
 from uuid import UUID, uuid4
 import logging
 from typing import Optional
@@ -822,18 +818,27 @@ def send_log_entry(
     log_message: str,
     log_type: str = "info",
 ):
-    data = [
-        (
-            uuid4(),
-            session_id,
-            None,
-            machine_id,
-            datetime.now(),
-            log_type,
-            log_message,
-        )
-    ]
-    asyncio.create_task(insert_to_clickhouse("log_entries", data))
+    """
+    Send log entry using Redis streams.
+    
+    Args:
+        session_id: The session ID (used as the stream key)
+        machine_id: Optional machine ID for context
+        log_message: The log message content
+        log_type: Log level (info, error, warning, etc.)
+    """
+    # Create log entry in the format expected by the Redis streams
+    log_entry = {
+        "timestamp": datetime.now().timestamp(),
+        "logs": log_message,
+        "level": log_type,
+        "machine_id": machine_id,
+        "session_id": str(session_id)
+    }
+    
+    # Use session_id as the stream key since that's what sessions use for identification
+    # The log streaming endpoints can handle session-based streams
+    asyncio.create_task(insert_log_entry_to_redis(str(session_id), [log_entry]))
 
 
 os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
