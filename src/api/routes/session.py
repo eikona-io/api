@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import inspect
 import os
 from pprint import pprint
-from .internal import insert_log_entry_to_redis
+from .internal import insert_log_entry_to_redis, clear_redis_log
 from api.routes.machines import (
     GitCommitHash,
     redeploy_machine,
@@ -1445,6 +1445,7 @@ async def delete_session(
         )
 
     modal_function_id = gpuEvent.modal_function_id
+    await clear_redis_log(session_id)
 
     # Checking for a stuck case and modal_function_id is not set
     if (

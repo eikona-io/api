@@ -221,7 +221,9 @@ async def insert_log_entry_to_redis(run_id: str, value: Any):
     await redis.execute([
         "XADD", run_id, "MAXLEN", "~", "1000", "*", "message", serialized_value
     ])
-
+    
+async def clear_redis_log(run_id: str):
+    await redis.delete(run_id)
 
 async def publish_progress_update(run_id: str, progress_data: dict):
     """
