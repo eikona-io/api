@@ -210,20 +210,28 @@ async def ensure_redis_stream_expires(run_id: str):
         pass
 
 async def insert_log_entry_to_redis(run_id: str, value: Any):
-    # Serialize the value to JSON if it's not already a string
-    if isinstance(value, str):
-        serialized_value = value
-    else:
-        serialized_value = json.dumps(value)
-    
-    # Use XADD directly - Redis streams handle auto-creation
-    # Set maxlen to prevent unlimited growth (approximate trimming with ~)
-    await redis.execute([
-        "XADD", run_id, "MAXLEN", "~", "1000", "*", "message", serialized_value
-    ])
+    try:
+        # Serialize the value to JSON if it's not already a string
+        if isinstance(value, str):
+            serialized_value = value
+        else:
+            serialized_value = json.dumps(value)
+        
+        # Use XADD directly - Redis streams handle auto-creation
+        # Set maxlen to prevent unlimited growth (approximate trimming with ~)
+        await redis.execute([
+            "XADD", run_id, "MAXLEN", "~", "1000", "*", "message", serialized_value
+        ])
+    except:
+        # Key already has TTL or other non-critical error, safe to ignore
+        pass
     
 async def clear_redis_log(run_id: str):
-    await redis.delete(run_id)
+    try:
+        await redis.delete(run_id)
+    except:
+        # Key already has TTL or other non-critical error, safe to ignore
+        pass
 
 async def publish_progress_update(run_id: str, progress_data: dict):
     """
