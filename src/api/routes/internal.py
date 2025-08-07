@@ -286,7 +286,7 @@ async def update_run(
 ):
     # Use suppress_instrumentation for successful calls
     is_blocking_log_update = False
-    
+        
     try:
         with logfire.suppress_instrumentation():
             # updated_at = datetime.utcnow()
@@ -336,13 +336,15 @@ async def update_run(
                 # if not workflow_run:
                 #     raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
+                target_id = body.run_id if body.session_id is None else body.session_id
+
                 # Prepare data for ClickHouse insert
                 if is_blocking_log_update is False:
                     log_data = []
                     for log_entry in body.logs:
                         data = (
                             uuid4(),
-                            body.run_id if body.session_id is None else body.session_id,
+                            target_id,
                             workflow_run.workflow_id if workflow_run else None,
                             body.machine_id,
                             datetime.fromtimestamp(log_entry["timestamp"], tz=timezone.utc),
@@ -353,7 +355,7 @@ async def update_run(
                         log_data.append(data)
 
                     # background_tasks.add_task(insert_to_clickhouse, client, "log_entries", log_data)
-                    background_tasks.add_task(insert_log_entry_to_redis, body.run_id, body.logs)
+                    background_tasks.add_task(insert_log_entry_to_redis, target_id, body.logs)
                 return {"status": "success"}
 
             # Updating the progress
