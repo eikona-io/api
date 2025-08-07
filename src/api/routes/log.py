@@ -322,7 +322,7 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
             if isinstance(entry, dict):
                 # Expected format: {"timestamp": unix_timestamp, "logs": "message"}
                 message = entry.get("logs", str(entry))
-                level = "info"  # Default level as used in internal.py
+                level = entry.get("level", "info")
                 
                 # Parse timestamp
                 if "timestamp" in entry:
