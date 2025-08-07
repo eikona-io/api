@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
 import fal_client
-from .internal import insert_to_clickhouse, send_webhook
+from .internal import insert_to_clickhouse, send_webhook, publish_progress_update
 from .utils import (
     apply_org_check_direct,
     clean_up_outputs,
@@ -655,6 +655,23 @@ async def update_status(
     background_tasks.add_task(
         insert_to_clickhouse, client, "workflow_events", progress_data
     )
+    
+    # Also publish to Redis for real-time streaming
+    status_event = {
+        "user_id": str(workflow_run.user_id),
+        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
+        "machine_id": str(workflow_run.machine_id),
+        "gpu_event_id": None,
+        "workflow_id": str(workflow_run.workflow_id),
+        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
+        "run_id": str(workflow_run.run_id),
+        "timestamp": updated_at.isoformat(),
+        "log_type": status,
+        "progress": -1,
+        "log": "",
+        "status": status
+    }
+    background_tasks.add_task(publish_progress_update, str(workflow_run.run_id), status_event)
 
 
 async def run_model(
@@ -1340,6 +1357,23 @@ async def _create_run(
                 background_tasks.add_task(
                     insert_to_clickhouse, client, "workflow_events", progress_data
                 )
+                
+                # Also publish to Redis for real-time streaming
+                input_event = {
+                    "user_id": str(user_id),
+                    "org_id": str(org_id) if org_id else None,
+                    "machine_id": str(machine_id),
+                    "gpu_event_id": str(data.gpu_event_id) if data.gpu_event_id else None,
+                    "workflow_id": str(workflow_id),
+                    "workflow_version_id": str(workflow_version_id) if workflow_version_id else None,
+                    "run_id": str(new_run.id),
+                    "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+                    "log_type": "input",
+                    "progress": 0,
+                    "log": json.dumps(inputs),
+                    "status": "input"
+                }
+                background_tasks.add_task(publish_progress_update, str(new_run.id), input_event)
 
             token = generate_temporary_token(
                 request.state.current_user["user_id"], org_id, expires_in="12h"

@@ -224,7 +224,37 @@ async def insert_log_entry_to_redis(run_id: str, value: Any):
     await redis.execute([
         "XADD", run_id, "MAXLEN", "~", "1000", "*", "message", serialized_value
     ])
+
+
+async def publish_progress_update(run_id: str, progress_data: dict):
+    """
+    Publish progress updates to Redis pub/sub channels for real-time streaming.
+    This replaces the need for continuous ClickHouse polling in stream_progress.
     
+    Args:
+        run_id: The workflow run ID
+        progress_data: Dictionary containing progress information
+    """
+    try:
+        # Serialize the progress data
+        serialized_data = json.dumps(progress_data)
+        
+        # Publish to both specific run channel and general workflow events channel
+        channels_to_publish = [
+            f"progress:{run_id}",  # Specific run channel
+            "workflow_events"      # General events channel
+        ]
+        
+        for channel in channels_to_publish:
+            await redis.execute(["PUBLISH", channel, serialized_data])
+            
+        logger.debug(f"Published progress update for run {run_id} to {len(channels_to_publish)} channels")
+        
+    except Exception as e:
+        logger.error(f"Failed to publish progress update for run {run_id}: {e}")
+        # Don't raise - this is a best-effort notification system
+
+
 endStatuses = ["success", "failed", "timeout", "cancelled"]
 
 
@@ -369,6 +399,23 @@ async def update_run(
                     background_tasks.add_task(
                         insert_to_clickhouse, client, "workflow_events", progress_data
                     )
+                    
+                    # Also publish to Redis for real-time streaming
+                    progress_event = {
+                        "user_id": str(workflow_run.user_id),
+                        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
+                        "machine_id": str(workflow_run.machine_id),
+                        "gpu_event_id": str(body.gpu_event_id) if body.gpu_event_id else None,
+                        "workflow_id": str(workflow_run.workflow_id),
+                        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
+                        "run_id": str(body.run_id),
+                        "timestamp": updated_at.isoformat(),
+                        "log_type": "executing",
+                        "progress": body.progress,
+                        "log": body.live_status,
+                        "status": "executing"  # For compatibility with existing stream_progress
+                    }
+                    background_tasks.add_task(publish_progress_update, str(body.run_id), progress_event)
 
                 if (
                     workflow_run.webhook is not None
@@ -505,6 +552,23 @@ async def update_run(
                     background_tasks.add_task(
                         insert_to_clickhouse, client, "workflow_events", output_data
                     )
+                    
+                    # Also publish to Redis for real-time streaming
+                    output_event = {
+                        "user_id": str(workflow_run.user_id),
+                        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
+                        "machine_id": str(workflow_run.machine_id),
+                        "gpu_event_id": str(body.gpu_event_id) if body.gpu_event_id else None,
+                        "workflow_id": str(workflow_run.workflow_id),
+                        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
+                        "run_id": str(body.run_id),
+                        "timestamp": updated_at.isoformat(),
+                        "log_type": "output",
+                        "progress": body.progress if body.progress is not None else -1,
+                        "log": json.dumps(body.output_data),
+                        "status": "output"  # For compatibility with existing stream_progress
+                    }
+                    background_tasks.add_task(publish_progress_update, str(body.run_id), output_event)
 
             elif body.status is not None:
                 # Get existing run
@@ -659,6 +723,23 @@ async def update_run(
                     background_tasks.add_task(
                         insert_to_clickhouse, client, "workflow_events", progress_data
                     )
+                    
+                    # Also publish to Redis for real-time streaming
+                    status_event = {
+                        "user_id": str(workflow_run.user_id),
+                        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
+                        "machine_id": str(workflow_run.machine_id),
+                        "gpu_event_id": str(body.gpu_event_id) if body.gpu_event_id else None,
+                        "workflow_id": str(workflow_run.workflow_id),
+                        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
+                        "run_id": str(body.run_id),
+                        "timestamp": updated_at.isoformat(),
+                        "log_type": body.status,
+                        "progress": body.progress if body.progress is not None else -1,
+                        "log": body.live_status if body.live_status is not None else "",
+                        "status": body.status  # For compatibility with existing stream_progress
+                    }
+                    background_tasks.add_task(publish_progress_update, str(body.run_id), status_event)
 
                 # Archive logs if run reached terminal state
                 if is_terminal_status(body.status):

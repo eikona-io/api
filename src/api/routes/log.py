@@ -25,13 +25,23 @@ import datetime as dt
 import uuid
 from upstash_redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+import redis.asyncio as redis_asyncio
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Log"])
 
-# Initialize Redis client for log streaming
+# Initialize Redis client for log streaming (REST API)
 redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG"))
+
+# Initialize Redis client for pub/sub using TCP connection
+def get_redis_pubsub_client():
+    """Get Redis client for pub/sub operations using TCP Redis URL."""
+    redis_tcp_url = os.getenv("REDIS_URL_LOG")
+    if not redis_tcp_url:
+        raise ValueError("REDIS_URL_LOG environment variable not set")
+    
+    return redis_asyncio.from_url(redis_tcp_url)
 
 # Initialize consumer group helper
 consumer_group = None
@@ -897,6 +907,242 @@ async def cancel_active_streams(run_id: str):
             logger.debug(f"No active stream found for run {run_id}")
     except Exception as e:
         logger.error(f"Error cancelling stream for run {run_id}: {e}")
+
+
+@router.get("/v2/stream-progress")
+async def stream_progress_endpoint_v2(
+    request: Request,
+    run_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    machine_id: Optional[str] = None,
+    return_run: Optional[bool] = False,
+    
+    # filter params
+    status: Optional[str] = None,
+    deployment_id: Optional[str] = None,
+    
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    V2 stream progress endpoint that uses Redis pub/sub for real-time updates
+    instead of polling ClickHouse. Much more cost-effective with Upstash.
+    """
+    if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
+        raise HTTPException(
+            status_code=400, detail="Exactly one ID type must be provided"
+        )
+
+    id_type = "run" if run_id else "workflow" if workflow_id else "machine"
+    id_value = run_id or workflow_id or machine_id
+
+    # Verify permissions similar to the original endpoint
+    try:
+        current_user = request.state.current_user
+        model = {"run": WorkflowRun, "workflow": Workflow, "machine": Machine}.get(id_type)
+        if not model:
+            raise HTTPException(status_code=400, detail="Invalid ID type")
+
+        entity_query = select(model).where(model.id == id_value)
+        result = await db.execute(entity_query)
+        entity = result.scalar_one_or_none()
+
+        if not entity:
+            raise HTTPException(
+                status_code=404, detail=f"{id_type.capitalize()} not found"
+            )
+
+        # Check permissions
+        has_permission = False
+        if hasattr(entity, "org_id") and entity.org_id is not None:
+            has_permission = entity.org_id == current_user.get("org_id")
+        elif hasattr(entity, "user_id") and entity.user_id is not None:
+            has_permission = (
+                entity.user_id == current_user.get("user_id")
+                and current_user.get("org_id") is None
+            )
+
+        if not has_permission:
+            raise HTTPException(
+                status_code=403, detail="Not authorized to access this progress"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Permission check failed: {str(e)}")
+
+    return StreamingResponse(
+        stream_progress_v2(id_type, id_value, request, return_run, status, deployment_id),
+        media_type="text/event-stream",
+    )
+
+
+async def stream_progress_v2(
+    id_type: str,
+    id_value: str,
+    request: Request,
+    return_run: Optional[bool] = False,
+    status: Optional[str] = None,
+    deployment_id: Optional[str] = None,
+):
+    """
+    V2 stream progress method that uses Redis pub/sub for real-time updates.
+    Subscribes to Redis channels instead of polling ClickHouse.
+    """
+    try:
+        # Determine the appropriate Redis channel(s) to subscribe to
+        if id_type == "run":
+            channels = [f"progress:{id_value}"]
+        elif id_type == "workflow":
+            # For workflow-level streaming, subscribe to the general events channel
+            # and filter by workflow_id
+            channels = ["workflow_events"]
+        else:  # machine
+            # For machine-level streaming, subscribe to the general events channel
+            # and filter by machine_id
+            channels = ["workflow_events"]
+        
+        # Subscribe to the Redis channels
+        redis_client = None
+        pubsub = None
+        try:
+            # Create Redis pub/sub client
+            redis_client = get_redis_pubsub_client()
+            pubsub = redis_client.pubsub()
+            
+            logger.info(f"Starting Redis pub/sub stream for {id_type} {id_value}, channels: {channels}")
+            
+            # Subscribe to the appropriate channels
+            for channel in channels:
+                await pubsub.subscribe(channel)
+                logger.info(f"Subscribed to Redis channel: {channel}")
+            
+            # Send initial connection confirmation
+            yield f"data: {json.dumps({'type': 'connection_established', 'channels': channels})}\n\n"
+            
+            # Listen for messages
+            async for message in pubsub.listen():
+                if message['type'] == 'message':
+                    try:
+                        # Parse the message data
+                        message_data = json.loads(message['data'])
+                        
+                        # Filter messages based on the request parameters
+                        should_include = True
+                        
+                        if id_type == "workflow" and message_data.get("workflow_id") != id_value:
+                            should_include = False
+                        elif id_type == "machine" and message_data.get("machine_id") != id_value:
+                            should_include = False
+                        
+                        # Apply status filter if specified
+                        if status and message_data.get("status") != status:
+                            should_include = False
+                        
+                        if should_include:
+                            if return_run:
+                                # Fetch the full run data when requested
+                                try:
+                                    async with get_db_context() as db:
+                                        # Get the run_id from the message data
+                                        message_run_id = message_data.get("run_id")
+                                        if not message_run_id:
+                                            logger.warning("No run_id in message data for returnRun request")
+                                            continue
+                                        
+                                        run_query = (
+                                            select(WorkflowRunWithExtra)
+                                            .options(joinedload(WorkflowRun.outputs))
+                                            .where(WorkflowRun.id == message_run_id)
+                                        )
+                                        
+                                        # Apply additional filters based on the original request
+                                        if id_type == "workflow":
+                                            run_query = run_query.where(WorkflowRun.workflow_id == id_value)
+                                        elif id_type == "machine":
+                                            run_query = run_query.where(WorkflowRun.machine_id == id_value)
+                                        
+                                        if status:
+                                            run_query = run_query.where(WorkflowRun.status == status)
+                                        
+                                        if deployment_id:
+                                            run_query = run_query.where(WorkflowRun.deployment_id == deployment_id)
+                                        
+                                        result = await db.execute(run_query)
+                                        run = result.unique().scalar_one_or_none()
+                                        
+                                        if run:
+                                            run = cast(WorkflowRun, run)
+                                            ensure_run_timeout(run)
+                                            user_settings = await get_user_settings(request, db)
+                                            await post_process_outputs(run.outputs, user_settings)
+                                            
+                                            run_dict = run.to_dict()
+                                            run_dict.pop("run_log", None)
+                                            logger.debug(f"Sending full run object for run {message_run_id}, keys: {list(run_dict.keys())}")
+                                            yield f"data: {json.dumps(run_dict)}\n\n"
+                                        else:
+                                            logger.warning(f"Run {message_run_id} not found in database with query filters")
+                                except Exception as e:
+                                    logger.error(f"Error fetching run data: {e}")
+                                    continue
+                            else:
+                                # Send the progress data directly
+                                progress_data = {
+                                    "run_id": message_data.get("run_id"),
+                                    "workflow_id": message_data.get("workflow_id"),
+                                    "machine_id": message_data.get("machine_id"),
+                                    "progress": message_data.get("progress", 0),
+                                    "status": message_data.get("status"),
+                                    "node_class": message_data.get("log", ""),
+                                    "timestamp": message_data.get("timestamp"),
+                                }
+                                logger.debug(f"Sending progress data for run {message_data.get('run_id')}")
+                                yield f"data: {json.dumps(progress_data)}\n\n"
+                            
+                            # Check for terminal status - only break for run-specific streams
+                            if (id_type == "run" and 
+                                message_data.get("status") in ["success", "failed", "timeout", "cancelled"]):
+                                logger.info(f"Terminal status received for run stream: {message_data.get('status')}")
+                                break
+                                
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Error parsing Redis message: {e}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error processing Redis message: {e}")
+                        continue
+                
+                elif message['type'] == 'subscribe':
+                    logger.info(f"Successfully subscribed to channel: {message['channel']}")
+                    # Send confirmation that we're connected and listening
+                    yield f"data: {json.dumps({'type': 'subscribed', 'channel': message['channel'].decode()})}\n\n"
+                    
+        except asyncio.CancelledError:
+            logger.info(f"Redis pub/sub stream cancelled for {id_type} {id_value}")
+            raise
+        except Exception as e:
+            logger.error(f"Error in Redis pub/sub stream: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    
+        finally:
+            # Clean up the pub/sub connection
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe(*channels)
+                    await pubsub.close()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up pub/sub connection: {e}")
+            
+            if redis_client:
+                try:
+                    await redis_client.close()
+                except Exception as e:
+                    logger.warning(f"Error closing Redis client: {e}")
+            
+    except Exception as e:
+        logger.error(f"Error in stream_progress_v2: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
 
 def is_terminal_status(status: str) -> bool:
