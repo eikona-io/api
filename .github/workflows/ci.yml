@@ -8,7 +8,7 @@ on:
 
 jobs:
   integration-test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     env:
       NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -43,7 +43,7 @@ jobs:
 
   migrate:
     needs: integration-test
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     # drop the "contains" portion, since we already filter at top-level
     if: github.ref_name == 'main' || github.ref_name == 'dev'
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
