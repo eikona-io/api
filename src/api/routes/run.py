@@ -65,7 +65,7 @@ from api.models import (
     WorkflowVersion,
     Workflow,
 )
-from api.database import get_db, get_clickhouse_client, get_db_context
+from api.database import get_db, get_db_context
 from typing import Optional, Union, cast
 from typing import Dict, Any
 from uuid import UUID, uuid4
@@ -247,9 +247,8 @@ async def create_run_all(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -267,9 +266,8 @@ async def queue_deployment_run(
     data: DeploymentRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -287,10 +285,9 @@ async def sync_deployment_run(
     data: DeploymentRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     data.execution_mode = "sync"
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -322,10 +319,9 @@ async def create_run_deployment_stream(
     data: DeploymentRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     data.execution_mode = "stream"
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -343,9 +339,8 @@ async def queue_workflow_run(
     data: WorkflowRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -363,10 +358,9 @@ async def sync_workflow_run(
     data: WorkflowRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     data.execution_mode = "sync"
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -398,10 +392,9 @@ async def create_run_workflow_stream(
     data: WorkflowRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     data.execution_mode = "stream"
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -421,9 +414,8 @@ async def create_run_queue(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -443,10 +435,9 @@ async def create_run_sync(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ):
     data.execution_mode = "sync"
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 @router.post(
@@ -480,10 +471,9 @@ async def create_run_stream(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
 ) -> StreamingResponse:
     data.execution_mode = "stream"
-    return await _create_run(request, data, background_tasks, db, client)
+    return await _create_run(request, data, background_tasks, db)
 
 
 
@@ -992,7 +982,7 @@ async def _create_run(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: AsyncClient = Depends(get_clickhouse_client),
+    client: Optional[AsyncClient] = None,
 ):
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)

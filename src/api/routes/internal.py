@@ -44,7 +44,7 @@ from .utils import (
 )
 from sqlalchemy import update, case, and_
 
-from api.database import AsyncSessionLocal, get_clickhouse_client, get_db, get_db_context
+from api.database import get_db, get_db_context
 from api.models import (
     GPUEvent,
     Machine,

@@ -15,7 +15,7 @@ from api.models import (
     WorkflowRunWithExtra,
     Workflow,
 )
-from api.database import get_clickhouse_client, get_db_context, get_db
+from api.database import get_db_context, get_db
 from typing import Optional, cast, Any
 from uuid import UUID
 import logging
@@ -414,34 +414,34 @@ def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) ->
     return normalized_logs
 
 
-@router.get("/stream-logs")
-async def stream_logs_endpoint(
-    request: Request,
-    run_id: Optional[str] = None,
-    workflow_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    machine_id: Optional[str] = None,
-    log_level: Optional[str] = None,
-    # db: AsyncSession = Depends(get_db),
-    client=Depends(get_clickhouse_client),
-):
-    if sum(bool(x) for x in [run_id, workflow_id, machine_id, session_id]) != 1:
-        raise HTTPException(
-            status_code=400, detail="Exactly one ID type must be provided"
-        )
+# @router.get("/stream-logs")
+# async def stream_logs_endpoint(
+#     request: Request,
+#     run_id: Optional[str] = None,
+#     workflow_id: Optional[str] = None,
+#     session_id: Optional[str] = None,
+#     machine_id: Optional[str] = None,
+#     log_level: Optional[str] = None,
+#     # db: AsyncSession = Depends(get_db),
+#     client=Depends(get_clickhouse_client),
+# ):
+#     if sum(bool(x) for x in [run_id, workflow_id, machine_id, session_id]) != 1:
+#         raise HTTPException(
+#             status_code=400, detail="Exactly one ID type must be provided"
+#         )
 
-    id_type = "run" if run_id else "workflow" if workflow_id else "machine"
-    id_value = run_id or workflow_id or machine_id or session_id
+#     id_type = "run" if run_id else "workflow" if workflow_id else "machine"
+#     id_value = run_id or workflow_id or machine_id or session_id
     
-    if session_id:
-        id_type = "session"
+#     if session_id:
+#         id_type = "session"
         
-    print(f"id_type: {id_type}, id_value: {id_value}")
+#     print(f"id_type: {id_type}, id_value: {id_value}")
 
-    return StreamingResponse(
-        stream_logs(id_type, id_value, request, client, log_level),
-        media_type="text/event-stream",
-    )
+#     return StreamingResponse(
+#         stream_logs(id_type, id_value, request, client, log_level),
+#         media_type="text/event-stream",
+#     )
 
 
 async def stream_logs(
@@ -543,33 +543,33 @@ async def stream_logs(
     #     await client.close()  # Ensure the client is closed
 
 
-@router.get("/stream-progress")
-async def stream_progress_endpoint(
-    request: Request,
-    run_id: Optional[str] = None,
-    workflow_id: Optional[str] = None,
-    machine_id: Optional[str] = None,
-    return_run: Optional[bool] = False,
-    from_start: Optional[bool] = False,
+# @router.get("/stream-progress")
+# async def stream_progress_endpoint(
+#     request: Request,
+#     run_id: Optional[str] = None,
+#     workflow_id: Optional[str] = None,
+#     machine_id: Optional[str] = None,
+#     return_run: Optional[bool] = False,
+#     from_start: Optional[bool] = False,
 
-    # filter params
-    status: Optional[str] = None,
-    deployment_id: Optional[str] = None,
+#     # filter params
+#     status: Optional[str] = None,
+#     deployment_id: Optional[str] = None,
 
-    client=Depends(get_clickhouse_client),
-):
-    if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
-        raise HTTPException(
-            status_code=400, detail="Exactly one ID type must be provided"
-        )
+#     client=Depends(get_clickhouse_client),
+# ):
+#     if sum(bool(x) for x in [run_id, workflow_id, machine_id]) != 1:
+#         raise HTTPException(
+#             status_code=400, detail="Exactly one ID type must be provided"
+#         )
 
-    id_type = "run" if run_id else "workflow" if workflow_id else "machine"
-    id_value = run_id or workflow_id or machine_id
+#     id_type = "run" if run_id else "workflow" if workflow_id else "machine"
+#     id_value = run_id or workflow_id or machine_id
 
-    return StreamingResponse(
-        stream_progress(id_type, id_value, request, client, return_run, from_start, status, deployment_id),
-        media_type="text/event-stream",
-    )
+#     return StreamingResponse(
+#         stream_progress(id_type, id_value, request, client, return_run, from_start, status, deployment_id),
+#         media_type="text/event-stream",
+#     )
 
 
 async def stream_progress(

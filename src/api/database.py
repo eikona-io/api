@@ -51,22 +51,22 @@ def init_db():
 clickhouse_client = None
 
 
-async def get_clickhouse_client():
-    global clickhouse_client
-    try:
-        if clickhouse_client is None:
-            clickhouse_client = await clickhouse_connect.get_async_client(
-                host=os.getenv("CLICKHOUSE_HOST"),
-                user=os.getenv("CLICKHOUSE_USER"),
-                password=os.getenv("CLICKHOUSE_PASSWORD"),
-                secure=False if os.getenv("CLICKHOUSE_HOST") in ["localhost", "host.docker.internal", "clickhouse"] else True,
-                pool_mgr=big_pool_mgr,
-                port=os.getenv("CLICKHOUSE_PORT", None),
-            )
-        return clickhouse_client
-    except Exception as e:
-        print(f"Error creating ClickHouse client: {e}")
-        raise
+# async def get_clickhouse_client():
+#     global clickhouse_client
+#     try:
+#         if clickhouse_client is None:
+#             clickhouse_client = await clickhouse_connect.get_async_client(
+#                 host=os.getenv("CLICKHOUSE_HOST"),
+#                 user=os.getenv("CLICKHOUSE_USER"),
+#                 password=os.getenv("CLICKHOUSE_PASSWORD"),
+#                 secure=False if os.getenv("CLICKHOUSE_HOST") in ["localhost", "host.docker.internal", "clickhouse"] else True,
+#                 pool_mgr=big_pool_mgr,
+#                 port=os.getenv("CLICKHOUSE_PORT", None),
+#             )
+#         return clickhouse_client
+#     except Exception as e:
+#         print(f"Error creating ClickHouse client: {e}")
+#         raise
 
 
 @asynccontextmanager

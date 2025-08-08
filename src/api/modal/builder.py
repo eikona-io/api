@@ -36,7 +36,6 @@ import logging
 from typing import List, Optional
 
 from fastapi import Depends
-from api.database import get_clickhouse_client
 from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime as dt
@@ -241,111 +240,111 @@ def cancel_run(body: CancelFunctionBody):
     return {"status": "success"}
 
 
-@router.websocket("/ws/{machine_id}")
-async def websocket_endpoint(
-    # request: Request,
-    websocket: WebSocket,
-    machine_id: str,
-    client: AsyncClient = Depends(get_clickhouse_client),
-):
-    await websocket.accept()
-    # machine_id_websocket_dict[machine_id] = websocket
+# @router.websocket("/ws/{machine_id}")
+# async def websocket_endpoint(
+#     # request: Request,
+#     websocket: WebSocket,
+#     machine_id: str,
+#     client: AsyncClient = Depends(get_clickhouse_client),
+# ):
+#     await websocket.accept()
+#     # machine_id_websocket_dict[machine_id] = websocket
 
-    try:
-        last_update_time = None
+#     try:
+#         last_update_time = None
 
-        async with get_db_context() as db:
-            machine = (
-                await db.execute(
-                    select(Machine).where(Machine.id == machine_id)
-                    # .apply_org_check(request)
-                )
-            ).scalar_one_or_none()
+#         async with get_db_context() as db:
+#             machine = (
+#                 await db.execute(
+#                     select(Machine).where(Machine.id == machine_id)
+#                     # .apply_org_check(request)
+#                 )
+#             ).scalar_one_or_none()
 
-        if not machine:
-            raise HTTPException(status_code=404, detail="Machine not found")
+#         if not machine:
+#             raise HTTPException(status_code=404, detail="Machine not found")
 
-        last_update_time = machine.updated_at
+#         last_update_time = machine.updated_at
 
-        while True:
-            # Fetch logs from ClickHouse
-            query = f"""
-            SELECT timestamp, message
-            FROM log_entries
-            WHERE machine_id = '{machine_id}'
-            {f"AND timestamp > toDateTime64('{last_update_time.isoformat()}', 6)" if last_update_time else ""}
-            ORDER BY timestamp ASC
-            LIMIT 100
-            """
-            result = await client.query(query)
+#         while True:
+#             # Fetch logs from ClickHouse
+#             query = f"""
+#             SELECT timestamp, message
+#             FROM log_entries
+#             WHERE machine_id = '{machine_id}'
+#             {f"AND timestamp > toDateTime64('{last_update_time.isoformat()}', 6)" if last_update_time else ""}
+#             ORDER BY timestamp ASC
+#             LIMIT 100
+#             """
+#             result = await client.query(query)
 
-            if result.result_rows:
-                for row in result.result_rows:
-                    timestamp, logs = row
-                    last_update_time = timestamp
+#             if result.result_rows:
+#                 for row in result.result_rows:
+#                     timestamp, logs = row
+#                     last_update_time = timestamp
 
-                    # Check if logs is a string or a list
-                    if isinstance(logs, str):
-                        try:
-                            # Try to parse the string as JSON
-                            log_entries = json.loads(logs)
-                            if not isinstance(log_entries, list):
-                                log_entries = [log_entries]
-                        except json.JSONDecodeError:
-                            # If parsing fails, treat it as a single log entry
-                            log_entries = [logs]
-                    elif isinstance(logs, list):
-                        log_entries = logs
-                    else:
-                        # If it's neither string nor list, convert to string and wrap in a list
-                        log_entries = [str(logs)]
+#                     # Check if logs is a string or a list
+#                     if isinstance(logs, str):
+#                         try:
+#                             # Try to parse the string as JSON
+#                             log_entries = json.loads(logs)
+#                             if not isinstance(log_entries, list):
+#                                 log_entries = [log_entries]
+#                         except json.JSONDecodeError:
+#                             # If parsing fails, treat it as a single log entry
+#                             log_entries = [logs]
+#                     elif isinstance(logs, list):
+#                         log_entries = logs
+#                     else:
+#                         # If it's neither string nor list, convert to string and wrap in a list
+#                         log_entries = [str(logs)]
 
-                    # Process each log entry
-                    for log_entry in log_entries:
-                        log_data = {
-                            "event": "LOGS",
-                            "data": {
-                                "machine_id": machine_id,
-                                "logs": str(log_entry),
-                                "timestamp": timestamp.timestamp(),
-                            },
-                        }
-                        await websocket.send_text(json.dumps(log_data))
-            else:
-                # Send a keepalive message if no new logs
-                await websocket.send_text(json.dumps({"event": "KEEPALIVE"}))
+#                     # Process each log entry
+#                     for log_entry in log_entries:
+#                         log_data = {
+#                             "event": "LOGS",
+#                             "data": {
+#                                 "machine_id": machine_id,
+#                                 "logs": str(log_entry),
+#                                 "timestamp": timestamp.timestamp(),
+#                             },
+#                         }
+#                         await websocket.send_text(json.dumps(log_data))
+#             else:
+#                 # Send a keepalive message if no new logs
+#                 await websocket.send_text(json.dumps({"event": "KEEPALIVE"}))
 
-            # Wait for a short interval before the next poll
-            await asyncio.sleep(1)
-    except WebSocketDisconnect:
-        pass
-    # except WebSocketDisconnect:
-    #     if machine_id in machine_id_websocket_dict:
-    #         machine_id_websocket_dict.pop(machine_id)
-    # finally:
-    #     if machine_id in machine_id_websocket_dict:
-    #         machine_id_websocket_dict.pop(machine_id)
+#             # Wait for a short interval before the next poll
+#             await asyncio.sleep(1)
+#     except WebSocketDisconnect:
+#         pass
+#     # except WebSocketDisconnect:
+#     #     if machine_id in machine_id_websocket_dict:
+#     #         machine_id_websocket_dict.pop(machine_id)
+#     # finally:
+#     #     if machine_id in machine_id_websocket_dict:
+#     #         machine_id_websocket_dict.pop(machine_id)
 
 
-@router.websocket("/ws/{machine_id}/live-logs")
-async def websocket_endpoint_live_logs(websocket: WebSocket, machine_id: str):
-    await websocket.accept()
-    machine_id_websocket_dict_live_logs[machine_id] = websocket
+# @router.websocket("/ws/{machine_id}/live-logs")
+# async def websocket_endpoint_live_logs(websocket: WebSocket, machine_id: str):
+#     await websocket.accept()
+#     machine_id_websocket_dict_live_logs[machine_id] = websocket
 
-    task = asyncio.create_task(listen_logs(machine_id=machine_id))
+#     task = asyncio.create_task(listen_logs(machine_id=machine_id))
 
-    try:
-        while True:
-            data = await websocket.receive_text()
-            # global last_activity_time
-            # last_activity_time = time.time()
-            # logger.info(f"Extended inactivity time to {global_timeout}")
-            # You can handle received messages here if needed
-    except WebSocketDisconnect:
-        if machine_id in machine_id_websocket_dict_live_logs:
-            machine_id_websocket_dict_live_logs.pop(machine_id)
+#     try:
+#         while True:
+#             data = await websocket.receive_text()
+#             # global last_activity_time
+#             # last_activity_time = time.time()
+#             # logger.info(f"Extended inactivity time to {global_timeout}")
+#             # You can handle received messages here if needed
+#     except WebSocketDisconnect:
+#         if machine_id in machine_id_websocket_dict_live_logs:
+#             machine_id_websocket_dict_live_logs.pop(machine_id)
 
-        task.cancel()
+#         task.cancel()
 
 
 @router.post("/create")
