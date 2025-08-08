@@ -134,7 +134,11 @@ def multi_level_cached(
     def decorator(func):
         # Store function-specific TTL overrides
         func_memory_ttl = timedelta(seconds=ttl_seconds) if ttl_seconds is not None else multi_cache.memory_ttl
-        func_redis_ttl = redis_ttl_seconds if redis_ttl_seconds is not None else multi_cache.redis_ttl
+        # Normalize Redis TTL to both seconds (for Redis) and timedelta (for comparisons)
+        func_redis_ttl_seconds = (
+            redis_ttl_seconds if redis_ttl_seconds is not None else multi_cache.redis_ttl
+        )
+        func_redis_ttl = timedelta(seconds=func_redis_ttl_seconds)
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -222,7 +226,8 @@ def multi_level_cached(
 
             try:
                 json_value = json.dumps(cache_data)
-                await multi_cache.redis.set(cache_key, json_value, ex=func_redis_ttl)
+                # Apply Redis TTL on initial write
+                await multi_cache.redis.set(cache_key, json_value, ex=func_redis_ttl_seconds)
             except Exception as e:
                 logfire.error(f"Redis cache set error: {str(e)}")
 
@@ -244,7 +249,8 @@ def multi_level_cached(
 
                 try:
                     json_value = json.dumps(cache_data)
-                    await multi_cache.redis.set(key, json_value, ex=func_redis_ttl)
+                    # Apply Redis TTL on refresh writes
+                    await multi_cache.redis.set(key, json_value, ex=func_redis_ttl_seconds)
                 except Exception as e:
                     logfire.error(f"Redis cache refresh error: {str(e)}")
 
