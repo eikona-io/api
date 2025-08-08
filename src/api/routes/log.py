@@ -50,6 +50,12 @@ def get_redis_pubsub_client():
     
     return redis_asyncio.from_url(redis_tcp_url)
 
+# Initialize Redis client for blocking stream reads (logs)
+_redis_tcp_url_log = os.getenv("REDIS_URL_LOG")
+redis_stream_client = (
+    redis_asyncio.from_url(_redis_tcp_url_log) if _redis_tcp_url_log else None
+)
+
 # Initialize consumer group helper
 consumer_group = None
 
@@ -245,96 +251,88 @@ async def stream_logs_endpoint_smart(
             media_type="text/event-stream",
         )
     else:
-        # Stream live logs
+        # Stream live logs using blocking reads over TCP Redis
         return StreamingResponse(
-            stream_logs_from_redis_with_client_tracking(target_id, log_level, client_id),
+            stream_logs_blocking(target_id, log_level, client_id),
             media_type="text/event-stream",
         )
 
 
-async def stream_logs_from_redis_with_client_tracking(run_id: str, log_level: Optional[str] = None, client_id: str = "default"):
+async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, client_id: str = "default"):
     """
-    Stream logs from Redis with per-client position tracking.
-    Compatible with Upstash Redis REST API.
+    Stream logs using TCP Redis with blocking XREAD. No polling loop, minimal idle commands.
+    Each client tails the stream independently (broadcast semantics).
     """
-    # Register this stream as active in Redis
     await register_active_stream(run_id, client_id)
-    
+
+    if redis_stream_client is None:
+        # Fallback if misconfigured
+        yield f"data: {json.dumps({'type': 'stream_unavailable'})}\n\n"
+        return
+
     stream_name = run_id
-    last_id_key = f"last_stream_id:{run_id}:{client_id}"
-    
-    # Get the last stream ID for this specific client
+    # Start from new messages only
+    last_id = "$"
+
     try:
-        last_id = await redis.get(last_id_key) or "0"
-        if isinstance(last_id, bytes):
-            last_id = last_id.decode('utf-8')
-    except Exception:
-        last_id = "0"  # Fallback to beginning if Redis get fails
-    
-    try:
-        if redis is None:
-            # Without Redis, just end the stream gracefully
-            yield f"data: {json.dumps({'type': 'stream_unavailable'})}\n\n"
-            return
         while True:
-            # Check if stream should be cancelled
             if await should_cancel_stream(run_id):
                 logger.info(f"Stream cancelled for run {run_id}, client {client_id}")
                 yield f"data: {json.dumps({'type': 'stream_cancelled', 'reason': 'run_completed'})}\n\n"
                 break
-            
-            # Use non-blocking XREAD command
-            entries = await redis.execute(["XREAD", "STREAMS", stream_name, last_id])
-            
-            if entries and len(entries) > 0:
-                # Process each stream entry
-                for stream, items in entries:
-                    for message_id, fields in items:
-                        try:
-                            # Parse the Redis stream entry
-                            if len(fields) >= 2:
-                                # Parse the serialized value
-                                serialized_value = fields[1]
-                                if isinstance(serialized_value, bytes):
-                                    serialized_value = serialized_value.decode('utf-8')
-                                    
-                                # Try to parse as JSON, fallback to string
-                                try:
-                                    log_data = json.loads(serialized_value)
-                                except json.JSONDecodeError:
-                                    log_data = serialized_value
-                                
-                                # Normalize the data to the expected schema
-                                normalized_logs = normalize_log_data(log_data, log_level)
-                                
-                                # Yield each normalized log entry
-                                for log_entry in normalized_logs:
-                                    yield f"data: {json.dumps(log_entry)}\n\n"
-                                
-                                # Update last_id to avoid re-reading
-                                last_id = message_id
-                                
-                                # Store the updated last_id for this specific client
-                                try:
-                                    await redis.set(last_id_key, last_id, ex=3600)  # Expire after 1 hour
-                                except Exception as e:
-                                    logger.warning(f"Failed to update last_id for client {client_id}: {e}")
-                                
-                        except Exception as e:
-                            logger.error(f"Error processing Redis stream entry: {e}")
-                            continue
-            else:
-                # No new messages, wait a bit before polling again
+
+            try:
+                # Block up to 15s waiting for new entries; returns [] on timeout
+                entries = await redis_stream_client.xread(
+                    streams={stream_name: last_id},
+                    count=100,
+                    block=15000,
+                )
+            except Exception as e:
+                logger.warning(f"xread error for {run_id}: {e}")
                 await asyncio.sleep(1)
-                
+                continue
+
+            if not entries:
+                # Timeout tick; loop to re-check cancellation
+                continue
+
+            for stream, items in entries:
+                for message_id, fields in items:
+                    try:
+                        # redis-py returns dict of field->value
+                        if isinstance(fields, dict):
+                            value = fields.get(b"message") or fields.get("message")
+                        else:
+                            # Defensive: support tuple/list format [key, value]
+                            value = fields[1] if len(fields) >= 2 else None
+
+                        if value is None:
+                            continue
+
+                        if isinstance(value, bytes):
+                            value = value.decode("utf-8")
+
+                        try:
+                            log_data = json.loads(value)
+                        except json.JSONDecodeError:
+                            log_data = value
+
+                        for log_entry in normalize_log_data(log_data, log_level):
+                            yield f"data: {json.dumps(log_entry)}\n\n"
+
+                        # Advance tail position
+                        last_id = message_id
+                    except Exception as e:
+                        logger.error(f"Error processing Redis stream entry: {e}")
+                        continue
     except asyncio.CancelledError:
         logger.info(f"Client {client_id} stream cancelled for run {run_id}")
         raise
     except Exception as e:
-        logger.error(f"Error in Redis stream for client {client_id}: {e}")
+        logger.error(f"Error in blocking Redis stream for client {client_id}: {e}")
         raise
     finally:
-        # Remove from active streams when done
         await unregister_active_stream(run_id)
 
 
