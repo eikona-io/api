@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Query, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 import re
@@ -256,8 +257,8 @@ async def get_optimized_image_response(
     is_public = s3_config.public
     
     if is_public:
-        # Public object - return direct URL
-        public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
+        # Public object - return direct URL via CloudFront
+        public_url = f"https://{os.getenv('COMPANY_CLOUDFRONT_DOMAIN')}/{optimized_key}"
         return RedirectResponse(url=public_url, status_code=302, headers=headers)
     else:
         # Private object - return presigned URL
