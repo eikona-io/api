@@ -13,8 +13,12 @@
     "test-clickhouse": "bun run test-clickhouse.mts",
     "generate": "bunx drizzle-kit generate",
     "drop": "bunx drizzle-kit drop",
-    "test-integration": "docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans",
-    "test": "EXTRA_TEST_COMMAND=\"-m unit\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans"
+    "test-integration": "EXTRA_TEST_COMMAND=\"-m integration\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans",
+    "test": "EXTRA_TEST_COMMAND=\"-m unit\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans",
+    "test-all": "EXTRA_TEST_COMMAND=\"\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans",
+    "test:logs": "EXTRA_TEST_COMMAND=\"-m unit -o log_cli=true -o log_cli_level=INFO -s\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans",
+    "test-integration:logs": "EXTRA_TEST_COMMAND=\"-m integration -o log_cli=true -o log_cli_level=INFO -s\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans",
+    "test-all:logs": "EXTRA_TEST_COMMAND=\"-o log_cli=true -o log_cli_level=INFO -s\" docker compose --env-file .env.test -f docker-compose.test.yml up --build --exit-code-from app --remove-orphans"
   },
   "dependencies": {
     "@ngrok/ngrok": "^1.5.0",

@@ -20,6 +20,7 @@ services:
       command: /bin/sh -c "bun install && bun run migrate-local && bun run migrate-clickhouse-local && uv run pytest ${EXTRA_TEST_COMMAND}"
       #  -v tests/api/routes/test_run.py::test_free_user_concurrent_sessions
       environment:
+        PYTEST_ADDOPTS: "-o log_cli=true -o log_cli_level=INFO -s"
         # Default to host.docker.internal, override in CI
         DATABASE_URL: "postgresql://postgres:postgres@${DB_HOST:-host.docker.internal}:5432/verceldb"
         JWT_SECRET: "ecda23ae49fd47b91003762317470996d2c3f97d4285f21d703cbdcad586a054"
