@@ -325,7 +325,7 @@ async def stream_logs_from_redis_with_client_tracking(run_id: str, log_level: Op
                             continue
             else:
                 # No new messages, wait a bit before polling again
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1)
                 
     except asyncio.CancelledError:
         logger.info(f"Client {client_id} stream cancelled for run {run_id}")
