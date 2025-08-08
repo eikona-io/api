@@ -95,7 +95,11 @@ import re
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
-redis = Redis(url=redis_url, token=redis_token)
+redis = (
+    Redis(url=redis_url, token=redis_token)
+    if redis_url and redis_token
+    else None
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +188,12 @@ async def get_session(
         .limit(1)
     )
 
-    timeout_end = await redis.get(f"session:{session_id}:timeout_end")
+    timeout_end = None
+    try:
+        if redis is not None:
+            timeout_end = await redis.get(f"session:{session_id}:timeout_end")
+    except Exception:
+        timeout_end = None
     gpuEvent = result.first()
 
     if gpuEvent is None:
@@ -239,7 +248,12 @@ async def get_machine_sessions(
     sessions = []
     for event in gpu_events:
         # Skipping this for now to save performance
-        timeout_end = await redis.get(f"session:{event.session_id}:timeout_end")
+        timeout_end = None
+        try:
+            if redis is not None:
+                timeout_end = await redis.get(f"session:{event.session_id}:timeout_end")
+        except Exception:
+            timeout_end = None
         
         # Skip sessions where Redis cannot get the timeout_end
         if not timeout_end:
@@ -318,9 +332,10 @@ async def create_session_background_task(
     async def set_timeout_redis():
         timeout_duration = timeout or 15
         timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
-        await redis.set(
-            f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
-        )
+        if redis is not None:
+            await redis.set(
+                f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
+            )
 
     if has_increase_timeout_v2:
         try:
@@ -562,7 +577,9 @@ async def increase_timeout_2(
         raise HTTPException(status_code=404, detail="GPU event not found")
 
     # Retrieve the current timeout end time from Redis
-    current_timeout_end_str = await redis.get(f"session:{session_id}:timeout_end")
+    current_timeout_end_str = None
+    if redis is not None:
+        current_timeout_end_str = await redis.get(f"session:{session_id}:timeout_end")
     if not current_timeout_end_str:
         raise HTTPException(status_code=404, detail="Timeout end not found for session")
 
@@ -594,7 +611,8 @@ async def increase_timeout_2(
         new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
 
     # Update the timeout end time in Redis
-    await redis.set(f"session:{session_id}:timeout_end", new_timeout_end.isoformat())
+    if redis is not None:
+        await redis.set(f"session:{session_id}:timeout_end", new_timeout_end.isoformat())
 
     return JSONResponse(
         status_code=200, content={"message": "Timeout increased successfully"}
@@ -1197,9 +1215,10 @@ async def create_dynamic_session(
     async def set_timeout_redis():
         timeout_duration = body.timeout or 15
         timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
-        await redis.set(
-            f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
-        )
+            if redis is not None:
+                await redis.set(
+                    f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
+                )
 
     # Run remaining setup tasks in parallel
     setup_tasks = [create_gpu_event(), set_timeout_redis()]
@@ -1546,7 +1565,8 @@ async def delete_session(
         await db.commit()
         await db.refresh(gpuEvent)
 
-    await redis.delete("session:" + session_id + ":timeout_end")
+    if redis is not None:
+        await redis.delete("session:" + session_id + ":timeout_end")
 
     if wait_for_shutdown:
         max_wait_time = 30  # Maximum wait time in seconds
@@ -1576,6 +1596,9 @@ async def check_and_close_sessions(request: Request, session_id: str):
         logger.info(f"Checking session {session_id}")
 
         # Retrieve the timeout end time from Redis
+        if redis is None:
+            logger.info(f"Redis not configured; skipping timeout check for session {session_id}")
+            return
         timeout_end_str = await redis.get(key)
         if timeout_end_str is None:
             logger.info(f"No timeout end found for session {session_id}")

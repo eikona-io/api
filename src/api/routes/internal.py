@@ -196,14 +196,30 @@ router = APIRouter()
     
 from upstash_redis.asyncio import Redis
 
-redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG"))
-redis_realtime = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_REALTIME"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_REALTIME"))
+# Initialize Redis clients only when env vars are present; else set to None
+_redis_url_log = os.getenv("UPSTASH_REDIS_REST_URL_LOG")
+_redis_token_log = os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG")
+redis = (
+    Redis(url=_redis_url_log, token=_redis_token_log)
+    if _redis_url_log and _redis_token_log
+    else None
+)
+
+_redis_url_realtime = os.getenv("UPSTASH_REDIS_REST_URL_REALTIME")
+_redis_token_realtime = os.getenv("UPSTASH_REDIS_REST_TOKEN_REALTIME")
+redis_realtime = (
+    Redis(url=_redis_url_realtime, token=_redis_token_realtime)
+    if _redis_url_realtime and _redis_token_realtime
+    else None
+)
 
 from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status
 
 async def ensure_redis_stream_expires(run_id: str):
     # Set TTL (this will fail silently if key already has TTL, but that's fine)
     try:
+        if redis is None:
+            return
         await redis.execute(["EXPIRE", run_id, "43200"])
     except:
         # Key already has TTL or other non-critical error, safe to ignore
@@ -211,6 +227,8 @@ async def ensure_redis_stream_expires(run_id: str):
 
 async def insert_log_entry_to_redis(run_id: str, value: Any):
     try:
+        if redis is None:
+            return
         # Serialize the value to JSON if it's not already a string
         if isinstance(value, str):
             serialized_value = value
@@ -228,6 +246,8 @@ async def insert_log_entry_to_redis(run_id: str, value: Any):
     
 async def clear_redis_log(run_id: str):
     try:
+        if redis is None:
+            return
         await redis.delete(run_id)
     except:
         # Key already has TTL or other non-critical error, safe to ignore
@@ -243,6 +263,8 @@ async def publish_progress_update(run_id: str, progress_data: dict):
         progress_data: Dictionary containing progress information
     """
     try:
+        if redis_realtime is None:
+            return
         # Serialize the progress data
         serialized_data = json.dumps(progress_data)
         

@@ -32,8 +32,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Log"])
 
-# Initialize Redis client for log streaming (REST API)
-redis = Redis(url=os.getenv("UPSTASH_REDIS_REST_URL_LOG"), token=os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG"))
+# Initialize Redis client for log streaming (REST API) only if env is present
+_redis_url_log = os.getenv("UPSTASH_REDIS_REST_URL_LOG")
+_redis_token_log = os.getenv("UPSTASH_REDIS_REST_TOKEN_LOG")
+redis = (
+    Redis(url=_redis_url_log, token=_redis_token_log)
+    if _redis_url_log and _redis_token_log
+    else None
+)
 
 # Initialize Redis client for pub/sub using TCP connection
 def get_redis_pubsub_client():
@@ -53,6 +59,8 @@ def get_consumer_group():
     global consumer_group
     if consumer_group is None:
         from ..utils.redis_consumer_group import RedisStreamConsumerGroup
+        if redis is None:
+            raise ValueError("Redis is not configured for log streaming")
         consumer_group = RedisStreamConsumerGroup(redis)
     return consumer_group
 
@@ -62,6 +70,8 @@ def get_consumer_group():
 async def register_active_stream(run_id: str, client_id: str = "default"):
     """Register an active stream in Redis with TTL."""
     try:
+        if redis is None:
+            return
         stream_key = f"active_stream:{run_id}"
         stream_data = {
             "client_id": client_id,
@@ -78,6 +88,8 @@ async def register_active_stream(run_id: str, client_id: str = "default"):
 async def unregister_active_stream(run_id: str):
     """Remove active stream registration from Redis."""
     try:
+        if redis is None:
+            return
         stream_key = f"active_stream:{run_id}"
         await redis.execute(["DEL", stream_key])
         logger.debug(f"Unregistered active stream for run {run_id}")
@@ -88,6 +100,8 @@ async def unregister_active_stream(run_id: str):
 async def is_stream_active(run_id: str) -> bool:
     """Check if a stream is currently active."""
     try:
+        if redis is None:
+            return False
         stream_key = f"active_stream:{run_id}"
         result = await redis.get(stream_key)
         return result is not None
@@ -99,6 +113,8 @@ async def is_stream_active(run_id: str) -> bool:
 async def mark_stream_for_cancellation(run_id: str):
     """Mark a stream for cancellation by updating its status in Redis."""
     try:
+        if redis is None:
+            return False
         stream_key = f"active_stream:{run_id}"
         
         # Get current stream data
@@ -124,6 +140,8 @@ async def mark_stream_for_cancellation(run_id: str):
 async def should_cancel_stream(run_id: str) -> bool:
     """Check if a stream should be cancelled."""
     try:
+        if redis is None:
+            return False
         stream_key = f"active_stream:{run_id}"
         result = await redis.get(stream_key)
         
@@ -254,6 +272,10 @@ async def stream_logs_from_redis_with_client_tracking(run_id: str, log_level: Op
         last_id = "0"  # Fallback to beginning if Redis get fails
     
     try:
+        if redis is None:
+            # Without Redis, just end the stream gracefully
+            yield f"data: {json.dumps({'type': 'stream_unavailable'})}\n\n"
+            return
         while True:
             # Check if stream should be cancelled
             if await should_cancel_stream(run_id):
@@ -808,6 +830,8 @@ async def archive_logs_for_run(run_id: str):
     This should be called when a run reaches a terminal state.
     """
     try:
+        if redis is None:
+            return 0
         # Collect all logs from the stream
         stream_name = run_id
         archived_logs = []
@@ -862,6 +886,8 @@ async def get_archived_logs(run_id: str):
     Returns None if no archived logs exist.
     """
     try:
+        if redis is None:
+            return None
         archive_key = f"log:{run_id}"
         archived_data = await redis.get(archive_key)
         
