@@ -56,6 +56,18 @@ redis_stream_client = (
     redis_asyncio.from_url(_redis_tcp_url_log) if _redis_tcp_url_log else None
 )
 
+# Sentinel helper to end a stream immediately
+async def signal_stream_end(run_id: str):
+    try:
+        if redis_stream_client is not None:
+            # Use TCP client when available
+            await redis_stream_client.xadd(run_id, {"message": "__END__"})
+        elif redis is not None:
+            # Fallback to REST execute
+            await redis.execute(["XADD", run_id, "*", "message", "__END__"])
+    except Exception as e:
+        logger.warning(f"Failed to signal stream end for {run_id}: {e}")
+
 # Initialize consumer group helper
 consumer_group = None
 
@@ -103,64 +115,11 @@ async def unregister_active_stream(run_id: str):
         logger.warning(f"Failed to unregister active stream for {run_id}: {e}")
 
 
-async def is_stream_active(run_id: str) -> bool:
-    """Check if a stream is currently active."""
-    try:
-        if redis is None:
-            return False
-        stream_key = f"active_stream:{run_id}"
-        result = await redis.get(stream_key)
-        return result is not None
-    except Exception as e:
-        logger.warning(f"Failed to check stream status for {run_id}: {e}")
-        return False
-
-
-async def mark_stream_for_cancellation(run_id: str):
-    """Mark a stream for cancellation by updating its status in Redis."""
-    try:
-        if redis is None:
-            return False
-        stream_key = f"active_stream:{run_id}"
-        
-        # Get current stream data
-        current_data = await redis.get(stream_key)
-        if current_data:
-            if isinstance(current_data, bytes):
-                current_data = current_data.decode('utf-8')
-            
-            stream_data = json.loads(current_data)
-            stream_data["status"] = "cancelled"
-            stream_data["cancelled_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-            
-            # Update with shorter TTL (5 minutes) since it's being cancelled
-            await redis.set(stream_key, json.dumps(stream_data), ex=300)
-            logger.info(f"Marked stream for cancellation: {run_id}")
-            return True
-    except Exception as e:
-        logger.error(f"Failed to mark stream for cancellation {run_id}: {e}")
-    
-    return False
-
-
-async def should_cancel_stream(run_id: str) -> bool:
-    """Check if a stream should be cancelled."""
-    try:
-        if redis is None:
-            return False
-        stream_key = f"active_stream:{run_id}"
-        result = await redis.get(stream_key)
-        
-        if result:
-            if isinstance(result, bytes):
-                result = result.decode('utf-8')
-            
-            stream_data = json.loads(result)
-            return stream_data.get("status") == "cancelled"
-    except Exception as e:
-        logger.warning(f"Failed to check cancellation status for {run_id}: {e}")
-    
-    return False
+"""
+Note: We previously supported cancellation via Redis keys. With sentinel-based
+stream termination, we no longer need cancellation checks/updates. The helpers
+above are intentionally removed to avoid extra GET/SET traffic.
+"""
 
 
 def _to_iso_z(ts: dt.datetime) -> str:
@@ -276,17 +235,12 @@ async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, cli
 
     try:
         while True:
-            if await should_cancel_stream(run_id):
-                logger.info(f"Stream cancelled for run {run_id}, client {client_id}")
-                yield f"data: {json.dumps({'type': 'stream_cancelled', 'reason': 'run_completed'})}\n\n"
-                break
-
             try:
-                # Block up to 15s waiting for new entries; returns [] on timeout
+                # Block indefinitely until new entries arrive, one at a time
                 entries = await redis_stream_client.xread(
                     streams={stream_name: last_id},
-                    count=100,
-                    block=15000,
+                    count=1,
+                    block=0,
                 )
             except Exception as e:
                 logger.warning(f"xread error for {run_id}: {e}")
@@ -294,7 +248,6 @@ async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, cli
                 continue
 
             if not entries:
-                # Timeout tick; loop to re-check cancellation
                 continue
 
             for stream, items in entries:
@@ -312,6 +265,11 @@ async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, cli
 
                         if isinstance(value, bytes):
                             value = value.decode("utf-8")
+
+                        # End-of-stream sentinel
+                        if value == "__END__":
+                            yield f"data: {json.dumps({'type': 'stream_complete', 'source': 'sentinel'})}\n\n"
+                            return
 
                         try:
                             log_data = json.loads(value)
@@ -933,19 +891,11 @@ async def cleanup_stream(run_id: str):
         # Delete the stream
         await redis.execute(["DEL", stream_name])
         
-        # Clean up any last_id tracking keys for this run
-        pattern_keys = [
-            f"last_stream_id:{run_id}",
-            f"last_stream_id:{run_id}:*"
-        ]
-        
-        for pattern in pattern_keys:
-            try:
-                keys = await redis.execute(["KEYS", pattern])
-                if keys:
-                    await redis.execute(["DEL"] + keys)
-            except Exception as e:
-                logger.warning(f"Error cleaning up keys with pattern {pattern}: {e}")
+        # Clean up per-run offset key if still used (avoid KEYS/SCAN)
+        try:
+            await redis.execute(["DEL", f"last_stream_id:{run_id}"])
+        except Exception as e:
+            logger.debug(f"No last_stream_id for {run_id} to delete: {e}")
         
         # Clean up active stream key
         await unregister_active_stream(run_id)
@@ -958,19 +908,9 @@ async def cleanup_stream(run_id: str):
 
 async def cancel_active_streams(run_id: str):
     """
-    Cancel any active streams for a run ID.
-    This should be called when a run reaches terminal state.
+    Backward-compat shim. With sentinel-based termination we simply signal end.
     """
-    try:
-        # Check if there's an active stream for this run
-        if await is_stream_active(run_id):
-            # Mark the stream for cancellation
-            await mark_stream_for_cancellation(run_id)
-            logger.info(f"Marked active stream for cancellation: run {run_id}")
-        else:
-            logger.debug(f"No active stream found for run {run_id}")
-    except Exception as e:
-        logger.error(f"Error cancelling stream for run {run_id}: {e}")
+    await signal_stream_end(run_id)
 
 
 @router.get("/v2/stream-progress")

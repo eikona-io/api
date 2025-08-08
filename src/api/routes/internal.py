@@ -213,7 +213,7 @@ redis_realtime = (
     else None
 )
 
-from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status
+from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status, signal_stream_end
 
 async def ensure_redis_stream_expires(run_id: str):
     # Set TTL (this will fail silently if key already has TTL, but that's fine)
@@ -775,6 +775,8 @@ async def update_run(
                 # Archive logs if run reached terminal state
                 if is_terminal_status(body.status):
                     logger.info(f"Run {body.run_id} reached terminal state {body.status}, triggering log archival")
+                    # Signal live listeners to end immediately
+                    background_tasks.add_task(signal_stream_end, body.run_id)
                     background_tasks.add_task(cancel_active_streams, body.run_id)
                     background_tasks.add_task(archive_logs_for_run, body.run_id)
 
