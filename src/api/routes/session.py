@@ -1215,10 +1215,10 @@ async def create_dynamic_session(
     async def set_timeout_redis():
         timeout_duration = body.timeout or 15
         timeout_end_time = datetime.utcnow() + timedelta(minutes=timeout_duration)
-            if redis is not None:
-                await redis.set(
-                    f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
-                )
+        if redis is not None:
+            await redis.set(
+                f"session:{session_id}:timeout_end", timeout_end_time.isoformat()
+            )
 
     # Run remaining setup tasks in parallel
     setup_tasks = [create_gpu_event(), set_timeout_redis()]
