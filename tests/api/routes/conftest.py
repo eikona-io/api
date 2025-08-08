@@ -263,7 +263,8 @@ async def paid_user():
             "payment_issue_reason": "",
         },
         "version": "1.0",
-        "timestamp": int(datetime.now().timestamp()),
+        # Keep cache fresh for the entire test run
+        "timestamp": int(datetime.now().timestamp()) + 3600,
     }
     redis.set(f"plan:{user_id}", json.dumps(data))
     print("redis set", redis.get(f"plan:{user_id}"))
@@ -295,7 +296,8 @@ async def paid_user_2():
             "payment_issue_reason": "",
         },
         "version": "1.0",
-        "timestamp": int(datetime.now().timestamp()),
+        # Keep cache fresh for the entire test run
+        "timestamp": int(datetime.now().timestamp()) + 3600,
     }
     redis.set(f"plan:{user_id}", json.dumps(data))
     print("redis set", redis.get(f"plan:{user_id}"))
@@ -327,7 +329,13 @@ async def free_user():
         "payment_issue": False,
         "payment_issue_reason": "",
     }
-    redis.set(f"plan:{user_id}", json.dumps(data))
+    # Keep cache fresh for the entire test run
+    data_with_timestamp = {
+        "version": "1.0",
+        "timestamp": int(datetime.now().timestamp()) + 3600,
+        "data": data,
+    }
+    redis.set(f"plan:{user_id}", json.dumps(data_with_timestamp))
     print("redis set", redis.get(f"plan:{user_id}"))
 
     async with get_db_context() as db:
