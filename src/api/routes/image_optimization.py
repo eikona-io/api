@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Query, Request, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 import re
@@ -255,9 +256,22 @@ async def get_optimized_image_response(
     # is_public = await check_s3_object_public(s3_config, optimized_key)
     is_public = s3_config.public
     
+    default_cloudfront_domain = os.getenv('COMPANY_CLOUDFRONT_DOMAIN')
+    custom_cloudfront_domain = user_settings.cloudfront_domain
+    default_bucket_domain = f"{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com"
+    
     if is_public:
-        # Public object - return direct URL
-        public_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{optimized_key}"
+        # Default bucket - always use company CDN
+        if not s3_config.is_custom:
+            public_url = f"https://{default_cloudfront_domain}/{optimized_key}"
+        # Custom bucket - check CloudFront preference
+        elif user_settings and user_settings.use_cloudfront and custom_cloudfront_domain:
+            print(f"custom_cloudfront_domain: {custom_cloudfront_domain}")
+            public_url = f"https://{custom_cloudfront_domain}/{optimized_key}"
+        else:
+            # Direct bucket access for privacy
+            public_url = f"https://{default_bucket_domain}/{optimized_key}"
+        
         return RedirectResponse(url=public_url, status_code=302, headers=headers)
     else:
         # Private object - return presigned URL
