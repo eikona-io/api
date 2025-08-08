@@ -8,7 +8,7 @@ on:
 
 jobs:
   integration-test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     env:
       NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v3
       
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Build containers
         run: docker compose -f docker-compose.test.yml build
@@ -43,7 +43,7 @@ jobs:
 
   migrate:
     needs: integration-test
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     # drop the "contains" portion, since we already filter at top-level
     if: github.ref_name == 'main' || github.ref_name == 'dev'
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
