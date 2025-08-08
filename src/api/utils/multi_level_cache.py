@@ -26,18 +26,18 @@ class MultiLevelCache:
         self.redis_ttl = redis_ttl_seconds
         self.redis = redis
         self.refresh_tasks = {}  # Track background refresh tasks
-    
+
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache, trying memory first, then Redis."""
         # Try memory cache first (L1)
         if key in self.memory_cache:
             value, timestamp = self.memory_cache[key]
             age = datetime.now() - timestamp
-            
+
             # If data is fresh enough, return immediately
             if age < self.memory_ttl:
                 return value
-                
+
             # If stale but not expired, trigger background refresh and return stale data
             if age < self.memory_ttl * 2:
                 # Only start a refresh if one isn't already running
@@ -45,7 +45,7 @@ class MultiLevelCache:
                     # We'll implement refresh_key later
                     self.refresh_tasks[key] = asyncio.create_task(self._refresh_key(key))
                 return value
-        
+
         # If not in memory or too stale, try Redis (L2)
         try:
             redis_value = await self.redis.get(key)
@@ -58,16 +58,16 @@ class MultiLevelCache:
                 return parsed_value
         except Exception as e:
             logfire.error(f"Redis cache error: {str(e)}")
-            
+
         # Not found in either cache
         return None
-    
+
     async def set(self, key: str, value: Any) -> None:
         """Set value in both memory and Redis caches."""
         # Update memory cache
         self.memory_cache[key] = (value, datetime.now())
         self._cleanup_if_needed()
-        
+
         # Update Redis cache
         try:
             # Convert to JSON for Redis storage
@@ -75,7 +75,7 @@ class MultiLevelCache:
             await self.redis.set(key, json_value, ex=self.redis_ttl)
         except Exception as e:
             logfire.error(f"Redis cache set error: {str(e)}")
-    
+
     async def invalidate(self, key: str) -> None:
         """Remove a key from both caches."""
         if key in self.memory_cache:
@@ -84,20 +84,20 @@ class MultiLevelCache:
             await self.redis.delete(key)
         except Exception as e:
             logfire.error(f"Redis cache delete error: {str(e)}")
-    
+
     def _cleanup_if_needed(self) -> None:
         """Remove oldest items if cache exceeds maxsize."""
         if len(self.memory_cache) > self.maxsize:
             # Sort by timestamp and remove oldest entries
             sorted_items = sorted(
-                self.memory_cache.items(), 
+                self.memory_cache.items(),
                 key=lambda x: x[1][1]  # Sort by timestamp
             )
             # Remove oldest items to get back to 90% capacity
             items_to_remove = len(self.memory_cache) - int(self.maxsize * 0.9)
             for i in range(items_to_remove):
                 del self.memory_cache[sorted_items[i][0]]
-    
+
     async def _refresh_key(self, key: str) -> None:
         """Background task to refresh a key using the original function."""
         # This will be implemented in the decorator
@@ -114,7 +114,7 @@ async def update_redis_cache(cache_key, *args, **kwargs):
         multi_cache._cleanup_if_needed()
 
 def multi_level_cached(
-    key_prefix: str = "", 
+    key_prefix: str = "",
     ttl_seconds: int = None,
     redis_ttl_seconds: int = None,
     key_builder: Callable = None,
@@ -123,7 +123,7 @@ def multi_level_cached(
     """
     Decorator for caching async functions with multi-level caching.
     Implements SWR pattern with version control.
-    
+
     Args:
         key_prefix: Prefix for cache keys
         ttl_seconds: Override default memory TTL for this function (optional)
@@ -134,8 +134,8 @@ def multi_level_cached(
     def decorator(func):
         # Store function-specific TTL overrides
         func_memory_ttl = timedelta(seconds=ttl_seconds) if ttl_seconds is not None else multi_cache.memory_ttl
-        func_redis_ttl = timedelta(seconds=redis_ttl_seconds) if redis_ttl_seconds is not None else multi_cache.redis_ttl
-        
+        func_redis_ttl = redis_ttl_seconds if redis_ttl_seconds is not None else multi_cache.redis_ttl
+
         @wraps(func)
         async def wrapper(*args, **kwargs):
             # Build the cache key
@@ -146,11 +146,11 @@ def multi_level_cached(
                 arg_str = ":".join(str(arg) for arg in args)
                 kwarg_str = ":".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
                 cache_key = f"{key_prefix}:{func.__name__}:{arg_str}:{kwarg_str}"
-            
+
             # Try to get from memory cache first (L1)
             if cache_key in multi_cache.memory_cache:
                 value, timestamp = multi_cache.memory_cache[cache_key]
-                
+
                 # Check version before using cached data
                 cached_version = value.get("version")
                 if cached_version != version:
@@ -160,7 +160,7 @@ def multi_level_cached(
                     age = datetime.now() - timestamp
                     redis_last_updated = value.get("timestamp", 0)
                     last_updated_age = datetime.now() - datetime.fromtimestamp(redis_last_updated)
-                    
+
                     # Use function-specific TTL for freshness check
                     if age < func_memory_ttl:
                         pass
@@ -172,16 +172,16 @@ def multi_level_cached(
                             )
                     elif age < func_redis_ttl: #60
                         redis_refresh_cache_key = f"{cache_key}:redis_refresh"
-                        
+
                         if redis_refresh_cache_key not in multi_cache.refresh_tasks or multi_cache.refresh_tasks[redis_refresh_cache_key].done():
                             # logfire.info(f"Invalidating memory cache: {cache_key}")
                             multi_cache.refresh_tasks[redis_refresh_cache_key] = asyncio.create_task(
                                 update_redis_cache(cache_key, *args, **kwargs)
                             )
-                            
+
                     # logfire.info(f"Returning cached memory value: {cache_key}")
                     return value.get("data")
-                    
+
             # logfire.warning(f"Cache miss memory: {cache_key}")
             # If not in memory or too stale, try Redis (L2)
             try:
@@ -190,7 +190,7 @@ def multi_level_cached(
                 if redis_value:
                     # Parse the JSON value
                     parsed_value = json.loads(redis_value)
-                    
+
                     # Check version in Redis cache
                     redis_version = parsed_value.get("version")
                     if redis_version != version:
@@ -204,53 +204,53 @@ def multi_level_cached(
                         return parsed_value.get("data")
             except Exception as e:
                 logfire.error(f"Redis cache error: {str(e)}")
-                
+
             # Cache miss - call the original function
             # logfire.warning(f"Cache miss redis: {cache_key}, refreshing")
             result = await func(*args, **kwargs)
-            
+
             # When storing new results, include version
             cache_data = {
                 "data": result,
                 "timestamp": int(datetime.now().timestamp()),
                 "version": version  # Add version to cache data
             }
-            
+
             # Store in both caches
             multi_cache.memory_cache[cache_key] = (cache_data, datetime.now())
             multi_cache._cleanup_if_needed()
-            
+
             try:
                 json_value = json.dumps(cache_data)
-                await multi_cache.redis.set(cache_key, json_value)
+                await multi_cache.redis.set(cache_key, json_value, ex=func_redis_ttl)
             except Exception as e:
                 logfire.error(f"Redis cache set error: {str(e)}")
-            
+
             return result
-            
+
         # Function to refresh a cache entry
         async def refresh_func(key: str, *args, **kwargs):
             try:
                 result = await func(*args, **kwargs)
-                
+
                 cache_data = {
                     "data": result,
                     "timestamp": int(datetime.now().timestamp()),
                     "version": version  # Add version to refresh data
                 }
-                
+
                 # Update both caches
                 multi_cache.memory_cache[key] = (cache_data, datetime.now())
-                
+
                 try:
                     json_value = json.dumps(cache_data)
-                    await multi_cache.redis.set(key, json_value)
+                    await multi_cache.redis.set(key, json_value, ex=func_redis_ttl)
                 except Exception as e:
                     logfire.error(f"Redis cache refresh error: {str(e)}")
-                    
+
                 return result
             except Exception as e:
                 logfire.error(f"Error refreshing cache key {key}: {str(e)}")
-                
+
         return wrapper
     return decorator
