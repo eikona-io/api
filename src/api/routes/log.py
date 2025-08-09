@@ -994,17 +994,19 @@ async def stream_progress_v2(
     Subscribes to Redis channels instead of polling ClickHouse.
     """
     try:
-        # Determine the appropriate Redis channel(s) to subscribe to
-        if id_type == "run":
-            channels = [f"progress:{id_value}"]
-        elif id_type == "workflow":
-            # For workflow-level streaming, subscribe to the general events channel
-            # and filter by workflow_id
-            channels = ["workflow_events"]
-        else:  # machine
-            # For machine-level streaming, subscribe to the general events channel
-            # and filter by machine_id
-            channels = ["workflow_events"]
+        # Determine the appropriate Redis channel(s) to subscribe to.
+        # Use scoped channels for run streams to reduce per-connection traffic.
+        # if id_type == "run":
+        # Frontend not using per-run streams → prefer user/org scoped channels
+        current_user = request.state.current_user
+        org_id = current_user.get("org_id")
+        user_id = current_user.get("user_id")
+        channels = [f"progress:org:{org_id}"] if org_id else [f"progress:user:{user_id}"]
+        # else:
+        #     # For workflow/machine aggregated views you can keep the global
+        #     # channel if needed. If your frontend always has org/user context,
+        #     # you can also scope these similarly. For now, keep global.
+        #     channels = ["workflow_events"]
         
         # Subscribe to the Redis channels
         redis_client = None
@@ -1030,17 +1032,27 @@ async def stream_progress_v2(
                     try:
                         # Parse the message data
                         message_data = json.loads(message['data'])
+
+                        # Support compact short-key payloads as well as legacy payloads
+                        # r=run_id, w=workflow_id, m=machine_id, s=status, p=progress, t=timestamp, n=node/log
+                        run_id_msg = message_data.get("run_id") or message_data.get("r")
+                        workflow_id_msg = message_data.get("workflow_id") or message_data.get("w")
+                        machine_id_msg = message_data.get("machine_id") or message_data.get("m")
+                        status_msg = message_data.get("status") or message_data.get("s")
+                        progress_msg = message_data.get("progress") if message_data.get("progress") is not None else message_data.get("p", 0)
+                        timestamp_msg = message_data.get("timestamp") or message_data.get("t")
+                        node_msg = message_data.get("log") or message_data.get("n", "")
                         
                         # Filter messages based on the request parameters
                         should_include = True
                         
-                        if id_type == "workflow" and message_data.get("workflow_id") != id_value:
+                        if id_type == "workflow" and workflow_id_msg != id_value:
                             should_include = False
-                        elif id_type == "machine" and message_data.get("machine_id") != id_value:
+                        elif id_type == "machine" and machine_id_msg != id_value:
                             should_include = False
                         
                         # Apply status filter if specified
-                        if status and message_data.get("status") != status:
+                        if status and status_msg != status:
                             should_include = False
                         
                         if should_include:
@@ -1049,7 +1061,7 @@ async def stream_progress_v2(
                                 try:
                                     async with get_db_context() as db:
                                         # Get the run_id from the message data
-                                        message_run_id = message_data.get("run_id")
+                                        message_run_id = run_id_msg
                                         if not message_run_id:
                                             logger.warning("No run_id in message data for returnRun request")
                                             continue
@@ -1091,22 +1103,22 @@ async def stream_progress_v2(
                                     logger.error(f"Error fetching run data: {e}")
                                     continue
                             else:
-                                # Send the progress data directly
+                                # Send the progress data directly (normalized fields)
                                 progress_data = {
-                                    "run_id": message_data.get("run_id"),
-                                    "workflow_id": message_data.get("workflow_id"),
-                                    "machine_id": message_data.get("machine_id"),
-                                    "progress": message_data.get("progress", 0),
-                                    "status": message_data.get("status"),
-                                    "node_class": message_data.get("log", ""),
-                                    "timestamp": message_data.get("timestamp"),
+                                    "run_id": run_id_msg,
+                                    "workflow_id": workflow_id_msg,
+                                    "machine_id": machine_id_msg,
+                                    "progress": progress_msg,
+                                    "status": status_msg,
+                                    "node_class": node_msg,
+                                    "timestamp": timestamp_msg,
                                 }
                                 logger.debug(f"Sending progress data for run {message_data.get('run_id')}")
                                 yield f"data: {json.dumps(progress_data)}\n\n"
                             
                             # Check for terminal status - only break for run-specific streams
                             if (id_type == "run" and 
-                                message_data.get("status") in ["success", "failed", "timeout", "cancelled"]):
+                                (status_msg) in ["success", "failed", "timeout", "cancelled"]):
                                 logger.info(f"Terminal status received for run stream: {message_data.get('status')}")
                                 break
                                 

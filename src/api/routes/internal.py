@@ -253,7 +253,12 @@ async def clear_redis_log(run_id: str):
         # Key already has TTL or other non-critical error, safe to ignore
         pass
 
-async def publish_progress_update(run_id: str, progress_data: dict):
+async def publish_progress_update(
+    run_id: str,
+    progress_data: dict,
+    user_id: str | None = None,
+    org_id: str | None = None,
+):
     """
     Publish progress updates to Redis pub/sub channels for real-time streaming.
     This replaces the need for continuous ClickHouse polling in stream_progress.
@@ -265,20 +270,49 @@ async def publish_progress_update(run_id: str, progress_data: dict):
     try:
         if redis_realtime is None:
             return
-        # Serialize the progress data
-        serialized_data = json.dumps(progress_data)
-        
-        # Publish to both specific run channel and general workflow events channel
-        channels_to_publish = [
-            # f"progress:{run_id}",  # Specific run channel
-            "workflow_events"      # General events channel
-        ]
-        
+
+        # Build a compact payload to reduce bandwidth. We intentionally keep only
+        # identifiers needed for filtering on the subscriber and minimal metadata.
+        # Fallback to long-form keys when callers provide the legacy structure.
+        compact_payload = {
+            # Required identifiers
+            "r": progress_data.get("run_id") or progress_data.get("r"),
+            "w": progress_data.get("workflow_id") or progress_data.get("w"),
+            "m": progress_data.get("machine_id") or progress_data.get("m"),
+            # Minimal state
+            "s": progress_data.get("status") or progress_data.get("s"),
+            "p": progress_data.get("progress") if progress_data.get("progress") is not None else progress_data.get("p", 0),
+            # Optional, small extras
+            "t": progress_data.get("timestamp") or progress_data.get("t"),
+        }
+
+        # Optional short field for node/log class name
+        node_class = progress_data.get("log") or progress_data.get("n")
+        if isinstance(node_class, str) and len(node_class) <= 120:
+            compact_payload["n"] = node_class
+
+        serialized_data = json.dumps(compact_payload)
+
+        # Publish to both global and run-scoped channels so run streams don't
+        # receive unrelated traffic while dashboards can still aggregate.
+        # Prefer scoped channels only. Publish to org or user. If neither is
+        # available, skip publishing (saves bandwidth and avoids hot global channel).
+        channels_to_publish = []
+        if org_id:
+            channels_to_publish.append(f"progress:org:{org_id}")
+        elif user_id:
+            channels_to_publish.append(f"progress:user:{user_id}")
+        else:
+            logger.debug(
+                "Skipping publish: no org_id or user_id for run %s", run_id
+            )
+            return
+
         for channel in channels_to_publish:
             await redis_realtime.execute(["PUBLISH", channel, serialized_data])
-            
-        logger.debug(f"Published progress update for run {run_id} to {len(channels_to_publish)} channels")
-        
+
+        logger.debug(f"Published compact update for run {run_id} to {channels_to_publish}")
+
     except Exception as e:
         logger.error(f"Failed to publish progress update for run {run_id}: {e}")
         # Don't raise - this is a best-effort notification system
@@ -426,27 +460,30 @@ async def update_run(
                 #     )
                 # ]
 
-                if is_blocking_log_update is False:
-                    # background_tasks.add_task(
-                    #     insert_to_clickhouse, client, "workflow_events", progress_data
-                    # )
+                # Skip sending per node update
+                # if is_blocking_log_update is False:
+                #     # background_tasks.add_task(
+                #     #     insert_to_clickhouse, client, "workflow_events", progress_data
+                #     # )
                     
-                    # Also publish to Redis for real-time streaming
-                    progress_event = {
-                        "user_id": str(workflow_run.user_id),
-                        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
-                        "machine_id": str(workflow_run.machine_id),
-                        "gpu_event_id": str(body.gpu_event_id) if body.gpu_event_id else None,
-                        "workflow_id": str(workflow_run.workflow_id),
-                        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
-                        "run_id": str(body.run_id),
-                        "timestamp": updated_at.isoformat(),
-                        "log_type": "executing",
-                        "progress": body.progress,
-                        "log": body.live_status,
-                        "status": "executing"  # For compatibility with existing stream_progress
-                    }
-                    background_tasks.add_task(publish_progress_update, str(body.run_id), progress_event)
+                #     # Also publish to Redis for real-time streaming
+                #     # Use minimal event shape; publisher will compact keys
+                #     progress_event = {
+                #         "run_id": str(body.run_id),
+                #         "workflow_id": str(workflow_run.workflow_id),
+                #         "machine_id": str(workflow_run.machine_id),
+                #         "timestamp": updated_at.isoformat(),
+                #         "progress": body.progress,
+                #         "status": "executing",
+                #         "log": body.live_status,
+                #     }
+                #     background_tasks.add_task(
+                #         publish_progress_update,
+                #         str(body.run_id),
+                #         progress_event,
+                #         user_id=str(workflow_run.user_id) if workflow_run.user_id else None,
+                #         org_id=str(workflow_run.org_id) if workflow_run.org_id else None,
+                #     )
 
                 if (
                     workflow_run.webhook is not None
@@ -586,20 +623,22 @@ async def update_run(
                     
                     # Also publish to Redis for real-time streaming
                     output_event = {
-                        "user_id": str(workflow_run.user_id),
-                        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
-                        "machine_id": str(workflow_run.machine_id),
-                        "gpu_event_id": str(body.gpu_event_id) if body.gpu_event_id else None,
-                        "workflow_id": str(workflow_run.workflow_id),
-                        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
                         "run_id": str(body.run_id),
+                        "workflow_id": str(workflow_run.workflow_id),
+                        "machine_id": str(workflow_run.machine_id),
                         "timestamp": updated_at.isoformat(),
-                        "log_type": "output",
                         "progress": body.progress if body.progress is not None else -1,
-                        "log": json.dumps(body.output_data),
-                        "status": "output"  # For compatibility with existing stream_progress
+                        "status": "output",
+                        # We avoid sending large payloads; keep a small marker only
+                        "log": "output",
                     }
-                    background_tasks.add_task(publish_progress_update, str(body.run_id), output_event)
+                    background_tasks.add_task(
+                        publish_progress_update,
+                        str(body.run_id),
+                        output_event,
+                        user_id=str(workflow_run.user_id) if workflow_run.user_id else None,
+                        org_id=str(workflow_run.org_id) if workflow_run.org_id else None,
+                    )
 
             elif body.status is not None:
                 # Get existing run
@@ -757,20 +796,21 @@ async def update_run(
                     
                     # Also publish to Redis for real-time streaming
                     status_event = {
-                        "user_id": str(workflow_run.user_id),
-                        "org_id": str(workflow_run.org_id) if workflow_run.org_id else None,
-                        "machine_id": str(workflow_run.machine_id),
-                        "gpu_event_id": str(body.gpu_event_id) if body.gpu_event_id else None,
-                        "workflow_id": str(workflow_run.workflow_id),
-                        "workflow_version_id": str(workflow_run.workflow_version_id) if workflow_run.workflow_version_id else None,
                         "run_id": str(body.run_id),
+                        "workflow_id": str(workflow_run.workflow_id),
+                        "machine_id": str(workflow_run.machine_id),
                         "timestamp": updated_at.isoformat(),
-                        "log_type": body.status,
                         "progress": body.progress if body.progress is not None else -1,
+                        "status": body.status,
                         "log": body.live_status if body.live_status is not None else "",
-                        "status": body.status  # For compatibility with existing stream_progress
                     }
-                    background_tasks.add_task(publish_progress_update, str(body.run_id), status_event)
+                    background_tasks.add_task(
+                        publish_progress_update,
+                        str(body.run_id),
+                        status_event,
+                        user_id=str(workflow_run.user_id) if workflow_run.user_id else None,
+                        org_id=str(workflow_run.org_id) if workflow_run.org_id else None,
+                    )
 
                 # Archive logs if run reached terminal state
                 if is_terminal_status(body.status):
