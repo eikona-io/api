@@ -60,6 +60,9 @@ import datetime as dt
 from fastapi import Depends
 from api.utils.autumn import send_autumn_usage_event
 
+from upstash_redis.asyncio import Redis
+from .log import cancel_active_streams, delayed_archive_logs_for_run, is_terminal_status, signal_stream_end
+
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
@@ -193,8 +196,6 @@ router = APIRouter()
 
 # Deprecated: ClickHouse inserts are no longer used. Keep stub for compatibility if imported elsewhere.
 # Removed: ClickHouse insert function is no longer used. All write paths now go through Redis streams.
-    
-from upstash_redis.asyncio import Redis
 
 # Initialize Redis clients only when env vars are present; else set to None
 _redis_url_log = os.getenv("UPSTASH_REDIS_REST_URL_LOG")
@@ -212,8 +213,6 @@ redis_realtime = (
     if _redis_url_realtime and _redis_token_realtime
     else None
 )
-
-from .log import archive_logs_for_run, cancel_active_streams, is_terminal_status, signal_stream_end
 
 async def ensure_redis_stream_expires(run_id: str):
     # Set TTL (this will fail silently if key already has TTL, but that's fine)
@@ -818,7 +817,8 @@ async def update_run(
                     # Signal live listeners to end immediately
                     background_tasks.add_task(signal_stream_end, body.run_id)
                     background_tasks.add_task(cancel_active_streams, body.run_id)
-                    background_tasks.add_task(archive_logs_for_run, body.run_id)
+                    # Add delay before archiving to allow final logs to arrive
+                    background_tasks.add_task(delayed_archive_logs_for_run, body.run_id)
 
                 # Get all outputs for the workflow run
                 outputs_query = select(WorkflowRunOutput).where(
