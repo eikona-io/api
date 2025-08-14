@@ -780,6 +780,46 @@ async def get_run_logs_v2(
 
 # ==================== LOG ARCHIVAL FUNCTIONS ====================
 
+async def delayed_archive_logs_for_run(run_id: str):
+    """
+    Archive logs after waiting for log activity to stop using exponential backoff.
+    Checks frequently at first, then slower - modern retry pattern.
+    """
+    import asyncio
+    
+    if redis is not None:
+        last_count, stable_time, total_time = 0, 0, 0
+        intervals = [0.5, 0.5, 1, 1, 2, 2, 4]  # Exponential backoff: fast → slow
+        
+        try:
+            for interval in intervals * 5:  # Repeat pattern up to ~30s total
+                if total_time >= 30:
+                    break
+                
+                # Get current log count
+                try:
+                    current_count = await redis.execute(["XLEN", run_id]) or 0
+                except:
+                    break  # Stream gone, proceed
+                
+                if current_count > last_count:
+                    stable_time, last_count = 0, current_count  # Reset on new logs
+                else:
+                    stable_time += interval
+                    
+                if stable_time >= 5:  # 5s stable = ready to archive
+                    logger.info(f"Logs stable for {run_id} after {total_time + stable_time}s")
+                    break
+                    
+                await asyncio.sleep(interval)
+                total_time += interval
+                
+        except Exception as e:
+            logger.warning(f"Log wait error for {run_id}: {e}")
+    
+    await archive_logs_for_run(run_id)
+
+
 async def archive_logs_for_run(run_id: str):
     """
     Archive all logs for a completed run to Redis with 30-day TTL.
