@@ -1152,10 +1152,36 @@ async def _create_run(
         if not machine:
             raise HTTPException(status_code=404, detail="Machine not found")
 
+    # Validate inputs for unsupported base64 images before database operations
+    def validate_no_base64_images(inputs_dict, workflow_api_data):
+        """Check for base64 image inputs and raise error if found"""
+        base64_prefixes = ('data:image/png;base64,', 'data:image/jpeg;base64,', 'data:image/jpg;base64,')
+        
+        # Check direct inputs
+        if inputs_dict:
+            for key, value in inputs_dict.items():
+                if isinstance(value, str) and value.startswith(base64_prefixes):
+                    raise HTTPException(status_code=400, detail=f"Base64 image inputs are not supported. Please use URL or upload the image directly. Input: {key}")
+        
+        # Check workflow API for ComfyUIDeployExternalImage nodes
+        if workflow_api_data:
+            for node_id, node in workflow_api_data.items():
+                if node.get("class_type") == "ComfyUIDeployExternalImage":
+                    node_inputs = node.get("inputs", {})
+                    
+                    # Check input_id and default_value_url fields
+                    for field in ["input_id", "default_value_url"]:
+                        value = node_inputs.get(field)
+                        if isinstance(value, str) and value.startswith(base64_prefixes):
+                            raise HTTPException(status_code=400, detail=f"Base64 image inputs are not supported. Please use URL or upload the image directly. Node: {node_id}, Field: {field}")
+
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         # Make it an empty so it will not get stuck
         if inputs is None:
             inputs = {}
+
+        # Validate no base64 images before processing
+        validate_no_base64_images(inputs if inputs else data.inputs, workflow_api_raw)
 
         prompt_id = uuid.uuid4()
         user_id = request.state.current_user["user_id"]
