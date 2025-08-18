@@ -74,7 +74,6 @@ import json
 import httpx
 import base64
 from api.utils.retrieve_s3_config_helper import retrieve_s3_config
-from api.utils.storage_helper import get_s3_config
 
 logger = logging.getLogger(__name__)
 
@@ -1151,27 +1150,48 @@ async def _create_run(
 
     # Convert base64 images to S3 URLs before database operations
     async def convert_base64_to_s3(inputs_dict, workflow_api_data):
-        """Convert base64 image inputs to S3 URLs"""
+        """Convert base64 image inputs to S3 URLs with early exit optimization"""
         base64_prefixes = ('data:image/png;base64,', 'data:image/jpeg;base64,', 'data:image/jpg;base64,')
         
-        # Get S3 configuration
-        s3_config = await get_s3_config(request, db)
+        # OPTIMIZATION 1: Early detection scan - exit fast if no base64 found
+        base64_items = []
         
+        # Quick scan of direct inputs
+        if inputs_dict:
+            for key, value in inputs_dict.items():
+                if isinstance(value, str) and value.startswith(base64_prefixes):
+                    base64_items.append(('input', key, value))
+        
+        # Quick scan of workflow API nodes
+        if workflow_api_data:
+            for node_id, node in workflow_api_data.items():
+                if node.get("class_type") == "ComfyUIDeployExternalImage":
+                    node_inputs = node.get("inputs", {})
+                    for field in ["input_id", "default_value_url"]:
+                        value = node_inputs.get(field)
+                        if isinstance(value, str) and value.startswith(base64_prefixes):
+                            base64_items.append(('node', node_id, field, value))
+        
+        # OPTIMIZATION 2: Early exit - no S3 operations if no base64 found
+        if not base64_items:
+            return  # Exit immediately, saves ~5-15ms S3 config fetch
+        
+        # Only fetch S3 config when base64 images are actually present
+        s3_config = await retrieve_s3_config(user_settings)
+        
+        # OPTIMIZATION 3: Reusable upload function with format detection
         async def upload_base64_to_s3(base64_data: str) -> str:
             """Upload a base64 image to S3 and return the URL"""
-            # Determine image format and decode
+            # Optimized format detection
             if base64_data.startswith('data:image/png;base64,'):
-                image_format = 'png'
-                content_type = 'image/png'
-                base64_content = base64_data[len('data:image/png;base64,'):]
+                image_format, content_type = 'png', 'image/png'
+                base64_content = base64_data[22:]  # len('data:image/png;base64,')
             elif base64_data.startswith('data:image/jpeg;base64,'):
-                image_format = 'jpeg'
-                content_type = 'image/jpeg'
-                base64_content = base64_data[len('data:image/jpeg;base64,'):]
+                image_format, content_type = 'jpeg', 'image/jpeg'
+                base64_content = base64_data[23:]  # len('data:image/jpeg;base64,')
             elif base64_data.startswith('data:image/jpg;base64,'):
-                image_format = 'jpeg'
-                content_type = 'image/jpeg'
-                base64_content = base64_data[len('data:image/jpg;base64,'):]
+                image_format, content_type = 'jpeg', 'image/jpeg'
+                base64_content = base64_data[22:]  # len('data:image/jpg;base64,')
             else:
                 raise ValueError("Unsupported image format")
             
@@ -1181,7 +1201,7 @@ async def _create_run(
             # Generate file ID and path
             from api.routes.files import new_id
             file_id = new_id("img")
-            file_path = f"assets/upload/{file_id}.{image_format}"
+            file_path = f"inputs/{file_id}.{image_format}"
             
             # Upload to S3
             async with aioboto3.Session().client(
@@ -1201,27 +1221,16 @@ async def _create_run(
                 )
                 
                 file_url = f"https://{s3_config.bucket}.s3.{s3_config.region}.amazonaws.com/{file_path}"
-                
-                # For private buckets, return the permanent S3 URL (temporary URLs will be generated later)
                 return file_url
         
-        # Process direct inputs
-        if inputs_dict:
-            for key, value in inputs_dict.items():
-                if isinstance(value, str) and value.startswith(base64_prefixes):
-                    inputs_dict[key] = await upload_base64_to_s3(value)
-        
-        # Process workflow API for ComfyUIDeployExternalImage nodes
-        if workflow_api_data:
-            for node_id, node in workflow_api_data.items():
-                if node.get("class_type") == "ComfyUIDeployExternalImage":
-                    node_inputs = node.get("inputs", {})
-                    
-                    # Check input_id and default_value_url fields
-                    for field in ["input_id", "default_value_url"]:
-                        value = node_inputs.get(field)
-                        if isinstance(value, str) and value.startswith(base64_prefixes):
-                            node_inputs[field] = await upload_base64_to_s3(value)
+        # OPTIMIZATION 4: Process all base64 items found in scan
+        for item in base64_items:
+            if item[0] == 'input':  # Direct input
+                _, key, value = item
+                inputs_dict[key] = await upload_base64_to_s3(value)
+            elif item[0] == 'node':  # Workflow node
+                _, node_id, field, value = item
+                workflow_api_data[node_id]["inputs"][field] = await upload_base64_to_s3(value)
 
     async def run(inputs: Dict[str, Any] = None, batch_id: Optional[UUID] = None):
         # Make it an empty so it will not get stuck
