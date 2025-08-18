@@ -1384,6 +1384,7 @@ async def stripe_checkout(
                     "customer_id": org_id if org_id else user_id,
                     "product_id": plan,  # Using the plan as product_id
                     "force_checkout": not upgrade,
+                    "success_url": redirect_url,
                     "customer_data": {
                         "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
                         "email": user_email,
