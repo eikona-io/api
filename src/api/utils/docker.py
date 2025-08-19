@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 from api.routes.comfy_node import get_comfyui_versions_cached
 from api.routes.comfy_node import get_latest_comfydeploy_hash
+from api.routes.comfy_node import fetch_comfy_node_metadata
 
 comfydeploy_hash = "7b734c415aabd51b8bb8fad9fd719055b5ba359d" 
 comfyui_hash = "094306b626e9cf505690c5d8b445032b3b8a36fa"
@@ -74,6 +75,10 @@ class CustomNode(BaseModel):
     install_type: str
     files: Optional[List[str]] = None
     name: Optional[str] = None
+
+class CustomNodeManager(BaseModel):
+    node_id: str
+    version: str
     
 class DependencyGraph(BaseModel):
     comfyui: str
@@ -84,7 +89,7 @@ class DependencyGraph(BaseModel):
 
 class DockerStep(BaseModel):
     type: str
-    data: Union[CustomNode, str]
+    data: Union[CustomNode, str, CustomNodeManager]
 
 class DockerSteps(BaseModel):
     steps: List[DockerStep]
@@ -114,13 +119,41 @@ def generate_docker_commands_for_custom_node(custom_node: CustomNode, custom_nod
     
     return commands
 
-def generate_docker_def_from_docker_steps(steps: DockerSteps, custom_node_path: str = "/comfyui/custom_nodes") -> List[List[str]]:
+async def generate_docker_commands_for_custom_node_manager_async(node_manager: CustomNodeManager) -> List[str]:
+    """Generate docker commands for ComfyUI node manager installation (async version)"""
+    metadata = await fetch_comfy_node_metadata(node_manager.node_id, node_manager.version)
+    
+    download_url = metadata["downloadUrl"]
+    dependencies = metadata.get("dependencies", [])
+    
+    commands = []
+    commands.append("WORKDIR /comfyui/custom_nodes")
+    
+    # Download and extract node
+    commands.append(
+        f"RUN curl -fsSL -o node.zip {download_url} && "
+        f"mkdir -p {node_manager.node_id} && "
+        f"unzip -q node.zip -d {node_manager.node_id} && "
+        "rm node.zip"
+    )
+    
+    # Install dependencies if any
+    if dependencies:
+        deps_str = " ".join(f'"{dep}"' for dep in dependencies)
+        commands.append(f"RUN pip install --no-cache-dir {deps_str}")
+    
+    return commands
+
+async def generate_docker_def_from_docker_steps(steps: DockerSteps, custom_node_path: str = "/comfyui/custom_nodes") -> List[List[str]]:
     def_list = []
     for step in steps.steps:
         if step.type == "custom-node":
             def_list.append(generate_docker_commands_for_custom_node(step.data, custom_node_path))
         elif step.type == "commands":
             def_list.append(step.data.split("\n"))
+        elif step.type == "custom-node-manager":
+            commands = await generate_docker_commands_for_custom_node_manager_async(step.data)
+            def_list.append(commands)
     return def_list
 
 def generate_docker_def_for_custom_nodes(custom_nodes_deps: Dict[str, CustomNode], custom_node_path: str = "/comfyui/custom_nodes") -> List[List[str]]:
@@ -136,8 +169,8 @@ def generate_docker_commands(deps: DependencyGraph) -> List[List[str]]:
         generate_docker_def_for_external_files(deps.files)
     )
 
-def generate_docker_commands_from_docker_steps(steps: DockerSteps) -> List[List[str]]:
-    return generate_docker_def_from_docker_steps(steps)
+async def generate_docker_commands_from_docker_steps(steps: DockerSteps) -> List[List[str]]:
+    return await generate_docker_def_from_docker_steps(steps)
 
 class DepsBody(BaseModel):
     docker_command_steps: Any
@@ -151,7 +184,7 @@ class DockerCommandResponse(BaseModel):
     docker_commands: List[List[str]]
     # deps: DependencyGraph
     
-def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = False) -> DockerCommandResponse:
+async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = False) -> DockerCommandResponse:
     deps = data.dependencies if hasattr(data, 'dependencies') else None
     docker_commands = []
     steps = data.docker_command_steps
@@ -164,7 +197,7 @@ def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = 
         comfy_ui_override = None
         if comfy_ui_index != -1:
             comfy_ui_override = steps.steps.pop(comfy_ui_index)
-        docker_commands = generate_docker_commands_from_docker_steps(steps)
+        docker_commands = await generate_docker_commands_from_docker_steps(steps)
     elif deps:
         # Convert deps to DependencyGraph if it's a dict
         deps = DependencyGraph(**deps) if isinstance(deps, dict) else deps
@@ -219,7 +252,7 @@ def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: bool = 
     docker_commands = [[y.replace("python -m pip install", "uv pip install") if enable_uv else y for y in x] for x in docker_commands]
     
     docker_commands = [
-        ["RUN python --version", "RUN apt-get update && apt-get install -y git wget curl"],
+        ["RUN python --version", "RUN apt-get update && apt-get install -y git wget curl unzip"],
         ["RUN apt-get install -y libgl1-mesa-glx libglib2.0-0"],
         ["RUN python -m pip install aioboto3"],
         ["RUN pip freeze"],
