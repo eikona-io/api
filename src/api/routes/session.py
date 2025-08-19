@@ -811,7 +811,7 @@ async def create_session(
 async def convert_to_docker_steps(
     body: DepsBody,
 ):
-    converted = await generate_all_docker_commands(body)
+    converted = generate_all_docker_commands(body)
 
     return JSONResponse(status_code=200, content=converted)
 
@@ -1000,11 +1000,11 @@ async def get_docker_commands_from_dynamic_session_body(
                     ),
                 )
                 # We only install comfyui manager if this is a brand new machine
-                converted = await generate_all_docker_commands(
+                converted = generate_all_docker_commands(
                     deps_body, include_comfyuimanager=body.machine_id is None
                 )
             else:
-                converted = await generate_all_docker_commands(
+                converted = generate_all_docker_commands(
                     body.dependencies, include_comfyuimanager=body.machine_id is None
                 )
 

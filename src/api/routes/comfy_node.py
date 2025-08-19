@@ -195,17 +195,6 @@ async def get_comfyui_versions(request: Request):
     result = await get_comfyui_versions_cached()
     return JSONResponse(content=result)
 
-async def fetch_comfy_node_metadata(node_id: str, version: str) -> Dict[str, Any]:
-    """Fetch node metadata from ComfyUI API"""
-    url = f"https://api.comfy.org/nodes/{node_id}/install?version={version}"
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 404:
-            raise ValueError(f"Node {node_id} version {version} not found")
-        response.raise_for_status()
-        return response.json()
-
 @router.get("/custom-node-list")
 async def get_nodes_json():
     try:

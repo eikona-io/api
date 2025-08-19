@@ -565,7 +565,7 @@ async def create_serverless_machine(
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
 
-    docker_commands = await generate_all_docker_commands(machine)
+    docker_commands = generate_all_docker_commands(machine)
     docker_commands_hash = hash_machine_dependencies(docker_commands)
 
     # async with db.begin():  # Single transaction for entire operation
@@ -1184,7 +1184,7 @@ async def update_serverless_machine(
             # put something here so it wont crash
             machine.comfyui_version = comfyui_hash
 
-        docker_commands = await generate_all_docker_commands(machine)
+        docker_commands = generate_all_docker_commands(machine)
         docker_commands_hash = hash_machine_dependencies(docker_commands)
         machine.machine_hash = docker_commands_hash
 
@@ -1249,7 +1249,7 @@ async def update_serverless_machine(
 
             # Prepare build parameters
             volumes = await retrieve_model_volumes(request, db)
-            docker_commands = await generate_all_docker_commands(machine)
+            docker_commands = generate_all_docker_commands(machine)
             machine_token = generate_machine_token(user_id, org_id)
             secrets = await get_machine_secrets(db=db, machine_id=machine.id)
 
@@ -1999,7 +1999,7 @@ async def get_machine_docker_commands(
         machine_version = machine_version.scalars().first()
 
     # Generate docker commands
-    docker_commands = await generate_all_docker_commands(machine)
+    docker_commands = generate_all_docker_commands(machine)
     docker_commands_hash = hash_machine_dependencies(docker_commands)
 
     return JSONResponse(
@@ -2459,7 +2459,7 @@ async def import_machine(
                 extra_docker_commands=environment.get("extra_docker_commands") or machine_data.get("extra_docker_commands"),
             )
 
-            docker_commands = await generate_all_docker_commands(deps_body)
+            docker_commands = generate_all_docker_commands(deps_body)
             machine_token = generate_machine_token(request.state.current_user["user_id"], request.state.current_user.get("org_id"))
             secrets = await get_machine_secrets(db=db, machine_id=new_machine.id)
             
