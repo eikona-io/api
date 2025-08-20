@@ -56,6 +56,7 @@ public:
   xlabs_flux: xlabs/flux
   xlabs_flux_json: xlabs/flux_json
   pulid: pulid
+  text_encoders: text_encoders
 
 private:
   base_path: /private_models/
@@ -115,3 +116,4 @@ private:
   xlabs_flux: xlabs/flux
   xlabs_flux_json: xlabs/flux_json
   pulid: pulid
+  text_encoders: text_encoders
