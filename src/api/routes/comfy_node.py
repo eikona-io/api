@@ -241,7 +241,7 @@ class GitCustomNode(BaseModel):
     disabled: bool
 
 class SnapshotInput(BaseModel):
-    comfyui: str
+    comfyui: Optional[str] = None
     git_custom_nodes: Dict[str, GitCustomNode]
     cnr_custom_nodes: Dict[str, str]
 
