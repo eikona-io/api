@@ -49,6 +49,7 @@ public:
   LLavacheckpoints: LLavacheckpoints
   BiRefNet: BiRefNet
   diffusion_models: diffusion_models
+  text_encoders: text_encoders
 
 private:
   base_path: /private_models/
@@ -101,3 +102,4 @@ private:
   LLavacheckpoints: LLavacheckpoints
   BiRefNet: BiRefNet
   diffusion_models: diffusion_models
+  text_encoders: text_encoders
