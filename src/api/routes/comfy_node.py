@@ -1,5 +1,5 @@
 from fastapi import HTTPException, APIRouter, Request
-from typing import Any, Dict
+from typing import Any, Dict, Optional, List
 import logging
 import os
 import httpx
@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, FileResponse
 import modal
 import json
 from api.utils.multi_level_cache import multi_level_cached
+from pydantic import BaseModel
 
 
 logger = logging.getLogger(__name__)
@@ -232,3 +233,151 @@ async def get_nodes_json():
     except Exception as e:
         logger.error(f"Error fetching nodes.json: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve nodes.json: {str(e)}")
+
+
+# Models for snapshot to docker conversion
+class GitCustomNode(BaseModel):
+    hash: str
+    disabled: bool
+
+class SnapshotInput(BaseModel):
+    comfyui: str
+    git_custom_nodes: Dict[str, GitCustomNode]
+    cnr_custom_nodes: Dict[str, str]
+
+class DockerCommandStep(BaseModel):
+    id: str
+    data: Dict[str, Any]
+    type: str
+
+class DockerCommandResponse(BaseModel):
+    steps: List[DockerCommandStep]
+
+
+@async_lru_cache(expire_after=timedelta(hours=1))
+async def fetch_commit_metadata(git_url: str, commit_hash: str) -> Dict[str, Any]:
+    """Fetch metadata for a specific commit from GitHub with caching"""
+    try:
+        repo_name = await extract_repo_name(git_url)
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN')}",
+            "User-Agent": "request",
+        }
+        
+        # Get commit details
+        commit_url = f"https://api.github.com/repos/{repo_name}/commits/{commit_hash}"
+        commit_data = await fetch_github_data(commit_url, headers)
+        
+        # Get repository info for additional metadata
+        repo_url = f"https://api.github.com/repos/{repo_name}"
+        repo_data = await fetch_github_data(repo_url, headers)
+        
+        # Get latest commit hash from default branch
+        branch_info = await _get_branch_info(git_url)
+        latest_hash = branch_info["commit"]["sha"] if branch_info else commit_hash
+        
+        return {
+            "message": commit_data["commit"]["message"],
+            "committer": {
+                "date": commit_data["commit"]["committer"]["date"],
+                "name": commit_data["commit"]["committer"]["name"],
+                "email": commit_data["commit"]["committer"]["email"]
+            },
+            "commit_url": commit_data["html_url"],
+            "latest_hash": latest_hash,
+            "stargazers_count": repo_data.get("stargazers_count", 0),
+            "repo_name": repo_data.get("name", ""),  # Add repo name from GitHub
+            "repo_full_name": repo_data.get("full_name", "")  # Add full name (owner/repo)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching commit metadata for {git_url}@{commit_hash}: {str(e)}")
+        return {
+            "message": "Unable to fetch commit message",
+            "committer": {
+                "date": None,
+                "name": None,
+                "email": None
+            },
+            "commit_url": None,
+            "latest_hash": commit_hash,
+            "stargazers_count": 0,
+            "repo_name": "",
+            "repo_full_name": ""
+        }
+
+
+@router.post("/snapshot-to-docker", response_model=DockerCommandResponse)
+async def convert_snapshot_to_docker(snapshot: SnapshotInput):
+    """
+    Convert a snapshot JSON to docker command format.
+    
+    The snapshot contains:
+    - comfyui: The ComfyUI commit hash
+    - git_custom_nodes: Git repositories with their commit hashes
+    - cnr_custom_nodes: ComfyUI Node Registry nodes with versions
+    
+    Returns docker command steps for installing these components.
+    """
+    steps = []
+    
+    # Process git custom nodes
+    if snapshot.git_custom_nodes:
+        # Prepare all git nodes for concurrent processing
+        git_tasks = []
+        git_nodes_info = []
+        
+        for git_url, node_info in snapshot.git_custom_nodes.items():
+            if not node_info.disabled:
+                git_tasks.append(fetch_commit_metadata(git_url, node_info.hash))
+                git_nodes_info.append((git_url, node_info.hash))
+        
+        # Fetch all metadata concurrently
+        if git_tasks:
+            metadata_results = await asyncio.gather(*git_tasks)
+            
+            # Create steps from results
+            for (git_url, commit_hash), metadata in zip(git_nodes_info, metadata_results):
+                # Generate a unique ID from the repo full name (author/repo) in lowercase
+                # Use repo_full_name from metadata if available, otherwise extract from URL
+                if metadata.get("repo_full_name"):
+                    node_id = metadata["repo_full_name"].lower().replace("/", "-")
+                else:
+                    # Fallback: extract from URL
+                    repo_name = await extract_repo_name(git_url)
+                    node_id = repo_name.lower().replace("/", "-")
+                
+                # Use repo_name from GitHub API for the display name
+                display_name = metadata.get("repo_name", "")
+                if not display_name:
+                    # Fallback: extract from URL
+                    display_name = git_url.split("/")[-1].replace(".git", "")
+                
+                step = DockerCommandStep(
+                    id=node_id,
+                    data={
+                        "url": git_url,
+                        "hash": commit_hash,
+                        "meta": metadata,
+                        "name": display_name,
+                        "files": [git_url],
+                        "install_type": "git-clone"
+                    },
+                    type="custom-node"
+                )
+                steps.append(step)
+    
+    # Process CNR (ComfyUI Node Registry) custom nodes
+    if snapshot.cnr_custom_nodes:
+        for node_id, version in snapshot.cnr_custom_nodes.items():
+            step = DockerCommandStep(
+                id=node_id,
+                data={
+                    "node_id": node_id,
+                    "version": version
+                },
+                type="custom-node-manager"
+            )
+            steps.append(step)
+    
+    return DockerCommandResponse(steps=steps)
+
