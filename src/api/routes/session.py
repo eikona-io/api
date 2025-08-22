@@ -294,13 +294,14 @@ async def create_session_background_task(
     status_queue: Optional[asyncio.Queue] = None,
 ):
     send_log_entry(session_id, machine_id, "Creating session...", "info")
-    try:
-        async with get_db_context() as db:
-            machine = await db.execute(select(Machine.optimized_runner).where(Machine.id == machine_id))
-            optimized_runner = machine.scalar_one()
-    except Exception as e:
-        print("optimized_runner", e)
-        optimized_runner = False
+    # try:
+    #     async with get_db_context() as db:
+    #         machine = await db.execute(select(Machine.optimized_runner).where(Machine.id == machine_id))
+    #         optimized_runner = machine.scalar_one()
+    # except Exception as e:
+    #     print("optimized_runner", e)
+    
+    optimized_runner = False
 
     print("optimized_runner", optimized_runner)
 
