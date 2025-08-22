@@ -1683,6 +1683,8 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
     models_cache = {}
     checkpoint_cache = {}
+    diffusion_model_cache = {}
+    vae_cache = {}
 
     nodes_cache = {}
 
@@ -2023,6 +2025,76 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
         comfy.sd.load_checkpoint_guess_config = custom_load_checkpoint_guess_config
 
+        # Add optimization for load_diffusion_model (used by UNETLoader)
+        original_load_diffusion_model = comfy.sd.load_diffusion_model
+
+        def custom_load_diffusion_model(unet_path, model_options=None):
+            # Extract relative path by removing common base paths
+            relative_path = unet_path
+            for base_path in ["/comfyui/models/", "/private_models/", "/public_models/"]:
+                if unet_path.startswith(base_path):
+                    relative_path = unet_path.replace(base_path, "")
+                    break
+            
+            print(f"Loading diffusion model: {relative_path}")
+            print(f"Diffusion model cache keys: {list(self.diffusion_model_cache.keys())}")
+            
+            # Create a cache key that includes model options
+            cache_key = (relative_path, str(model_options) if model_options else None)
+            full_cache_key = (unet_path, str(model_options) if model_options else None)
+            
+            # Try cache lookup with relative path first
+            if cache_key in self.diffusion_model_cache:
+                print(f"Loading diffusion model from cache: {relative_path}")
+                return self.diffusion_model_cache[cache_key]
+            # Fallback to full path
+            elif full_cache_key in self.diffusion_model_cache:
+                print(f"Loading diffusion model from cache: {unet_path}")
+                return self.diffusion_model_cache[full_cache_key]
+            else:
+                print(f"Loading diffusion model from disk: {unet_path}")
+                result = original_load_diffusion_model(unet_path, model_options)
+                # Cache the result for future use
+                self.diffusion_model_cache[cache_key] = result
+                self.diffusion_model_cache[full_cache_key] = result
+                return result
+
+        comfy.sd.load_diffusion_model = custom_load_diffusion_model
+
+        # Add optimization for VAE loading
+        # We need to override at a lower level since VAELoader uses comfy.utils.load_torch_file
+        original_load_torch_file = comfy.utils.load_torch_file
+        
+        def custom_load_torch_file(ckpt_path, *args, **kwargs):
+            # Only cache VAE files, not all torch files
+            if "/vae/" in ckpt_path or ckpt_path.endswith((".vae.safetensors", ".vae.pt")):
+                # Extract relative path
+                relative_path = ckpt_path
+                for base_path in ["/comfyui/models/", "/private_models/", "/public_models/"]:
+                    if ckpt_path.startswith(base_path):
+                        relative_path = ckpt_path.replace(base_path, "")
+                        break
+                
+                # Check cache
+                if relative_path in self.vae_cache:
+                    print(f"Loading VAE from cache: {relative_path}")
+                    return self.vae_cache[relative_path]
+                elif ckpt_path in self.vae_cache:
+                    print(f"Loading VAE from cache: {ckpt_path}")
+                    return self.vae_cache[ckpt_path]
+                else:
+                    print(f"Loading VAE from disk: {ckpt_path}")
+                    result = original_load_torch_file(ckpt_path, *args, **kwargs)
+                    # Cache the VAE state dict
+                    self.vae_cache[relative_path] = result
+                    self.vae_cache[ckpt_path] = result
+                    return result
+            else:
+                # For non-VAE files, use original function
+                return original_load_torch_file(ckpt_path, *args, **kwargs)
+        
+        comfy.utils.load_torch_file = custom_load_torch_file
+
         original_validate_prompt = execution.validate_prompt
 
         async def custom_validate_prompt(prompt_id, prompt, partial_execution_list: Optional[list[str]] = None):
@@ -2153,6 +2225,15 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 
 # Flux Dev
 # models_to_cache is now injected dynamically from config
+# Supports checkpoint models, diffusion models (UNET), and VAE models
+# Model types are auto-detected by path patterns:
+#   - Diffusion models: path contains "diffusion_models/"
+#   - VAE models: path contains "/vae/" or ends with ".vae.safetensors" or ".vae.pt"
+#   - Checkpoints: everything else
+# Examples:
+#   Checkpoint: "checkpoints/model.safetensors"
+#   Diffusion model: "diffusion_models/flux1-dev.safetensors"
+#   VAE model: "vae/sdxl_vae.safetensors" or "model.vae.safetensors"
 models_to_cache = config.get("models_to_cache", [])
 enable_gpu_memory_snapshot = config.get("enable_gpu_memory_snapshot", False)
 
@@ -2405,6 +2486,10 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             
             
             for model in models_to_cache:
+                # Auto-detect model type by path
+                is_diffusion_model = "diffusion_models/" in model
+                is_vae_model = "/vae/" in model or model.endswith((".vae.safetensors", ".vae.pt"))
+                
                 # Add base path if not present
                 if not model.startswith("/"):
                     actual_model_path = f"/comfyui/models/{model}"
@@ -2428,30 +2513,62 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
                 
                 t = time.time()
                 try:
-                    # Cache checkpoint (model, clip, vae) instead of raw torch file
                     relative_key = model.replace("/comfyui/models/", "") if model.startswith("/comfyui/models/") else model
-
-                    # Also create a key based on the actual model path for consistency
                     actual_relative_key = actual_model_path.replace("/comfyui/models/", "") if actual_model_path.startswith("/comfyui/models/") else actual_model_path
                     
-                    print(f"🔄 Loading checkpoint: {relative_key}")
-                    # Load the full checkpoint with model, clip, vae objects
-                    import folder_paths
-                    checkpoint_result = comfy.sd.load_checkpoint_guess_config(
-                        actual_model_path, 
-                        output_vae=True, 
-                        output_clip=True, 
-                        embedding_directory=folder_paths.get_folder_paths("embeddings")
-                    )
-                    
-                    # Cache the checkpoint result
-                    self.checkpoint_cache[relative_key] = checkpoint_result
-                    self.checkpoint_cache[actual_relative_key] = checkpoint_result
-                    self.checkpoint_cache[model] = checkpoint_result
-                    
-                    print(f"✅ Loaded checkpoint: {relative_key} ({time.time() - t:.1f}s)")
+                    if is_vae_model:
+                        print(f"🔄 Loading VAE: {relative_key}")
+                        # Load VAE state dict
+                        vae_sd = comfy.utils.load_torch_file(actual_model_path)
+                        # Note: We're caching the state dict, not the VAE object
+                        # The VAE object will be created when needed by VAELoader
+                        
+                        # Cache the VAE state dict
+                        self.vae_cache[relative_key] = vae_sd
+                        self.vae_cache[actual_relative_key] = vae_sd
+                        self.vae_cache[actual_model_path] = vae_sd
+                        
+                        print(f"✅ Loaded VAE: {relative_key} ({time.time() - t:.1f}s)")
+                    elif is_diffusion_model:
+                        print(f"🔄 Loading diffusion model: {relative_key}")
+                        # Load diffusion model (UNET)
+                        diffusion_result = comfy.sd.load_diffusion_model(actual_model_path)
+                        
+                        # Cache the diffusion model result with path-based keys
+                        cache_key = (relative_key, None)
+                        actual_cache_key = (actual_relative_key, None)
+                        full_cache_key = (actual_model_path, None)
+                        
+                        self.diffusion_model_cache[cache_key] = diffusion_result
+                        self.diffusion_model_cache[actual_cache_key] = diffusion_result
+                        self.diffusion_model_cache[full_cache_key] = diffusion_result
+                        
+                        print(f"✅ Loaded diffusion model: {relative_key} ({time.time() - t:.1f}s)")
+                    else:
+                        print(f"🔄 Loading checkpoint: {relative_key}")
+                        # Load the full checkpoint with model, clip, vae objects
+                        import folder_paths
+                        checkpoint_result = comfy.sd.load_checkpoint_guess_config(
+                            actual_model_path, 
+                            output_vae=True, 
+                            output_clip=True, 
+                            embedding_directory=folder_paths.get_folder_paths("embeddings")
+                        )
+                        
+                        # Cache the checkpoint result
+                        self.checkpoint_cache[relative_key] = checkpoint_result
+                        self.checkpoint_cache[actual_relative_key] = checkpoint_result
+                        self.checkpoint_cache[model] = checkpoint_result
+                        
+                        print(f"✅ Loaded checkpoint: {relative_key} ({time.time() - t:.1f}s)")
                 except Exception as e:
-                    print(f"❌ Failed to load checkpoint {actual_model_path}: {str(e)}")
+                    if is_vae_model:
+                        model_type_str = "VAE"
+                    elif is_diffusion_model:
+                        model_type_str = "diffusion model"
+                    else:
+                        model_type_str = "checkpoint"
+                    print(f"❌ Failed to load {model_type_str} {actual_model_path}: {str(e)}")
                     raise
 
             print(f"\nGPUs available: {torch.cuda.is_available()}")
