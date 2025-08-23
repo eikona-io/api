@@ -175,6 +175,8 @@ class BuildMachineItem(BaseModel):
     cpu_limit: Optional[float] = None
     memory_request: Optional[int] = None
     memory_limit: Optional[int] = None
+    models_to_cache: Optional[List[str]] = Field(default_factory=list)
+    enable_gpu_memory_snapshot: Optional[bool] = False
     @field_validator("gpu")
     @classmethod
     def check_gpu(cls, value):
@@ -566,7 +568,7 @@ async def build_logic(item: BuildMachineItem):
             f"builder - VSCODE_DEV_CONTAINER: {os.environ.get('VSCODE_DEV_CONTAINER', 'false')}"
         )
         version_to_file = item.machine_builder_version  # .replace(".", "_")
-        to_modal_deps_version = {"2": None, "3": "2024.04", "4": "2024.04"}
+        to_modal_deps_version = {"2": None, "3": "2024.04", "4": "2025.06"}
         cp_process = await asyncio.subprocess.create_subprocess_exec(
             "cp",
             "-r",
@@ -623,7 +625,9 @@ async def build_logic(item: BuildMachineItem):
             "cpu_request": item.cpu_request,
             "cpu_limit": item.cpu_limit,
             "memory_request": item.memory_request,
-            "memory_limit": item.memory_limit
+            "memory_limit": item.memory_limit,
+            "models_to_cache": item.models_to_cache,
+            "enable_gpu_memory_snapshot": item.enable_gpu_memory_snapshot
         }
 
         # if os.environ.get("TAILSCALE_AUTHKEY", None) is not None:

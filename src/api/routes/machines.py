@@ -29,7 +29,7 @@ from api.utils.docker import (
     comfyui_hash,
     comfydeploy_hash,
 )
-from pydantic import BaseModel, constr
+from pydantic import BaseModel, constr, Field
 from .types import (
     GPUEventModel,
     MachineGPU,
@@ -302,7 +302,9 @@ async def get_machine(
         m.cpu_request,
         m.cpu_limit,
         m.memory_request,
-        m.memory_limit
+        m.memory_limit,
+        m.models_to_cache,
+        m.enable_gpu_memory_snapshot
     FROM "comfyui_deploy"."machines" m
     WHERE m.id = :machine_id
     AND m.deleted = FALSE
@@ -409,6 +411,8 @@ class ServerlessMachineModel(BaseModel):
     cpu_limit: Optional[float] = None
     memory_request: Optional[int] = None
     memory_limit: Optional[int] = None
+    models_to_cache: Optional[List[str]] = Field(default_factory=list)
+    enable_gpu_memory_snapshot: Optional[bool] = None
 
 
 class UpdateServerlessMachineModel(BaseModel):
@@ -435,6 +439,8 @@ class UpdateServerlessMachineModel(BaseModel):
     cpu_limit: Optional[float] = None
     memory_request: Optional[int] = None
     memory_limit: Optional[int] = None
+    models_to_cache: Optional[List[str]] = None
+    enable_gpu_memory_snapshot: Optional[bool] = None
 
 
 current_endpoint = os.getenv("CURRENT_API_URL")
@@ -645,7 +651,9 @@ async def create_serverless_machine(
         cpu_request=machine.cpu_request,
         cpu_limit=machine.cpu_limit,
         memory_request=machine.memory_request,
-        memory_limit=machine.memory_limit
+        memory_limit=machine.memory_limit,
+        models_to_cache=machine.models_to_cache,
+        enable_gpu_memory_snapshot=machine.enable_gpu_memory_snapshot
     )
 
     if wait_for_build:
@@ -1155,6 +1163,8 @@ async def update_serverless_machine(
             "cpu_limit",
             "memory_request",
             "memory_limit",
+            "models_to_cache",
+            "enable_gpu_memory_snapshot",
         ]
 
         update_machine_dict = update_machine.model_dump()
@@ -1290,7 +1300,9 @@ async def update_serverless_machine(
                 cpu_request=machine.cpu_request,
                 cpu_limit=machine.cpu_limit,
                 memory_request=machine.memory_request,
-                memory_limit=machine.memory_limit
+                memory_limit=machine.memory_limit,
+                models_to_cache=machine.models_to_cache,
+                enable_gpu_memory_snapshot=machine.enable_gpu_memory_snapshot
             )
             background_tasks.add_task(build_logic, params)
 
@@ -1358,7 +1370,9 @@ async def redeploy_machine(
         cpu_request=machine.cpu_request,
         cpu_limit=machine.cpu_limit,
         memory_request=machine.memory_request,
-        memory_limit=machine.memory_limit
+        memory_limit=machine.memory_limit,
+        models_to_cache=machine.models_to_cache,
+        enable_gpu_memory_snapshot=machine.enable_gpu_memory_snapshot
     )
     print("params", params)
     if background_tasks:
@@ -1420,7 +1434,9 @@ async def redeploy_machine_internal(
         cpu_request=machine.cpu_request,
         cpu_limit=machine.cpu_limit,
         memory_request=machine.memory_request,
-        memory_limit=machine.memory_limit
+        memory_limit=machine.memory_limit,
+        models_to_cache=machine.models_to_cache,
+        enable_gpu_memory_snapshot=machine.enable_gpu_memory_snapshot
     )
     await build_logic(params)
 

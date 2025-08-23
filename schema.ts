@@ -440,6 +440,8 @@ const machineColumns = () => ({
     disable_metadata: boolean("disable_metadata").default(true),
     prestart_command: text("prestart_command"),
     keep_warm: integer("keep_warm").default(0).notNull(),
+    models_to_cache: jsonb("models_to_cache").$type<string[]>().default([]),
+    enable_gpu_memory_snapshot: boolean("enable_gpu_memory_snapshot").default(false),
 
     status: machinesStatus("status").notNull().default("ready"),
     build_log: text("build_log"),

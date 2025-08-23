@@ -464,6 +464,8 @@ def get_machine_columns():
         "cpu_limit": Column(Float),
         "memory_request": Column(Integer),
         "memory_limit": Column(Integer),
+        "models_to_cache": Column(JSON, default=[]),
+        "enable_gpu_memory_snapshot": Column(Boolean, default=False),
     }
 
 

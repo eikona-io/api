@@ -17,7 +17,7 @@ import json
 import urllib.request
 import urllib.parse
 from pydantic import BaseModel, Field
-from fastapi import HTTPException, WebSocket
+# from fastapi import WebSocket
 import modal
 import os
 from datetime import datetime, timezone
@@ -130,6 +130,8 @@ if modal_image_id is not None:
     dockerfile_image = modal.Image.from_id(modal_image_id)
 else:
     dockerfile_image = modal.Image.debian_slim(python_version=python_version)
+
+    dockerfile_image.pip_install("fastapi[standard]")
 
     base_docker_image = config["base_docker_image"]
     if base_docker_image is not None and base_docker_image != "":
@@ -944,6 +946,7 @@ class BaseComfyDeployRunner:
 
     @modal.method()
     async def read_output_file(self, file):
+        from fastapi import HTTPException
         # Read the file from the volume and yield its contents as bytes
         try:
             with open(file, "rb") as f:
@@ -957,176 +960,176 @@ class BaseComfyDeployRunner:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
-    @modal.method()
-    async def websocket_endpoint(self, websocket: WebSocket):
-        await websocket.accept()
+    # @modal.method()
+    # async def websocket_endpoint(self, websocket: WebSocket):
+    #     await websocket.accept()
 
-        query_params = websocket.query_params
-        query_string = urllib.parse.urlencode(query_params)
-        sid = uuid.uuid4().hex
-        ws_url = (
-            f"http://127.0.0.1:8188/comfyui-deploy/ws?{query_string}&clientId={sid}"
-        )
+    #     query_params = websocket.query_params
+    #     query_string = urllib.parse.urlencode(query_params)
+    #     sid = uuid.uuid4().hex
+    #     ws_url = (
+    #         f"http://127.0.0.1:8188/comfyui-deploy/ws?{query_string}&clientId={sid}"
+    #     )
 
-        try:
-            ok = await check_server(
-                f"http://{COMFY_HOST}",
-                COMFY_API_AVAILABLE_MAX_RETRIES,
-                COMFY_API_AVAILABLE_INTERVAL_MS,
-            )
+    #     try:
+    #         ok = await check_server(
+    #             f"http://{COMFY_HOST}",
+    #             COMFY_API_AVAILABLE_MAX_RETRIES,
+    #             COMFY_API_AVAILABLE_INTERVAL_MS,
+    #         )
 
-            # ws_timeout = 2
+    #         # ws_timeout = 2
 
-            if not ok:
-                raise Exception("ComfyUI API is not available")
+    #         if not ok:
+    #             raise Exception("ComfyUI API is not available")
 
-            async def timeout_check(sid: str):
-                wait_time = 0
-                while True:
-                    data = await check_ws_status(sid)
-                    # print(data)
-                    if "remaining_queue" in data and data["remaining_queue"] == 0:
-                        if wait_time >= ws_timeout:
-                            return True
+    #         async def timeout_check(sid: str):
+    #             wait_time = 0
+    #             while True:
+    #                 data = await check_ws_status(sid)
+    #                 # print(data)
+    #                 if "remaining_queue" in data and data["remaining_queue"] == 0:
+    #                     if wait_time >= ws_timeout:
+    #                         return True
 
-                        await asyncio.sleep(0.10)
-                        wait_time += 0.10
-                    else:
-                        await asyncio.sleep(0.10)
+    #                     await asyncio.sleep(0.10)
+    #                     wait_time += 0.10
+    #                 else:
+    #                     await asyncio.sleep(0.10)
 
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.ws_connect(ws_url) as local_ws:
+    #         try:
+    #             async with aiohttp.ClientSession() as session:
+    #                 async with session.ws_connect(ws_url) as local_ws:
 
-                        async def websocket_to_local():
-                            try:
-                                while True:
-                                    ws_receive_task = asyncio.create_task(
-                                        websocket.receive()
-                                    )
-                                    # Prepare the check_ws_status coroutine (with some delay if needed)
-                                    check_status_task = asyncio.create_task(
-                                        timeout_check(sid)
-                                    )
+    #                     async def websocket_to_local():
+    #                         try:
+    #                             while True:
+    #                                 ws_receive_task = asyncio.create_task(
+    #                                     websocket.receive()
+    #                                 )
+    #                                 # Prepare the check_ws_status coroutine (with some delay if needed)
+    #                                 check_status_task = asyncio.create_task(
+    #                                     timeout_check(sid)
+    #                                 )
 
-                                    done, pending = await asyncio.wait(
-                                        {ws_receive_task, check_status_task},
-                                        return_when=asyncio.FIRST_COMPLETED,
-                                    )
+    #                                 done, pending = await asyncio.wait(
+    #                                     {ws_receive_task, check_status_task},
+    #                                     return_when=asyncio.FIRST_COMPLETED,
+    #                                 )
 
-                                    for task in pending:
-                                        task.cancel()
+    #                                 for task in pending:
+    #                                     task.cancel()
 
-                                    if ws_receive_task in done:
-                                        ws_msg = ws_receive_task.result()
+    #                                 if ws_receive_task in done:
+    #                                     ws_msg = ws_receive_task.result()
 
-                                        # Timeout for the input
-                                        # ws_msg = await asyncio.wait_for(websocket.receive(), ws_timeout)
-                                        # print(ws_msg)
+    #                                     # Timeout for the input
+    #                                     # ws_msg = await asyncio.wait_for(websocket.receive(), ws_timeout)
+    #                                     # print(ws_msg)
 
-                                        if (
-                                            "type" in ws_msg
-                                            and ws_msg["type"] == "websocket.disconnect"
-                                        ):
-                                            local_to_websocket_task.cancel()
-                                            websocket_to_local_task.cancel()
-                                            print("cancelled from remote client")
-                                            break
+    #                                     if (
+    #                                         "type" in ws_msg
+    #                                         and ws_msg["type"] == "websocket.disconnect"
+    #                                     ):
+    #                                         local_to_websocket_task.cancel()
+    #                                         websocket_to_local_task.cancel()
+    #                                         print("cancelled from remote client")
+    #                                         break
 
-                                        if (
-                                            "bytes" in ws_msg
-                                            and ws_msg["bytes"] is not None
-                                        ):
-                                            print("Received binary data")
-                                            await local_ws.send_bytes(ws_msg["bytes"])
-                                        elif (
-                                            "text" in ws_msg
-                                            and ws_msg["text"] is not None
-                                        ):
-                                            print("Received text data")
-                                            await local_ws.send_str(ws_msg["text"])
+    #                                     if (
+    #                                         "bytes" in ws_msg
+    #                                         and ws_msg["bytes"] is not None
+    #                                     ):
+    #                                         print("Received binary data")
+    #                                         await local_ws.send_bytes(ws_msg["bytes"])
+    #                                     elif (
+    #                                         "text" in ws_msg
+    #                                         and ws_msg["text"] is not None
+    #                                     ):
+    #                                         print("Received text data")
+    #                                         await local_ws.send_str(ws_msg["text"])
 
-                                    if (
-                                        check_status_task in done
-                                        and check_status_task.result()
-                                    ):
-                                        raise asyncio.TimeoutError(
-                                            "Queue processing timeout."
-                                        )
+    #                                 if (
+    #                                     check_status_task in done
+    #                                     and check_status_task.result()
+    #                                 ):
+    #                                     raise asyncio.TimeoutError(
+    #                                         "Queue processing timeout."
+    #                                     )
 
-                            except asyncio.TimeoutError:
-                                local_to_websocket_task.cancel()
-                                websocket_to_local_task.cancel()
-                                print(
-                                    f"Timeout: No message received in {ws_timeout} seconds."
-                                )
-                                await websocket.close(
-                                    1000,
-                                    reason=f"Timeout: No message received in {ws_timeout} seconds.",
-                                )
-                            except asyncio.CancelledError:
-                                await local_ws.close()
+    #                         except asyncio.TimeoutError:
+    #                             local_to_websocket_task.cancel()
+    #                             websocket_to_local_task.cancel()
+    #                             print(
+    #                                 f"Timeout: No message received in {ws_timeout} seconds."
+    #                             )
+    #                             await websocket.close(
+    #                                 1000,
+    #                                 reason=f"Timeout: No message received in {ws_timeout} seconds.",
+    #                             )
+    #                         except asyncio.CancelledError:
+    #                             await local_ws.close()
 
-                        async def local_to_websocket():
-                            try:
-                                while True:
-                                    msg = await local_ws.receive()  # await asyncio.wait_for(, ws_timeout)  # 10-second timeout
-                                    # print(msg.type.name)
-                                    if msg.type in [
-                                        aiohttp.WSMsgType.CLOSE,
-                                        aiohttp.WSMsgType.CLOSED,
-                                    ]:
-                                        local_to_websocket_task.cancel()
-                                        websocket_to_local_task.cancel()
-                                        print("cancelled from localhost")
-                                        break
-                                    elif msg.type in [aiohttp.WSMsgType.TEXT]:
-                                        await websocket.send_text(msg.data)
-                                    elif msg.type in [aiohttp.WSMsgType.BINARY]:
-                                        await websocket.send_bytes(msg.data)
-                            except asyncio.TimeoutError:
-                                print(
-                                    f"Timeout: No message received in {ws_timeout} seconds."
-                                )
-                                await websocket.close(
-                                    1000,
-                                    reason=f"Timeout: No message received in {ws_timeout} seconds.",
-                                )
-                            except asyncio.CancelledError:
-                                pass  # Task was cancelled, ignore
-                                await websocket.close()
+    #                     async def local_to_websocket():
+    #                         try:
+    #                             while True:
+    #                                 msg = await local_ws.receive()  # await asyncio.wait_for(, ws_timeout)  # 10-second timeout
+    #                                 # print(msg.type.name)
+    #                                 if msg.type in [
+    #                                     aiohttp.WSMsgType.CLOSE,
+    #                                     aiohttp.WSMsgType.CLOSED,
+    #                                 ]:
+    #                                     local_to_websocket_task.cancel()
+    #                                     websocket_to_local_task.cancel()
+    #                                     print("cancelled from localhost")
+    #                                     break
+    #                                 elif msg.type in [aiohttp.WSMsgType.TEXT]:
+    #                                     await websocket.send_text(msg.data)
+    #                                 elif msg.type in [aiohttp.WSMsgType.BINARY]:
+    #                                     await websocket.send_bytes(msg.data)
+    #                         except asyncio.TimeoutError:
+    #                             print(
+    #                                 f"Timeout: No message received in {ws_timeout} seconds."
+    #                             )
+    #                             await websocket.close(
+    #                                 1000,
+    #                                 reason=f"Timeout: No message received in {ws_timeout} seconds.",
+    #                             )
+    #                         except asyncio.CancelledError:
+    #                             pass  # Task was cancelled, ignore
+    #                             await websocket.close()
 
-                        websocket_to_local_task = asyncio.create_task(
-                            websocket_to_local()
-                        )
-                        local_to_websocket_task = asyncio.create_task(
-                            local_to_websocket()
-                        )
+    #                     websocket_to_local_task = asyncio.create_task(
+    #                         websocket_to_local()
+    #                     )
+    #                     local_to_websocket_task = asyncio.create_task(
+    #                         local_to_websocket()
+    #                     )
 
-                        try:
-                            await asyncio.gather(
-                                websocket_to_local_task, local_to_websocket_task
-                            )
-                        except asyncio.CancelledError:
-                            pass  # Task was cancelled, ignore
+    #                     try:
+    #                         await asyncio.gather(
+    #                             websocket_to_local_task, local_to_websocket_task
+    #                         )
+    #                     except asyncio.CancelledError:
+    #                         pass  # Task was cancelled, ignore
 
-                        print("both task finished")
-            except Exception as e:
-                print(f"Error in WebSocket communication: {e}")
-            finally:
-                pass
-                # if websocket.state !=
-                # await websocket.close()
-                # print("closing for ws");
+    #                     print("both task finished")
+    #         except Exception as e:
+    #             print(f"Error in WebSocket communication: {e}")
+    #         finally:
+    #             pass
+    #             # if websocket.state !=
+    #             # await websocket.close()
+    #             # print("closing for ws");
 
-        except Exception as e:
-            pass
-        finally:
-            pass
-            # stdout_task.cancel()
-            # stderr_task.cancel()
-            # await stdout_task
-            # await stderr_task
+    #     except Exception as e:
+    #         pass
+    #     finally:
+    #         pass
+    #         # stdout_task.cancel()
+    #         # stderr_task.cancel()
+    #         # await stdout_task
+    #         # await stderr_task
 
     async def read_stream(self, stream, isStderr):
         import time
@@ -1545,8 +1548,11 @@ class BaseComfyDeployRunner:
         # private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
 
         # reload volumes
-        await read_only_public_model_volume.reload.aio()
-        await private_volume.reload.aio()
+        try:
+            await read_only_public_model_volume.reload.aio()
+            await private_volume.reload.aio()
+        except Exception as e:
+            print(f"Error reloading volumes: {e}")
 
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
@@ -1676,6 +1682,9 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     logs = []
 
     models_cache = {}
+    checkpoint_cache = {}
+    diffusion_model_cache = {}
+    vae_cache = {}
 
     nodes_cache = {}
 
@@ -1984,16 +1993,106 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         # # Replace the original function with our custom one
         # comfy.sd.load_checkpoint_guess_config = custom_load_checkpoint_guess_config
 
-        original_load_torch_file = comfy.utils.load_torch_file
+        # Cache at checkpoint level instead of torch file level for better performance
+        original_load_checkpoint_guess_config = comfy.sd.load_checkpoint_guess_config
 
-        def custom_load_torch_file(ckpt, *args, **kwargs):
-            if ckpt in self.models_cache:
-                print(f"Loading torch file from cache: {ckpt}")
-                return self.models_cache[ckpt]
+        def custom_load_checkpoint_guess_config(ckpt_path, *args, **kwargs):
+            # Extract relative path by removing common base paths
+            relative_path = ckpt_path
+            for base_path in ["/comfyui/models/", "/private_models/", "/public_models/"]:
+                if ckpt_path.startswith(base_path):
+                    relative_path = ckpt_path.replace(base_path, "")
+                    break
+            
+            print(f"Loading checkpoint: {relative_path}")
+            print(f"Checkpoint cache keys: {list(self.checkpoint_cache.keys())}")
+            
+            # Try cache lookup with relative path first
+            if relative_path in self.checkpoint_cache:
+                print(f"Loading checkpoint from cache: {relative_path}")
+                return self.checkpoint_cache[relative_path]
+            # Fallback to full path
+            elif ckpt_path in self.checkpoint_cache:
+                print(f"Loading checkpoint from cache: {ckpt_path}")
+                return self.checkpoint_cache[ckpt_path]
             else:
-                print(f"Loading torch file from: {ckpt}")
-                return original_load_torch_file(ckpt, *args, **kwargs)
+                print(f"Loading checkpoint from disk: {ckpt_path}")
+                result = original_load_checkpoint_guess_config(ckpt_path, *args, **kwargs)
+                # Cache the result for future use
+                self.checkpoint_cache[relative_path] = result
+                self.checkpoint_cache[ckpt_path] = result
+                return result
 
+        comfy.sd.load_checkpoint_guess_config = custom_load_checkpoint_guess_config
+
+        # Add optimization for load_diffusion_model (used by UNETLoader)
+        original_load_diffusion_model = comfy.sd.load_diffusion_model
+
+        def custom_load_diffusion_model(unet_path, model_options=None):
+            # Extract relative path by removing common base paths
+            relative_path = unet_path
+            for base_path in ["/comfyui/models/", "/private_models/", "/public_models/"]:
+                if unet_path.startswith(base_path):
+                    relative_path = unet_path.replace(base_path, "")
+                    break
+            
+            print(f"Loading diffusion model: {relative_path}")
+            print(f"Diffusion model cache keys: {list(self.diffusion_model_cache.keys())}")
+            
+            # Create a cache key that includes model options
+            cache_key = (relative_path, str(model_options) if model_options else None)
+            full_cache_key = (unet_path, str(model_options) if model_options else None)
+            
+            # Try cache lookup with relative path first
+            if cache_key in self.diffusion_model_cache:
+                print(f"Loading diffusion model from cache: {relative_path}")
+                return self.diffusion_model_cache[cache_key]
+            # Fallback to full path
+            elif full_cache_key in self.diffusion_model_cache:
+                print(f"Loading diffusion model from cache: {unet_path}")
+                return self.diffusion_model_cache[full_cache_key]
+            else:
+                print(f"Loading diffusion model from disk: {unet_path}")
+                result = original_load_diffusion_model(unet_path, model_options)
+                # Cache the result for future use
+                self.diffusion_model_cache[cache_key] = result
+                self.diffusion_model_cache[full_cache_key] = result
+                return result
+
+        comfy.sd.load_diffusion_model = custom_load_diffusion_model
+
+        # Add optimization for VAE loading
+        # We need to override at a lower level since VAELoader uses comfy.utils.load_torch_file
+        original_load_torch_file = comfy.utils.load_torch_file
+        
+        def custom_load_torch_file(ckpt_path, *args, **kwargs):
+            # Only cache VAE files, not all torch files
+            if "/vae/" in ckpt_path or ckpt_path.endswith((".vae.safetensors", ".vae.pt")):
+                # Extract relative path
+                relative_path = ckpt_path
+                for base_path in ["/comfyui/models/", "/private_models/", "/public_models/"]:
+                    if ckpt_path.startswith(base_path):
+                        relative_path = ckpt_path.replace(base_path, "")
+                        break
+                
+                # Check cache
+                if relative_path in self.vae_cache:
+                    print(f"Loading VAE from cache: {relative_path}")
+                    return self.vae_cache[relative_path]
+                elif ckpt_path in self.vae_cache:
+                    print(f"Loading VAE from cache: {ckpt_path}")
+                    return self.vae_cache[ckpt_path]
+                else:
+                    print(f"Loading VAE from disk: {ckpt_path}")
+                    result = original_load_torch_file(ckpt_path, *args, **kwargs)
+                    # Cache the VAE state dict
+                    self.vae_cache[relative_path] = result
+                    self.vae_cache[ckpt_path] = result
+                    return result
+            else:
+                # For non-VAE files, use original function
+                return original_load_torch_file(ckpt_path, *args, **kwargs)
+        
         comfy.utils.load_torch_file = custom_load_torch_file
 
         original_validate_prompt = execution.validate_prompt
@@ -2124,6 +2223,20 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
         await self.handle_container_exit()
 
 
+# Flux Dev
+# models_to_cache is now injected dynamically from config
+# Supports checkpoint models, diffusion models (UNET), and VAE models
+# Model types are auto-detected by path patterns:
+#   - Diffusion models: path contains "diffusion_models/"
+#   - VAE models: path contains "/vae/" or ends with ".vae.safetensors" or ".vae.pt"
+#   - Checkpoints: everything else
+# Examples:
+#   Checkpoint: "checkpoints/model.safetensors"
+#   Diffusion model: "diffusion_models/flux1-dev.safetensors"
+#   VAE model: "vae/sdxl_vae.safetensors" or "model.vae.safetensors"
+models_to_cache = config.get("models_to_cache", [])
+enable_gpu_memory_snapshot = config.get("enable_gpu_memory_snapshot", False)
+
 @app.cls(
     image=target_image,
     # will be overridden by the run function
@@ -2133,7 +2246,7 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
     scaledown_window=config["idle_timeout"],
     max_containers=config["concurrency_limit"],
     enable_memory_snapshot=True,
-    # experimental_options={"gpu_memory_snapshot": True},
+    experimental_options={"enable_gpu_snapshot": enable_gpu_memory_snapshot},
     secrets=base_secrets,
     cpu=cpu,
     memory=memory,
@@ -2141,6 +2254,20 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 )
 @modal.concurrent(max_inputs=config["allow_concurrent_inputs"])
 class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
+    import pickle
+
+    load = pickle.load
+
+    class Empty:
+        pass
+
+    class Unpickler(pickle.Unpickler):
+        def find_class(self, module, name):
+            #TODO: safe unpickle
+            if module.startswith("pytorch_lightning"):
+                return Empty
+            return super().find_class(module, name)
+    
     is_workspace: bool = modal.parameter(default=False)
     gpu: str = modal.parameter(default="")
     session_id: str = modal.parameter(default="")
@@ -2219,17 +2346,61 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
         """Monkeypatch Torch CUDA checks during model loading/snapshotting"""
         original_is_available = torch.cuda.is_available
         original_current_device = torch.cuda.current_device
+        
+        if enable_gpu_memory_snapshot is False:
+            # Force Torch to report no CUDA devices
+            torch.cuda.is_available = lambda: False
+            torch.cuda.current_device = lambda: torch.device("cpu")
 
-        # Force Torch to report no CUDA devices
-        torch.cuda.is_available = lambda: False
-        torch.cuda.current_device = lambda: torch.device("cpu")
-
-        try:
+            try:
+                yield
+            finally:
+                # Restore original implementations
+                torch.cuda.is_available = original_is_available
+                torch.cuda.current_device = original_current_device
+                
+        else:
             yield
-        finally:
-            # Restore original implementations
-            torch.cuda.is_available = original_is_available
-            torch.cuda.current_device = original_current_device
+
+    def load_torch_file(self, ckpt, safe_load=False, device=None, return_metadata=False):
+        import torch
+        import safetensors
+
+        if device is None:
+            device = torch.device("cpu")
+        
+        metadata = None
+        if ckpt.lower().endswith(".safetensors") or ckpt.lower().endswith(".sft"):
+            if return_metadata:
+                # Use safetensors.safe_open to get both data and metadata
+                with safetensors.safe_open(ckpt, framework="pt", device=device.type) as f:
+                    sd = {}
+                    for k in f.keys():
+                        sd[k] = f.get_tensor(k)
+                    metadata = f.metadata()
+            else:
+                sd = safetensors.torch.load_file(ckpt, device=device.type)
+        else:
+            if safe_load:
+                if not "weights_only" in torch.load.__code__.co_varnames:
+                    logging.warning(
+                        "Warning torch.load doesn't support weights_only on this pytorch version, loading unsafely."
+                    )
+                    safe_load = False
+            if safe_load:
+                pl_sd = torch.load(ckpt, map_location=device, weights_only=True)
+            else:
+                pl_sd = torch.load(
+                    ckpt, map_location=device, pickle_module=self.Unpickler
+                )
+            if "global_step" in pl_sd:
+                logging.debug(f"Global Step: {pl_sd['global_step']}")
+            if "state_dict" in pl_sd:
+                sd = pl_sd["state_dict"]
+            else:
+                sd = pl_sd
+        
+        return (sd, metadata) if return_metadata else sd
 
     @modal.enter(snap=True)
     async def load(self):
@@ -2302,6 +2473,103 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
                 print(f"Error type: {type(e)}")
                 print(f"Error args: {e.args}")
                 raise
+            
+        
+            # Verify models directory setup
+            print(f"\n=== Models Directory Setup ===")
+            if os.path.islink("/comfyui/models"):
+                print(f"✅ /comfyui/models -> {os.readlink('/comfyui/models')}")
+            elif os.path.exists("/comfyui/models"):
+                print(f"✅ /comfyui/models exists (not a symlink)")
+            else:
+                print(f"❌ /comfyui/models does not exist")
+            
+            
+            for model in models_to_cache:
+                # Auto-detect model type by path
+                is_diffusion_model = "diffusion_models/" in model
+                is_vae_model = "/vae/" in model or model.endswith((".vae.safetensors", ".vae.pt"))
+                
+                # Add base path if not present
+                if not model.startswith("/"):
+                    actual_model_path = f"/comfyui/models/{model}"
+                else:
+                    actual_model_path = model
+
+                # If model doesn't exist at expected path, try alternative locations
+                if not os.path.exists(actual_model_path):
+                    model_filename = os.path.basename(model)
+                    model_subpath = model.replace("/comfyui/models/", "")
+                    
+                    alternative_paths = [
+                        f"/private_models/{model_subpath}",
+                        f"/public_models/{model_subpath}",
+                    ]
+                    
+                    for alt_path in alternative_paths:
+                        if os.path.exists(alt_path):
+                            actual_model_path = alt_path
+                            break
+                
+                t = time.time()
+                try:
+                    relative_key = model.replace("/comfyui/models/", "") if model.startswith("/comfyui/models/") else model
+                    actual_relative_key = actual_model_path.replace("/comfyui/models/", "") if actual_model_path.startswith("/comfyui/models/") else actual_model_path
+                    
+                    if is_vae_model:
+                        print(f"🔄 Loading VAE: {relative_key}")
+                        # Load VAE state dict
+                        vae_sd = comfy.utils.load_torch_file(actual_model_path)
+                        # Note: We're caching the state dict, not the VAE object
+                        # The VAE object will be created when needed by VAELoader
+                        
+                        # Cache the VAE state dict
+                        self.vae_cache[relative_key] = vae_sd
+                        self.vae_cache[actual_relative_key] = vae_sd
+                        self.vae_cache[actual_model_path] = vae_sd
+                        
+                        print(f"✅ Loaded VAE: {relative_key} ({time.time() - t:.1f}s)")
+                    elif is_diffusion_model:
+                        print(f"🔄 Loading diffusion model: {relative_key}")
+                        # Load diffusion model (UNET)
+                        diffusion_result = comfy.sd.load_diffusion_model(actual_model_path)
+                        
+                        # Cache the diffusion model result with path-based keys
+                        cache_key = (relative_key, None)
+                        actual_cache_key = (actual_relative_key, None)
+                        full_cache_key = (actual_model_path, None)
+                        
+                        self.diffusion_model_cache[cache_key] = diffusion_result
+                        self.diffusion_model_cache[actual_cache_key] = diffusion_result
+                        self.diffusion_model_cache[full_cache_key] = diffusion_result
+                        
+                        print(f"✅ Loaded diffusion model: {relative_key} ({time.time() - t:.1f}s)")
+                    else:
+                        print(f"🔄 Loading checkpoint: {relative_key}")
+                        # Load the full checkpoint with model, clip, vae objects
+                        import folder_paths
+                        checkpoint_result = comfy.sd.load_checkpoint_guess_config(
+                            actual_model_path, 
+                            output_vae=True, 
+                            output_clip=True, 
+                            embedding_directory=folder_paths.get_folder_paths("embeddings")
+                        )
+                        
+                        # Cache the checkpoint result
+                        self.checkpoint_cache[relative_key] = checkpoint_result
+                        self.checkpoint_cache[actual_relative_key] = checkpoint_result
+                        self.checkpoint_cache[model] = checkpoint_result
+                        
+                        print(f"✅ Loaded checkpoint: {relative_key} ({time.time() - t:.1f}s)")
+                except Exception as e:
+                    if is_vae_model:
+                        model_type_str = "VAE"
+                    elif is_diffusion_model:
+                        model_type_str = "diffusion model"
+                    else:
+                        model_type_str = "checkpoint"
+                    print(f"❌ Failed to load {model_type_str} {actual_model_path}: {str(e)}")
+                    raise
 
             print(f"\nGPUs available: {torch.cuda.is_available()}")
 
