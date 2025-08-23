@@ -2227,12 +2227,12 @@ class _ComfyDeployRunner(BaseComfyDeployRunner):
 # models_to_cache is now injected dynamically from config
 # Supports checkpoint models, diffusion models (UNET), and VAE models
 # Model types are auto-detected by path patterns:
-#   - Diffusion models: path contains "diffusion_models/"
+#   - Diffusion models: path contains "diffusion_models/" or "unet/"
 #   - VAE models: path contains "/vae/" or ends with ".vae.safetensors" or ".vae.pt"
 #   - Checkpoints: everything else
 # Examples:
 #   Checkpoint: "checkpoints/model.safetensors"
-#   Diffusion model: "diffusion_models/flux1-dev.safetensors"
+#   Diffusion model: "diffusion_models/flux1-dev.safetensors" or "unet/flux1-dev-fp8.safetensors"
 #   VAE model: "vae/sdxl_vae.safetensors" or "model.vae.safetensors"
 models_to_cache = config.get("models_to_cache", [])
 enable_gpu_memory_snapshot = config.get("enable_gpu_memory_snapshot", False)
@@ -2487,7 +2487,7 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
             
             for model in models_to_cache:
                 # Auto-detect model type by path
-                is_diffusion_model = "diffusion_models/" in model
+                is_diffusion_model = "diffusion_models/" in model or "unet/" in model
                 is_vae_model = "/vae/" in model or model.endswith((".vae.safetensors", ".vae.pt"))
                 
                 # Add base path if not present
