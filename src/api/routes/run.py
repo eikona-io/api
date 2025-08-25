@@ -52,6 +52,7 @@ import random
 import aioboto3
 from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.orm import defer
+from api.utils.constants import blocking_log_streaming_user_id
 
 import datetime as dt
 
@@ -916,10 +917,6 @@ async def run_model_async(
         "run_id": run_id,
     }
 
-blocking_log_streaming_user_id = [
-    "user_2brwfPwcb1swinRg8mfUsG0rFc5", "user_2f5PZAkathVKRgYWo4wVY0sQVjI"
-]
-
 async def retry_post_request(
     client: httpx.AsyncClient,
     url: str,
@@ -1026,6 +1023,8 @@ async def _create_run(
         if "org_id" in request.state.current_user
         else None
     )
+    
+    is_blocking_log_update = request.state.current_user["user_id"] in blocking_log_streaming_user_id
 
     is_native_run = data.is_native_run
     is_public_deployment = False
@@ -1262,7 +1261,8 @@ async def _create_run(
             workflow_id=workflow_id,
             workflow_version_id=workflow_version_id,
             workflow_inputs=inputs if inputs is not None else data.inputs,
-            workflow_api=workflow_api_raw,
+            # This is pretty costly in the long run, ignore it for specific users
+            workflow_api=workflow_api_raw if not is_blocking_log_update else {},
             # User
             user_id=user_id,
             org_id=org_id,
@@ -1408,35 +1408,7 @@ async def _create_run(
 
             # Sending to clickhouse
             
-            is_blocking_log_update = False
-            
-            if user_id in blocking_log_streaming_user_id:
-                is_blocking_log_update = True
-            
             if is_blocking_log_update is False:
-                # progress_data = [
-                #     (
-                #         user_id,
-                #         org_id,
-                #         machine_id,
-                #         data.gpu_event_id if data.gpu_event_id is not None else None,
-                #         workflow_id,
-                #         workflow_version_id,
-                #         new_run.id,
-                #         dt.datetime.now(dt.UTC),
-                #         "input",
-                #         0,
-                #         json.dumps(inputs),
-                #     )
-                # ]
-
-                # print("INPUT")
-                # print("progress_data", progress_data)
-
-                # background_tasks.add_task(
-                #     insert_to_clickhouse, client, "workflow_events", progress_data
-                # )
-                
                 # Also publish to Redis for real-time streaming
                 input_event = {
                     "run_id": str(new_run.id),

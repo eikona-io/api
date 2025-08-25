@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
 import logfire
 from sqlalchemy.orm import defer
+from api.utils.constants import blocking_log_streaming_user_id
 
 from .utils import (
     async_lru_cache,
@@ -332,10 +333,6 @@ async def get_workflow_run(run_id: str, db: AsyncSession):
     workflow_run = existing_run.scalar_one_or_none()
     workflow_run = cast(WorkflowRun, workflow_run)
     return workflow_run
-
-blocking_log_streaming_user_id = [
-    "user_2brwfPwcb1swinRg8mfUsG0rFc5", "user_2f5PZAkathVKRgYWo4wVY0sQVjI"
-]
 
 @router.post("/update-run", include_in_schema=False)
 async def update_run(
