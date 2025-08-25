@@ -125,7 +125,7 @@ class WorkflowRunModel(BaseModel):
     workflow_version_id: Optional[UUID]
     workflow_inputs: Optional[Any]
     workflow_id: UUID
-    workflow_api: Optional[Any]
+    # workflow_api: Optional[Any]
     machine_id: Optional[UUID]
     origin: str
     status: str

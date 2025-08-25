@@ -51,6 +51,7 @@ from botocore.config import Config
 import random
 import aioboto3
 from clickhouse_connect.driver.asyncclient import AsyncClient
+from sqlalchemy.orm import defer
 
 import datetime as dt
 
@@ -109,7 +110,11 @@ async def get_run(request: Request, run_id: UUID, queue_position: bool = False, 
 
     query = (
         select(WorkflowRunWithExtra)
-        .options(joinedload(WorkflowRun.outputs))
+        .options(
+            joinedload(WorkflowRun.outputs),
+            defer(WorkflowRun.workflow_api),
+            defer(WorkflowRun.run_log)
+        )
         .where(WorkflowRun.id == run_id)
         # .apply_org_check(request)
     )
