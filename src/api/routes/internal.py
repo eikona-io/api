@@ -32,6 +32,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from pprint import pprint
 import logfire
+from sqlalchemy.orm import defer
 
 from .utils import (
     async_lru_cache,
@@ -322,7 +323,12 @@ endStatuses = ["success", "failed", "timeout", "cancelled"]
 
 @async_lru_cache(maxsize=1000)
 async def get_cached_workflow_run(run_id: str, db: AsyncSession):
-    existing_run = await db.execute(select(WorkflowRun).where(WorkflowRun.id == run_id))
+    return await get_workflow_run(run_id, db)
+
+async def get_workflow_run(run_id: str, db: AsyncSession):
+    existing_run = await db.execute(select(WorkflowRun)
+        .options(defer(WorkflowRun.workflow_api), defer(WorkflowRun.run_log))
+        .where(WorkflowRun.id == run_id))
     workflow_run = existing_run.scalar_one_or_none()
     workflow_run = cast(WorkflowRun, workflow_run)
     return workflow_run
@@ -425,64 +431,24 @@ async def update_run(
                         updated_at=updated_at,
                         gpu_event_id=body.gpu_event_id,
                     )
-                    .returning(WorkflowRun)
+                    # Skip returning the workflow run to avoid re-fetching the data
+                    # .returning(WorkflowRun)
                 )
-                result = await db.execute(update_stmt)
+                # result = await db.execute(update_stmt)
                 await db.commit()
 
-                workflow_run = result.scalar_one()
-                workflow_run = cast(WorkflowRun, workflow_run)
-                await db.refresh(workflow_run)
-
-                # # Sending a real-time update to connected clients
-                # background_tasks.add_task(
-                #     send_workflow_update, str(workflow_run.workflow_id), workflow_run.to_dict()
-                # )
-                # background_tasks.add_task(
-                #     send_realtime_update, str(workflow_run.id), workflow_run.to_dict()
-                # )
-
-                # Sending to clickhouse
-                # progress_data = [
-                #     (
-                #         workflow_run.user_id,
-                #         workflow_run.org_id,
-                #         workflow_run.machine_id,
-                #         body.gpu_event_id,
-                #         workflow_run.workflow_id,
-                #         workflow_run.workflow_version_id,
-                #         body.run_id,
-                #         updated_at,
-                #         "executing",  # NOTE: when body.progress and body.live_status are set, body.status is not sent so we patch this
-                #         body.progress,
-                #         body.live_status,
-                #     )
-                # ]
-
-                # Skip sending per node update
-                # if is_blocking_log_update is False:
-                #     # background_tasks.add_task(
-                #     #     insert_to_clickhouse, client, "workflow_events", progress_data
-                #     # )
-                    
-                #     # Also publish to Redis for real-time streaming
-                #     # Use minimal event shape; publisher will compact keys
-                #     progress_event = {
-                #         "run_id": str(body.run_id),
-                #         "workflow_id": str(workflow_run.workflow_id),
-                #         "machine_id": str(workflow_run.machine_id),
-                #         "timestamp": updated_at.isoformat(),
-                #         "progress": body.progress,
-                #         "status": "executing",
-                #         "log": body.live_status,
-                #     }
-                #     background_tasks.add_task(
-                #         publish_progress_update,
-                #         str(body.run_id),
-                #         progress_event,
-                #         user_id=str(workflow_run.user_id) if workflow_run.user_id else None,
-                #         org_id=str(workflow_run.org_id) if workflow_run.org_id else None,
-                #     )
+                # workflow_run = result.scalar_one()
+                # workflow_run = cast(WorkflowRun, workflow_run)
+                # await db.refresh(workflow_run)
+                
+                # Getting the fresh data, excluding the workflow_api and run_log
+                workflow_run = await get_workflow_run(body.run_id, db)
+                
+                # Update the workflow run in the cache
+                workflow_run.live_status = body.live_status
+                workflow_run.progress = body.progress
+                workflow_run.updated_at = updated_at
+                workflow_run.gpu_event_id = body.gpu_event_id
 
                 if (
                     workflow_run.webhook is not None
@@ -493,26 +459,13 @@ async def update_run(
                             workflow_run=workflow_run.to_dict(),
                             updated_at=updated_at,
                             run_id=workflow_run.id,
-                            # client=client,
                         )
                     )
-                    # background_tasks.add_task(
-                    #     send_webhook, workflow_run, updated_at, workflow_run.id
-                    # )
 
                 return {"status": "success"}
 
             if body.log_data is not None:
-                # Cause all the logs will be sent to clickhouse now.
                 return {"status": "success"}
-                # update_stmt = (
-                #     update(WorkflowRun)
-                #     .where(WorkflowRun.id == request.run_id)
-                #     .values(run_log=request.log_data, updated_at=updated_at)
-                # )
-                # await db.execute(update_stmt)
-                # await db.commit()
-                # return {"status": "success"}
 
             if body.status == "started" and fixed_time is not None:
                 update_stmt = (
