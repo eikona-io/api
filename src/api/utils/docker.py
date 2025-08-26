@@ -274,8 +274,11 @@ async def generate_all_docker_commands(data: DepsBody, include_comfyuimanager: b
     has_deploy_node = (
         hasattr(steps, 'steps') and 
         any(
-            step.type == "custom-node" and 
-            step.data.url.lower().startswith("https://github.com/bennykok/comfyui-deploy")
+            (step.type == "custom-node" and 
+             step.data.url.lower().startswith("https://github.com/bennykok/comfyui-deploy")) or
+            (step.type == "custom-node-manager" and 
+             hasattr(step.data, 'node_id') and 
+             step.data.node_id == "comfyui-deploy")
             for step in steps.steps
         )
     )

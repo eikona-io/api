@@ -6,7 +6,7 @@ import json
 import aiohttp
 import os
 import httpx
-from .comfy_node import fetch_github_data, extract_repo_name
+from .comfy_node import fetch_github_data, extract_repo_name, fetch_comfy_node_metadata
 
 # from http.client import HTTPException
 from fastapi import Request, HTTPException, Depends
@@ -2096,15 +2096,54 @@ async def check_custom_nodes_version(
 
         # Find comfyui-deploy in docker_command_steps
         local_commit = None
+        local_version = None
+        comfy_manager_node = None
+        
         if machine.docker_command_steps and "steps" in machine.docker_command_steps:
             for step in machine.docker_command_steps["steps"]:
+                # Check for custom-node type (existing logic)
                 if (
                     step["type"] == "custom-node"
-                    and step["data"]["url"].lower()
-                    == "https://github.com/bennykok/comfyui-deploy"
+                    and "bennykok/comfyui-deploy" in step["data"]["url"].lower()
                 ):
                     local_commit = step["data"]["hash"]
                     break
+                # Check for custom-node-manager type
+                elif (
+                    step["type"] == "custom-node-manager"
+                    and step["data"]["node_id"] == "comfyui-deploy"
+                ):
+                    comfy_manager_node = step
+                    local_version = step["data"].get("version")
+                    break
+
+        # If found custom-node-manager, use ComfyUI API to check version
+        if comfy_manager_node and not local_commit:
+            try:
+                # Get latest version from ComfyUI API
+                latest_node_info = await fetch_comfy_node_metadata("comfyui-deploy")
+                latest_version = latest_node_info.get("version")
+                
+                return JSONResponse(
+                    content={
+                        "status": "success",
+                        "local_commit": {
+                            "hash": None,
+                            "message": f"Using custom-node-manager version {local_version}",
+                            "date": None,
+                        },
+                        "latest_commit": {
+                            "hash": None,
+                            "message": f"Latest custom-node-manager version {latest_version}",
+                            "date": latest_node_info.get("createdAt"),
+                        },
+                        "is_up_to_date": local_version == latest_version,
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error fetching ComfyUI node metadata: {str(e)}")
+                # Fall back to default behavior if API fails
+                pass
 
         # If not found in steps, use the default hash from docker.py
         if not local_commit:
@@ -2157,42 +2196,77 @@ async def update_comfyui_deploy_custom_node(docker_command_steps: dict) -> dict:
         if not docker_command_steps or "steps" not in docker_command_steps:
             docker_command_steps = {"steps": []}
 
-        # Find and remove any existing comfyui-deploy custom node
+        # Check for existing comfyui-deploy installations and determine type
         filtered_steps = []
-        found_existing = False
+        has_old_custom_node = False
+        has_new_custom_node_manager = False
+        
         for step in docker_command_steps["steps"]:
             if (
                 step["type"] == "custom-node"
-                and step["data"]["url"].lower()
-                == "https://github.com/bennykok/comfyui-deploy"
+                and "bennykok/comfyui-deploy" in step["data"]["url"].lower()
             ):
-                found_existing = True
+                has_old_custom_node = True
+                continue
+            elif (
+                step["type"] == "custom-node-manager"
+                and step["data"]["node_id"] == "comfyui-deploy"
+            ):
+                has_new_custom_node_manager = True
                 continue
             filtered_steps.append(step)
 
-        # Get the latest commit info
-        repo_name = "BennyKok/comfyui-deploy"
-        latest_commit_info = await get_latest_commit_info(repo_name)
-        if not latest_commit_info or "hash" not in latest_commit_info:
-            logger.error("Failed to get latest commit info")
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to get latest commit information for comfyui-deploy",
-            )
+        # Handle old custom-node type (GitHub-based approach)
+        if has_old_custom_node:
+            # Get the latest commit info
+            repo_name = "BennyKok/comfyui-deploy"
+            latest_commit_info = await get_latest_commit_info(repo_name)
+            if not latest_commit_info or "hash" not in latest_commit_info:
+                logger.error("Failed to get latest commit info")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to get latest commit information for comfyui-deploy",
+                )
 
-        # Add the updated comfyui-deploy custom node at the end
-        comfyui_deploy_step = {
-            "type": "custom-node",
-            "id": "comfyui-deploy",
-            "data": {
-                "url": "https://github.com/BennyKok/comfyui-deploy",
-                "name": "ComfyUI Deploy",
-                "hash": latest_commit_info["hash"],
-                "install_type": "git-clone",
-                "files": ["https://github.com/BennyKok/comfyui-deploy"],
-            },
-        }
-        filtered_steps.append(comfyui_deploy_step)
+            # Add the updated comfyui-deploy custom node at the end
+            comfyui_deploy_step = {
+                "type": "custom-node",
+                "id": "comfyui-deploy",
+                "data": {
+                    "url": "https://github.com/BennyKok/comfyui-deploy",
+                    "name": "ComfyUI Deploy",
+                    "hash": latest_commit_info["hash"],
+                    "install_type": "git-clone",
+                    "files": ["https://github.com/BennyKok/comfyui-deploy"],
+                },
+            }
+            filtered_steps.append(comfyui_deploy_step)
+            
+        # Handle new custom-node-manager type (ComfyUI API approach)
+        elif has_new_custom_node_manager:
+            try:
+                latest_node_info = await fetch_comfy_node_metadata("comfyui-deploy")
+                latest_version = latest_node_info.get("version")
+                if not latest_version:
+                    raise ValueError("No version found in API response")
+                    
+                # Add the updated comfyui-deploy custom node manager at the end
+                comfyui_deploy_step = {
+                    "id": "comfyui-deploy",
+                    "data": {
+                        "node_id": "comfyui-deploy",
+                        "version": latest_version,
+                    },
+                    "type": "custom-node-manager",
+                }
+                filtered_steps.append(comfyui_deploy_step)
+                
+            except Exception as e:
+                logger.error(f"Failed to get latest version from ComfyUI API: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to get latest version information for comfyui-deploy",
+                )
 
         return {"steps": filtered_steps}
     except Exception as e:
