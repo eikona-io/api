@@ -1262,7 +1262,9 @@ async def _create_run(
             workflow_version_id=workflow_version_id,
             workflow_inputs=inputs if inputs is not None else data.inputs,
             # This is pretty costly in the long run, ignore it for specific users
-            workflow_api=workflow_api_raw if not is_blocking_log_update else {},
+            # workflow_api=workflow_api_raw if not is_blocking_log_update else {},
+            # Emptying this
+            workflow_api={},
             # User
             user_id=user_id,
             org_id=org_id,
