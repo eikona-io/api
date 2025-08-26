@@ -196,9 +196,12 @@ async def get_comfyui_versions(request: Request):
     result = await get_comfyui_versions_cached()
     return JSONResponse(content=result)
 
-async def fetch_comfy_node_metadata(node_id: str, version: str) -> Dict[str, Any]:
+async def fetch_comfy_node_metadata(node_id: str, version: str = None) -> Dict[str, Any]:
     """Fetch node metadata from ComfyUI API"""
-    url = f"https://api.comfy.org/nodes/{node_id}/install?version={version}"
+    if version:
+        url = f"https://api.comfy.org/nodes/{node_id}/install?version={version}"
+    else:
+        url = f"https://api.comfy.org/nodes/{node_id}/install"
     
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
