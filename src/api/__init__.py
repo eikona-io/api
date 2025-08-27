@@ -18,7 +18,7 @@ from jose import JWTError, jwt
 from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.database import AsyncSessionLocal, init_db, get_db, engine
+from api.database import AsyncSessionLocal, engine
 from api.routes import (
     run,
     volumes,
@@ -61,30 +61,29 @@ from opentelemetry.context import get_current
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.propagators.textmap import TextMapPropagator
 
-from logtail import LogtailHandler
+# from logtail import LogtailHandler
 import logging
 from api.router import app, public_api_router, api_router
 
-logtail_host = os.getenv("LOGTAIL_INGESTING_HOST")
-logtail_source_token = os.getenv("LOGTAIL_SOURCE_TOKEN")
+# logtail_host = os.getenv("LOGTAIL_INGESTING_HOST")
+# logtail_source_token = os.getenv("LOGTAIL_SOURCE_TOKEN")
 
-if logtail_host and logtail_source_token:
-    handler = LogtailHandler(
-        source_token=logtail_source_token,
-        host=logtail_host,
-    )
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    logger.handlers = []
-    logger.addHandler(handler)
+# if logtail_host and logtail_source_token:
+#     handler = LogtailHandler(
+#         source_token=logtail_source_token,
+#         host=logtail_host,
+#     )
+#     logger = logging.getLogger(__name__)
+#     logger.setLevel(logging.INFO)
+#     logger.handlers = []
+#     logger.addHandler(handler)
 
 
 logger = logfire
 logfire.configure(
     service_name="comfydeploy-api",
     distributed_tracing=False,
-    # send_to_logfire=False,
-    # additional_span_processors=[span_processor]
+    send_to_logfire=False,
 )
 
 logging.basicConfig(level=logging.INFO)

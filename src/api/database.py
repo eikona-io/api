@@ -1,13 +1,10 @@
 import os
 from typing import AsyncGenerator
-import clickhouse_connect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
-import asyncio
-from clickhouse_connect.driver import httputil
 
 load_dotenv()
 
@@ -35,39 +32,9 @@ engine = create_async_engine(
 
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-big_pool_mgr = httputil.get_pool_manager(maxsize=16, num_pools=12)
-
-
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
-
-
-def init_db():
-    # You can add any initialization logic here if needed
-    pass
-
-
-clickhouse_client = None
-
-
-# async def get_clickhouse_client():
-#     global clickhouse_client
-#     try:
-#         if clickhouse_client is None:
-#             clickhouse_client = await clickhouse_connect.get_async_client(
-#                 host=os.getenv("CLICKHOUSE_HOST"),
-#                 user=os.getenv("CLICKHOUSE_USER"),
-#                 password=os.getenv("CLICKHOUSE_PASSWORD"),
-#                 secure=False if os.getenv("CLICKHOUSE_HOST") in ["localhost", "host.docker.internal", "clickhouse"] else True,
-#                 pool_mgr=big_pool_mgr,
-#                 port=os.getenv("CLICKHOUSE_PORT", None),
-#             )
-#         return clickhouse_client
-#     except Exception as e:
-#         print(f"Error creating ClickHouse client: {e}")
-#         raise
-
 
 @asynccontextmanager
 async def get_db_context():
@@ -80,23 +47,3 @@ async def get_db_context():
             raise
         finally:
             await session.close()
-
-
-# @asynccontextmanager
-# async def get_clickhouse_client_context():
-#     try:
-#         client = await clickhouse_connect.get_async_client(
-#             host=os.getenv("CLICKHOUSE_HOST"),
-#             user=os.getenv("CLICKHOUSE_USER"),
-#             password=os.getenv("CLICKHOUSE_PASSWORD"),
-#             secure=True,
-#             # pool_mgr=big_pool_mgr,
-#         )
-#         try:
-#             yield client
-#         finally:
-#             pass
-#             # await client.close()
-#     except Exception as e:
-#         print(f"Error creating ClickHouse client: {e}")
-#         raise

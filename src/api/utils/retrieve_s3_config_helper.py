@@ -2,13 +2,7 @@ from typing import Optional, Dict, Any
 from pydantic import BaseModel
 import os
 from api.models import UserSettings
-import base64
-import google.auth
-from google.auth.transport import requests
-import boto3
 import time
-import google.auth.transport.requests
-import google.oauth2.id_token
 from dateutil import parser
 import aioboto3
 import asyncio

@@ -31,7 +31,7 @@ from sqlalchemy import func, and_, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
-import fal_client
+# import fal_client
 from .internal import send_webhook, publish_progress_update
 from .utils import (
     apply_org_check_direct,
@@ -50,7 +50,6 @@ from .utils import (
 from botocore.config import Config
 import random
 import aioboto3
-from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.orm import defer
 from api.utils.constants import blocking_log_streaming_user_id
 
@@ -491,7 +490,6 @@ async def cancel_run(
     run_id: str,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    # client: AsyncClient = Depends(get_clickhouse_client)
 ):
     try:
         # Cancel the modal function
@@ -615,7 +613,6 @@ async def update_status(
     status: str,
     background_tasks: BackgroundTasks,
     workflow_run,
-    client: AsyncClient,
 ):
     async with get_db_context() as db:
         updated_at = dt.datetime.now(dt.UTC)
@@ -673,7 +670,6 @@ async def run_model(
     params: dict,
     workflow_run,
     background_tasks,
-    client: AsyncClient,
     user_settings=None,
 ):
     run_id = params.get("prompt_id")
@@ -892,7 +888,7 @@ async def run_model(
             output_dict = newOutput.to_dict()
             await post_process_output_data(output_dict["data"], user_settings)
 
-            update_status(run_id, "success", background_tasks, client, workflow_run)
+            update_status(run_id, "success", background_tasks, workflow_run)
 
             return [output_dict]
 
@@ -903,7 +899,6 @@ async def run_model_async(
     params: dict,
     workflow_run,
     background_tasks,
-    client: AsyncClient,
 ):
     run_id = params.get("prompt_id")
     model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
@@ -981,7 +976,6 @@ async def _create_run(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: Optional[AsyncClient] = None,
 ):
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
@@ -1442,35 +1436,6 @@ async def _create_run(
                     **params,
                     "cd_token": token,
                 }
-
-            if is_model_run:
-                if data.execution_mode == "async":
-                    params = {
-                        **params,
-                        "auth_token": token,
-                    }
-                    return await run_model_async(
-                        request,
-                        data,
-                        params=params,
-                        workflow_run=new_run,
-                        background_tasks=background_tasks,
-                        client=client,
-                    )
-                if data.execution_mode == "sync":
-                    params = {
-                        **params,
-                        "auth_token": token,
-                    }
-                    return await run_model(
-                        request,
-                        data,
-                        params=params,
-                        workflow_run=new_run,
-                        background_tasks=background_tasks,
-                        client=client,
-                        user_settings=user_settings,
-                    )
 
             if data.execution_mode == "async":
                 match machine.type:

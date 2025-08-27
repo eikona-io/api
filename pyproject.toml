@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = "==3.12.0"
 dependencies = [
-    "ruff>=0.6.2",
     "fastapi>=0.112.1",
     "uvicorn>=0.30.6",
     "sqlalchemy>=2.0.32",
@@ -20,11 +19,9 @@ dependencies = [
     "logfire[fastapi]==4.1.0",
     "opentelemetry-instrumentation-sqlalchemy>=0.47b0",
     "opentelemetry-instrumentation-asyncio>=0.47b0",
-    "clickhouse-connect>=0.7.19",
     "boto3>=1.35.5",
     "scalar-fastapi>=1.0.3",
     "cryptography>=43.0.1",
-    "google-cloud-pubsub>=2.23.1",
     "websockets>=13.0.1",
     "python-multipart>=0.0.9",
     "modal==1.1.1",
@@ -33,16 +30,12 @@ dependencies = [
     "upstash-redis>=1.2.0",
     "huggingface-hub>=0.26.0",
     "tabulate>=0.9.0",
-    "comfy-models==0.1.5",
-    "fal-client>=0.5.6",
     "stripe>=11.3.0",
     "resend>=2.5.1",
     "discord-py>=2.4.0",
-    "dub==0.18.2",
-    "logtail-python>=0.3.3",
     "nanoid>=2.0.0",
-    "google-auth>=2.40.2",
     "redis>=6.3.0",
+    "cachetools>=5.3.0",
 ]
 
 [build-system]
@@ -51,6 +44,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "ruff>=0.6.2",
     "pytest>=8.3.3",
     "pytest-asyncio>=0.24.0",
 ]

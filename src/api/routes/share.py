@@ -12,7 +12,6 @@ from api.models import OutputShare, WorkflowRun, User, WorkflowRunOutput, Deploy
 from api.routes.utils import select
 
 import os
-import dub
 import logging
 from typing import Optional
 

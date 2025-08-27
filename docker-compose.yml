@@ -19,31 +19,6 @@ services:
       - "5481:80"
     depends_on:
       - postgres
-  localstack:
-    image: localstack/localstack:latest
-    environment:
-      SERVICES: s3
-    ports:
-      - 4566:4566
-    volumes:
-      - ./aws:/etc/localstack/init/ready.d
-      - ./aws:/app/web/aws
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    volumes:
-      - ./clickhouse/data:/var/lib/clickhouse
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    environment:
-      CLICKHOUSE_DB: default
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      CLICKHOUSE_PASSWORD: password
   redis:
     image: redis:latest
     restart: always

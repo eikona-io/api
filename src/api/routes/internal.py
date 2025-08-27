@@ -15,7 +15,6 @@ from fastapi import (
     Request,
 )
 import asyncio
-import clickhouse_connect
 from uuid import uuid4
 from datetime import datetime, timezone
 from fastapi.responses import RedirectResponse
@@ -25,7 +24,6 @@ from datetime import datetime
 from enum import Enum
 import boto3
 from botocore.exceptions import ClientError
-from clickhouse_connect.driver.asyncclient import AsyncClient
 from botocore.config import Config
 import aiohttp
 import logging
@@ -80,7 +78,6 @@ async def send_webhook(
     updated_at: datetime,
     run_id: str,
     type: str = "run.updated",
-    # client: AsyncClient = Depends(get_clickhouse_client),
 ):
     # try:
     url = workflow_run["webhook"]
@@ -340,7 +337,6 @@ async def update_run(
     body: UpdateRunBody,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    # client: AsyncClient = Depends(get_clickhouse_client),
 ):
     # Use suppress_instrumentation for successful calls
     is_blocking_log_update = False
