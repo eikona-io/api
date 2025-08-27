@@ -31,7 +31,7 @@ from sqlalchemy import func, and_, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from fastapi import BackgroundTasks
-import fal_client
+# import fal_client
 from .internal import send_webhook, publish_progress_update
 from .utils import (
     apply_org_check_direct,
@@ -50,7 +50,6 @@ from .utils import (
 from botocore.config import Config
 import random
 import aioboto3
-from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.orm import defer
 from api.utils.constants import blocking_log_streaming_user_id
 
@@ -491,7 +490,6 @@ async def cancel_run(
     run_id: str,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    # client: AsyncClient = Depends(get_clickhouse_client)
 ):
     try:
         # Cancel the modal function
@@ -615,7 +613,6 @@ async def update_status(
     status: str,
     background_tasks: BackgroundTasks,
     workflow_run,
-    client: AsyncClient,
 ):
     async with get_db_context() as db:
         updated_at = dt.datetime.now(dt.UTC)
@@ -667,243 +664,12 @@ async def update_status(
     )
 
 
-async def run_model(
-    request: Request,
-    data: ModelRunRequest,
-    params: dict,
-    workflow_run,
-    background_tasks,
-    client: AsyncClient,
-    user_settings=None,
-):
-    run_id = params.get("prompt_id")
-    model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
-    if not model:
-        raise HTTPException(status_code=404, detail=f"Model {data.model_id} not found")
-
-    # def on_queue_update(update):
-    #     if isinstance(update, fal_client.InProgress):
-    #         for log in update.logs:
-    #             print(log["message"])
-
-    if model.fal_id is not None:
-        start_time = dt.datetime.now(dt.UTC)
-        result = await fal_client.subscribe_async(
-            model.fal_id,
-            arguments={
-                # "seed": 6252023,
-                # "image_size": "landscape_4_3",
-                "num_images": 1,
-                **params.get("inputs", {}),
-            },
-            # on_queue_update=on_queue_update,
-        )
-        end_time = dt.datetime.now(dt.UTC)
-
-        is_image = result.get("images", [])
-        is_video = result.get("video", [])
-        if model.cost_per_megapixel is not None:
-            total_cost = 0
-            if is_image:
-                for image in result.get("images", []):
-                    # Calculate megapixels from width and height
-                    width = image.get("width", 0)
-                    height = image.get("height", 0)
-                    megapixels = (width * height) / 1_000_000
-                    total_cost += megapixels * model.cost_per_megapixel
-                cost = total_cost
-            elif is_video:
-                cost = model.cost_per_megapixel
-
-        print(result)
-        print(cost)
-
-        async with get_db_context() as db:
-            output_data = {}
-            if is_image:
-                output_data["images"] = [
-                    {
-                        "url": image.get(
-                            "url", ""
-                        ),  # Assuming result.images contains objects with a url attribute
-                        "type": "output",
-                        "filename": f"image_{idx}.jpeg",
-                        "subfolder": "",
-                        "is_public": True,  # You may want to make this configurable
-                        "upload_duration": 0,  # You may want to calculate this if needed
-                    }
-                    for idx, image in enumerate(result.get("images", []))
-                ]
-            elif is_video:
-                print("video", result)
-                output_data["video"] = [
-                    {
-                        "url": result.get("video", {}).get("url", ""),
-                        "type": "output",
-                        "filename": "output.mp4",
-                        "subfolder": "",
-                        "is_public": True,
-                        "upload_duration": 0,
-                    }
-                ]
-
-            updated_at = dt.datetime.now(dt.UTC)
-            newOutput = WorkflowRunOutput(
-                id=uuid4(),  # Add this line to generate a new UUID for the primary key
-                created_at=updated_at,
-                updated_at=updated_at,
-                run_id=run_id,
-                data=output_data,
-                # node_meta=body.node_meta,
-            )
-            db.add(newOutput)
-            await db.commit()
-            await db.refresh(newOutput)
-            output_dict = newOutput.to_dict()
-
-            if cost is not None:
-                gpu_event = GPUEvent(
-                    id=uuid4(),
-                    user_id=workflow_run.user_id,
-                    org_id=workflow_run.org_id,
-                    cost=cost,
-                    cost_item_title=model.name,
-                    start_time=start_time,
-                    end_time=end_time,
-                    updated_at=updated_at,
-                    gpu_provider="fal",
-                )
-                db.add(gpu_event)
-                await db.commit()
-                await db.refresh(gpu_event)
-
-            return [output_dict]
-
-    print(result)
-
-    return []
-
-    # if not model.is_comfyui:
-    #     update_status(run_id, "queued", background_tasks, client, workflow_run)
-
-    # result = await ComfyDeployRunner().run.remote.aio(params)
-
-    # if not model.is_comfyui:
-    #     update_status(run_id, "uploading", background_tasks, client, workflow_run)
-
-    async with get_db_context() as db:
-        # user_settings is passed as parameter to avoid duplicate DB calls
-        if user_settings is None:
-            user_settings = await get_user_settings(request, db)
-
-        # if model.is_comfyui:
-    # output_query = (
-    #     select(WorkflowRunOutput)
-    #     .where(WorkflowRunOutput.run_id == run_id)
-    #     .order_by(WorkflowRunOutput.created_at.desc())
-    # )
-
-    # result = await db.execute(output_query)
-    # outputs = result.scalars().all()
-
-    # user_settings = await get_user_settings(request, db)
-    # post_process_outputs(outputs, user_settings)
-
-    # return [output.to_dict() for output in outputs]
-
-    bucket = os.getenv("SPACES_BUCKET_V2")
-    region = os.getenv("SPACES_REGION_V2")
-    access_key = os.getenv("SPACES_KEY_V2")
-    secret_key = os.getenv("SPACES_SECRET_V2")
-    public = True
-
-    if user_settings is not None:
-        if user_settings.output_visibility == "private":
-            public = False
-
-        if user_settings.custom_output_bucket:
-            bucket = user_settings.s3_bucket_name
-            region = user_settings.s3_region
-            access_key = user_settings.s3_access_key_id
-            secret_key = user_settings.s3_secret_access_key
-
-    for output in model.outputs:
-        if output.class_type == "ComfyDeployStdOutputImage":
-            # Generate the object key
-            file_name = f"{output.output_id}.jpeg"
-            object_key = f"outputs/runs/{run_id}/{file_name}"
-            encoded_object_key = quote(object_key)
-            download_url = f"{os.getenv('SPACES_ENDPOINT_V2')}/{encoded_object_key}"
-
-            async with aioboto3.Session().client(
-                "s3",
-                region_name=region,
-                aws_access_key_id=access_key,
-                aws_secret_access_key=secret_key,
-                config=Config(signature_version="s3v4"),
-            ) as s3_client:
-                try:
-                    start_time = dt.datetime.now()
-                    file_content = result
-                    await s3_client.put_object(
-                        Bucket=bucket,
-                        Key=object_key,
-                        Body=file_content,
-                        ACL="public-read" if public else "private",
-                        ContentType="image/jpeg",
-                    )
-                    upload_duration = (dt.datetime.now() - start_time).total_seconds()
-
-                    file_url = (
-                        f"https://{bucket}.s3.{region}.amazonaws.com/{object_key}"
-                    )
-
-                except Exception as e:
-                    logger.error(f"Error uploading file: {str(e)}")
-                    raise HTTPException(status_code=500, detail="Error uploading file")
-
-            output_data = {
-                "images": [
-                    {
-                        "url": download_url,
-                        "type": "output",
-                        "filename": file_name,
-                        "subfolder": "",
-                        "is_public": public,
-                        "upload_duration": upload_duration,
-                    }
-                ]
-            }
-
-            updated_at = dt.datetime.now(dt.UTC)
-
-            newOutput = WorkflowRunOutput(
-                id=uuid4(),  # Add this line to generate a new UUID for the primary key
-                created_at=updated_at,
-                updated_at=updated_at,
-                run_id=run_id,
-                data=output_data,
-                # node_meta=body.node_meta,
-            )
-            db.add(newOutput)
-            await db.commit()
-            await db.refresh(newOutput)
-
-            output_dict = newOutput.to_dict()
-            await post_process_output_data(output_dict["data"], user_settings)
-
-            update_status(run_id, "success", background_tasks, client, workflow_run)
-
-            return [output_dict]
-
-
 async def run_model_async(
     request: Request,
     data: ModelRunRequest,
     params: dict,
     workflow_run,
     background_tasks,
-    client: AsyncClient,
 ):
     run_id = params.get("prompt_id")
     model = next((m for m in AVAILABLE_MODELS if m.id == data.model_id), None)
@@ -981,7 +747,6 @@ async def _create_run(
     data: CreateRunRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    client: Optional[AsyncClient] = None,
 ):
     # check if the user has reached the spend limit
     # exceed_spend_limit = await is_exceed_spend_limit(request, db)
@@ -1442,35 +1207,6 @@ async def _create_run(
                     **params,
                     "cd_token": token,
                 }
-
-            if is_model_run:
-                if data.execution_mode == "async":
-                    params = {
-                        **params,
-                        "auth_token": token,
-                    }
-                    return await run_model_async(
-                        request,
-                        data,
-                        params=params,
-                        workflow_run=new_run,
-                        background_tasks=background_tasks,
-                        client=client,
-                    )
-                if data.execution_mode == "sync":
-                    params = {
-                        **params,
-                        "auth_token": token,
-                    }
-                    return await run_model(
-                        request,
-                        data,
-                        params=params,
-                        workflow_run=new_run,
-                        background_tasks=background_tasks,
-                        client=client,
-                        user_settings=user_settings,
-                    )
 
             if data.execution_mode == "async":
                 match machine.type:

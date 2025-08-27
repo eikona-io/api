@@ -29,10 +29,6 @@ services:
         UPSTASH_REDIS_META_REST_URL: "http://${REDIS_HOST:-host.docker.internal}:80"
         UPSTASH_REDIS_META_REST_TOKEN: "example_token"
         # Default to host.docker.internal, override in CI
-        CLICKHOUSE_HOST: "${CH_HOST:-host.docker.internal}"
-        CLICKHOUSE_USER: "default"
-        CLICKHOUSE_PASSWORD: "password"
-        CLICKHOUSE_PORT: 8123
         MODAL_TOKEN_ID: ${MODAL_TOKEN_ID}
         MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET}
         SPACES_BUCKET_V2: "comfy-deploy-output-dev"
@@ -82,31 +78,6 @@ services:
       - "5481:80"
     depends_on:
       - postgres
-  # localstack:
-  #   image: localstack/localstack:latest
-  #   environment:
-  #     SERVICES: s3
-  #   ports:
-  #     - 4566:4566
-  #   volumes:
-  #     - ./aws:/etc/localstack/init/ready.d
-  #     - ./aws:/app/web/aws
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    volumes:
-      - ./clickhouse/data:/var/lib/clickhouse
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    environment:
-      CLICKHOUSE_DB: default
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-      CLICKHOUSE_PASSWORD: password
   redis:
     image: redis:latest
     restart: always

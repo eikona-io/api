@@ -29,8 +29,8 @@ from fastapi.responses import JSONResponse
 import httpx
 from functools import lru_cache, wraps
 import os
-from google.cloud import pubsub_v1
-from google.api_core import exceptions
+# from google.cloud import pubsub_v1
+# from google.api_core import exceptions
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from .subscription import get_current_plan, get_usage_detail
@@ -849,18 +849,18 @@ async def send_workflow_update(workflow_id: str, data: dict):
         logging.error(f"Error sending updateWorkflow event: {error}")
 
 
-async def create_topic_if_not_exists(project_id: str, topic_id: str):
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(project_id, topic_id)
+# async def create_topic_if_not_exists(project_id: str, topic_id: str):
+#     publisher = pubsub_v1.PublisherClient()
+#     topic_path = publisher.topic_path(project_id, topic_id)
 
-    try:
-        publisher.create_topic(request={"name": topic_path})
-        print(f"Topic {topic_path} created.")
-    except exceptions.AlreadyExists:
-        print(f"Topic {topic_path} already exists.")
-    except Exception as e:
-        print(f"Error creating topic: {e}")
-        raise
+#     try:
+#         publisher.create_topic(request={"name": topic_path})
+#         print(f"Topic {topic_path} created.")
+#     except exceptions.AlreadyExists:
+#         print(f"Topic {topic_path} already exists.")
+#     except Exception as e:
+#         print(f"Error creating topic: {e}")
+#         raise
 
 
 # async def send_realtime_update(id: str, data: dict):

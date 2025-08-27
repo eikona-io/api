@@ -36,7 +36,6 @@ import logging
 from typing import List, Optional
 
 from fastapi import Depends
-from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime as dt
 # from asyncio import Queue
