@@ -38,7 +38,7 @@ RUN bun install
 
 # Copy migration scripts (these change less frequently)
 COPY migrate.mts /app/
-COPY migrate-clickhouse.mts /app/
+# COPY migrate-clickhouse.mts /app/
 
 # Copy source code and tests last (these change most frequently)
 COPY src/ /app/src/
