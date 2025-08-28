@@ -122,6 +122,8 @@ def generate_machine_token(user_id: str, org_id: Optional[str] = None) -> str:
             "/api/file-upload",
             "/api/comfy-org/*",
             "/api/session/callback*",
+            "/api/session/*",
+            "/api/machine-version/*/error-start-logs",
             
             # Backward compatibility for ComfyOrg API
             "/proxy/*",

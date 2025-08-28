@@ -14,6 +14,8 @@ import os
 from uuid import UUID
 import uuid
 
+from api.routes.log import redis
+
 from api.modal.builder import (
     BuildMachineItem,
     GPUType,
@@ -2605,4 +2607,54 @@ async def import_machine(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to import machine: {str(e)}"
+        )
+
+
+class ErrorLogEntry(BaseModel):
+    timestamp: float
+    message: str
+    
+
+@router.post("/machine-version/{version_id}/error-start-logs")
+async def add_error_logs(
+    request: Request,
+    version_id: UUID,
+    error_start_logs: List[ErrorLogEntry]
+):
+    try:
+        # Convert logs to format expected by Redis
+        log_entries = []
+        for log in error_start_logs:
+            log_entries.append({
+                "timestamp": log.timestamp,
+                "logs": log.message,
+            })
+
+        # Insert logs into Redis stream
+        await redis.set(f"error_start_log:{str(version_id)}", json.dumps(log_entries))
+        await redis.expire(f"error_start_log:{str(version_id)}", 14400)
+        
+        return JSONResponse(content={"message": "Error logs added successfully"})
+
+    except Exception as e:
+        logger.error(f"Error adding error logs: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add error logs: {str(e)}"
+        )
+        
+@router.get("/machine-version/{version_id}/error-start-logs")
+async def get_error_logs(
+    request: Request,
+    version_id: str,
+):
+    try:
+        # Get logs from Redis stream
+        logs = await redis.get(f"error_start_log:{str(version_id)}")
+        return JSONResponse(content={"logs": json.loads(logs)})
+    except Exception as e:
+        logger.error(f"Error getting error logs: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get error logs: {str(e)}"
         )

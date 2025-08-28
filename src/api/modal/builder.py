@@ -1,4 +1,3 @@
-from pprint import pprint
 from typing import Optional, Dict, List, Any
 
 from api.database import get_db_context
@@ -9,9 +8,6 @@ from api.routes.utils import select
 from pydantic import BaseModel, Field, field_validator
 from fastapi import (
     HTTPException,
-    WebSocket,
-    WebSocketDisconnect,
-    Request,
     Query,
 )
 from fastapi.responses import JSONResponse
@@ -19,7 +15,6 @@ import os
 from enum import Enum
 import json
 import time
-import aiohttp
 import asyncio
 import logging
 import modal
@@ -28,9 +23,6 @@ import tempfile
 from api.database import get_db
 import shutil
 
-machine_id_websocket_dict = {}
-machine_id_websocket_dict_live_logs = {}
-machine_id_status = {}
 from fastapi import BackgroundTasks
 import logging
 from typing import List, Optional
@@ -38,6 +30,9 @@ from typing import List, Optional
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime as dt
+
+machine_id_websocket_dict = {}
+machine_id_status = {}
 # from asyncio import Queue
 
 logger = logging.getLogger(__name__)
@@ -215,16 +210,6 @@ def set_machine_always_on(app_name: str, body: KeepWarmBody):
     return {"status": "success"}
 
 
-# @router.post("/modal/{app_name}/keep-warm-workspace")
-# def set_modal_keep_warm_workspace(app_name: str, body: KeepWarmBody):
-#     try:
-#         a = modal.Cls.lookup(app_name, "Workspace")
-#         a().web.keep_warm(body.warm_pool_size)
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Error keep machine warm {str(e)}")
-#     return {"status": "success"}
-
-
 class CancelFunctionBody(BaseModel):
     run_id: Optional[str] = None
     function_id: str
@@ -239,113 +224,6 @@ def cancel_run(body: CancelFunctionBody):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error cancel function {str(e)}")
     return {"status": "success"}
-
-
-# @router.websocket("/ws/{machine_id}")
-# async def websocket_endpoint(
-#     # request: Request,
-#     websocket: WebSocket,
-#     machine_id: str,
-#     client: AsyncClient = Depends(get_clickhouse_client),
-# ):
-#     await websocket.accept()
-#     # machine_id_websocket_dict[machine_id] = websocket
-
-#     try:
-#         last_update_time = None
-
-#         async with get_db_context() as db:
-#             machine = (
-#                 await db.execute(
-#                     select(Machine).where(Machine.id == machine_id)
-#                     # .apply_org_check(request)
-#                 )
-#             ).scalar_one_or_none()
-
-#         if not machine:
-#             raise HTTPException(status_code=404, detail="Machine not found")
-
-#         last_update_time = machine.updated_at
-
-#         while True:
-#             # Fetch logs from ClickHouse
-#             query = f"""
-#             SELECT timestamp, message
-#             FROM log_entries
-#             WHERE machine_id = '{machine_id}'
-#             {f"AND timestamp > toDateTime64('{last_update_time.isoformat()}', 6)" if last_update_time else ""}
-#             ORDER BY timestamp ASC
-#             LIMIT 100
-#             """
-#             result = await client.query(query)
-
-#             if result.result_rows:
-#                 for row in result.result_rows:
-#                     timestamp, logs = row
-#                     last_update_time = timestamp
-
-#                     # Check if logs is a string or a list
-#                     if isinstance(logs, str):
-#                         try:
-#                             # Try to parse the string as JSON
-#                             log_entries = json.loads(logs)
-#                             if not isinstance(log_entries, list):
-#                                 log_entries = [log_entries]
-#                         except json.JSONDecodeError:
-#                             # If parsing fails, treat it as a single log entry
-#                             log_entries = [logs]
-#                     elif isinstance(logs, list):
-#                         log_entries = logs
-#                     else:
-#                         # If it's neither string nor list, convert to string and wrap in a list
-#                         log_entries = [str(logs)]
-
-#                     # Process each log entry
-#                     for log_entry in log_entries:
-#                         log_data = {
-#                             "event": "LOGS",
-#                             "data": {
-#                                 "machine_id": machine_id,
-#                                 "logs": str(log_entry),
-#                                 "timestamp": timestamp.timestamp(),
-#                             },
-#                         }
-#                         await websocket.send_text(json.dumps(log_data))
-#             else:
-#                 # Send a keepalive message if no new logs
-#                 await websocket.send_text(json.dumps({"event": "KEEPALIVE"}))
-
-#             # Wait for a short interval before the next poll
-#             await asyncio.sleep(1)
-#     except WebSocketDisconnect:
-#         pass
-#     # except WebSocketDisconnect:
-#     #     if machine_id in machine_id_websocket_dict:
-#     #         machine_id_websocket_dict.pop(machine_id)
-#     # finally:
-#     #     if machine_id in machine_id_websocket_dict:
-#     #         machine_id_websocket_dict.pop(machine_id)
-
-
-# @router.websocket("/ws/{machine_id}/live-logs")
-# async def websocket_endpoint_live_logs(websocket: WebSocket, machine_id: str):
-#     await websocket.accept()
-#     machine_id_websocket_dict_live_logs[machine_id] = websocket
-
-#     task = asyncio.create_task(listen_logs(machine_id=machine_id))
-
-#     try:
-#         while True:
-#             data = await websocket.receive_text()
-#             # global last_activity_time
-#             # last_activity_time = time.time()
-#             # logger.info(f"Extended inactivity time to {global_timeout}")
-#             # You can handle received messages here if needed
-#     except WebSocketDisconnect:
-#         if machine_id in machine_id_websocket_dict_live_logs:
-#             machine_id_websocket_dict_live_logs.pop(machine_id)
-
-#         task.cancel()
 
 
 @router.post("/create")
@@ -382,135 +260,9 @@ def find_app_id(app_list, app_name):
     return None
 
 
-# @router.post("/stop-app")
-# async def stop_app(item: StopAppItem):
-#     # cmd = f"modal app list | grep {item.machine_id} | awk -F '│' '{{print $2}}'"
-#     cmd = "modal app list --json"
-
-#     env = os.environ.copy()
-#     env["COLUMNS"] = "10000"  # Set the width to a large value
-#     find_id_process = await asyncio.subprocess.create_subprocess_shell(
-#         cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
-#     )
-#     await find_id_process.wait()
-
-#     stdout, stderr = await find_id_process.communicate()
-#     if stdout:
-#         app_id = stdout.decode().strip()
-#         app_list = json.loads(app_id)
-#         app_id = find_app_id(app_list, item.machine_id)
-#         logger.info(f"cp_process stdout: {app_id}")
-#     if stderr:
-#         logger.info(f"cp_process stderr: {stderr.decode()}")
-
-#     cp_process = await asyncio.subprocess.create_subprocess_exec(
-#         "modal",
-#         "app",
-#         "stop",
-#         app_id,
-#         stdout=asyncio.subprocess.PIPE,
-#         stderr=asyncio.subprocess.PIPE,
-#     )
-#     await cp_process.wait()
-#     logger.info(f"Stopping app {item.machine_id}")
-#     stdout, stderr = await cp_process.communicate()
-#     if stdout:
-#         logger.info(f"cp_process stdout: {stdout.decode()}")
-#     if stderr:
-#         logger.info(f"cp_process stderr: {stderr.decode()}")
-
-#     if cp_process.returncode == 0:
-#         return JSONResponse(status_code=200, content={"status": "success"})
-#     else:
-#         return JSONResponse(
-#             status_code=500, content={"status": "error", "error": stderr.decode()}
-#         )
-
-
 # Initialize the logs cache
 machine_logs_cache = {}
 import_failed_logs_cache = {}
-
-
-async def listen_logs(machine_id):
-    process = await asyncio.subprocess.create_subprocess_shell(
-        "modal app logs " + machine_id,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, "COLUMNS": "10000"},
-    )
-
-    async def read_stream(stream, isStderr):
-        buffer = []
-        last_send_time = time.time()
-        buffer_interval = 5  # seconds
-
-        while True:
-            line = await stream.readline()
-            if line:
-                l = line.decode("utf-8").strip()
-                if l:
-                    buffer.append(l)
-                    current_time = time.time()
-                    if current_time - last_send_time >= buffer_interval:
-                        if machine_id in machine_id_websocket_dict_live_logs:
-                            await machine_id_websocket_dict_live_logs[
-                                machine_id
-                            ].send_text(
-                                json.dumps(
-                                    {
-                                        "event": "LOGS",
-                                        "data": {
-                                            "machine_id": machine_id,
-                                            "logs": "\n".join(buffer),
-                                            "timestamp": current_time,
-                                        },
-                                    }
-                                )
-                            )
-                        buffer = []
-                        last_send_time = current_time
-            else:
-                break
-
-        # Send any remaining logs in the buffer
-        if buffer:
-            if machine_id in machine_id_websocket_dict_live_logs:
-                await machine_id_websocket_dict_live_logs[machine_id].send_text(
-                    json.dumps(
-                        {
-                            "event": "LOGS",
-                            "data": {
-                                "machine_id": machine_id,
-                                "logs": "\n".join(buffer),
-                                "timestamp": time.time(),
-                            },
-                        }
-                    )
-                )
-
-    stdout_task = asyncio.create_task(read_stream(process.stdout, False))
-    stderr_task = asyncio.create_task(read_stream(process.stderr, True))
-
-    await asyncio.wait([stdout_task, stderr_task])
-
-    # Wait for the subprocess to finish
-    await process.wait()
-
-
-async def send_json_to_ws(machine_id, event, data):
-    if machine_id in machine_id_websocket_dict:
-        await machine_id_websocket_dict[machine_id].send_text(
-            json.dumps(
-                {
-                    "event": event,
-                    "data": data,
-                }
-            )
-        )
-
-
-# ClickHouse inserts removed; using Redis streams instead via insert_log_entry_to_redis
 
 
 async def update_machine_version_build_time(
@@ -550,22 +302,9 @@ async def build_logic(item: BuildMachineItem):
     with tempfile.TemporaryDirectory() as temp_dir:
         folder_path = temp_dir
 
-        # os.makedirs("./app/builds", exist_ok=True)
-
         folder_path = f"{folder_path}/{item.machine_id}"
         machine_id_status[item.machine_id] = True
 
-        # Ensure the os path is same as the current directory
-        # os.chdir(os.path.dirname(os.path.realpath(__file__)))
-        # print(
-        #     f"builder - Current working directory: {os.getcwd()}"
-        # )
-
-        # Copy the app template
-        # os.system(f"cp -r template {folder_path}")
-        print(
-            f"builder - VSCODE_DEV_CONTAINER: {os.environ.get('VSCODE_DEV_CONTAINER', 'false')}"
-        )
         version_to_file = item.machine_builder_version  # .replace(".", "_")
         to_modal_deps_version = {"2": None, "3": "2024.04", "4": "2025.06"}
         cp_process = await asyncio.subprocess.create_subprocess_exec(
@@ -575,11 +314,7 @@ async def build_logic(item: BuildMachineItem):
             folder_path,
         )
 
-        print(os.listdir("."))
-
-        print("copying file, ", folder_path)
         await cp_process.wait()
-        print("copied file")
 
         pip_modules = set()
         if item.snapshot != None:
@@ -590,6 +325,7 @@ async def build_logic(item: BuildMachineItem):
         # Write the config file
         config = {
             "name": item.name,
+            "version_id": str(item.machine_version_id),
             "deploy_test": "False",
             "gpu": item.gpu.value,
             "public_model_volume": public_model_volume_name,
@@ -665,25 +401,12 @@ async def build_logic(item: BuildMachineItem):
         with open(my_app_path, "w") as f:
             f.write(modified_content)
         
-        print(f"Debug: Modified my_app.py with inline config")
-
-        # if item.snapshot != None:
-        #     with open(f"{folder_path}/data/snapshot.json", "w") as f:
-        #         f.write(item.snapshot.json())
-
-        # with open(f"{folder_path}/data/models.json", "w") as f:
-        #     if item.models != None:
-        #         models_json_list = [model.dict() for model in item.models]
-        #         models_json_string = json.dumps(models_json_list)
-        #         f.write(models_json_string)
-        #     else:
-        #         f.write("[]")
+        print("Debug: Modified my_app.py with inline config")
 
         # os.chdir(folder_path)
         # process = subprocess.Popen(f"modal deploy {folder_path}/app.py", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, shell=True)
         final_env = {
             **os.environ,
-            # "COLUMNS": "5000",
         }
         if to_modal_deps_version[version_to_file]:
             final_env["MODAL_IMAGE_BUILDER_VERSION"] = to_modal_deps_version[
@@ -803,18 +526,6 @@ async def build_logic(item: BuildMachineItem):
                                     {"type": "URL", "value": url}
                                 )
 
-                                await send_json_to_ws(
-                                    item.machine_id,
-                                    "LOGS",
-                                    {
-                                        "machine_id": item.machine_id,
-                                        "logs": f"App image built, url: {url}",
-                                        "timestamp": time.time(),
-                                    },
-                                )
-
-                        # if ()
-
                     else:
                         # is error
                         logger.error(l)
@@ -922,7 +633,6 @@ async def build_logic(item: BuildMachineItem):
         await clear_machine_logs_and_remove_folder(item.machine_id, folder_path)
         return
 
-
     if not item.is_deployment:
         async with get_db_context() as db:
             # Update machine version build time
@@ -962,14 +672,6 @@ async def build_logic(item: BuildMachineItem):
                     machine.id,
                     KeepWarmBody(warm_pool_size=machine.keep_warm, gpu=machine.gpu),
                 )
-
-        await send_json_to_ws(
-            item.machine_id,
-            "FINISHED",
-            {
-                "status": "succuss",
-            },
-        )
         
     if item.is_deployment:
         async with get_db_context() as db:
