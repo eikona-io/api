@@ -406,7 +406,7 @@ async def create_session_background_task(
                 """Poll Modal function status every 2 seconds for up to 20 seconds"""
                 print("poll_modal_function_status", modal_function_id)
                 start_time = asyncio.get_event_loop().time()
-                max_duration = 5 * 60 # 5 minutes
+                max_duration = 10 * 60 # 10 minutes
                 poll_interval = 2  # seconds
                 
                 while (asyncio.get_event_loop().time() - start_time) < max_duration:
@@ -436,6 +436,9 @@ async def create_session_background_task(
                     await asyncio.sleep(poll_interval)
                 
                 # Timeout reached without getting URL
+                async with get_db_context() as db:
+                    send_log_entry(session_id, machine_id, "Reached timeout period 10 minutes, deleting session, contact support if needed.", "info")
+                    await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
                 return None
             
             
