@@ -406,7 +406,7 @@ async def create_session_background_task(
                 """Poll Modal function status every 2 seconds for up to 20 seconds"""
                 print("poll_modal_function_status", modal_function_id)
                 start_time = asyncio.get_event_loop().time()
-                max_duration = 20  # seconds
+                max_duration = 5 * 60 # 5 minutes
                 poll_interval = 2  # seconds
                 
                 while (asyncio.get_event_loop().time() - start_time) < max_duration:
@@ -420,7 +420,7 @@ async def create_session_background_task(
                             # Check if function has completed or failed
                             if status == InputStatus.SUCCESS:
                                 # Function completed successfully, but URL might not be in queue yet
-                                pass
+                                break
                             elif status in [InputStatus.FAILURE, InputStatus.TERMINATED]:
                                 # Function failed or was terminated
                                 send_log_entry(session_id, machine_id, f"Modal function failed with status: {status.name}", "info")
