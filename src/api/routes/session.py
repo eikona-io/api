@@ -361,26 +361,6 @@ async def create_session_background_task(
             modal_function_id = result.object_id
             print("modal_function_id", modal_function_id)
 
-            # gpuEvent = None
-            # while gpuEvent is None:
-            # async with get_db_context() as db:
-            #     gpuEvent = cast(
-            #         Optional[GPUEvent],
-            #         (
-            #             await db.execute(
-            #                 (
-            #                     select(GPUEvent)
-            #                     .where(GPUEvent.session_id == str(session_id))
-            #                     .where(GPUEvent.end_time.is_(None))
-            #                     .apply_org_check(request)
-            #                 )
-            #             )
-            #         ).scalar_one_or_none(),
-            #     )
-
-            # if gpuEvent is None:
-            #     await asyncio.sleep(1)
-
             print("async_creation", status_queue)
             if status_queue is not None:
                 await status_queue.put(modal_function_id)
@@ -422,42 +402,72 @@ async def create_session_background_task(
                     await db.refresh(gpuEvent)
                     return gpuEvent
                 
-            # async def wait_for_url_from_callback():
-                # while True:
-                #     async with get_db_context() as db:
-                #         result = await db.execute(
-                #             select(GPUEvent)
-                #             .where(GPUEvent.session_id == session_id)
-                #             .where(GPUEvent.end_time.is_(None))
-                #         )
-                #         gpuEvent = result.scalar_one_or_none()
-
-                #         print("gpuEvent", gpuEvent.modal_function_id)
+            async def poll_modal_function_status():
+                """Poll Modal function status every 2 seconds for up to 20 seconds"""
+                print("poll_modal_function_status", modal_function_id)
+                start_time = asyncio.get_event_loop().time()
+                max_duration = 20  # seconds
+                poll_interval = 2  # seconds
+                
+                while (asyncio.get_event_loop().time() - start_time) < max_duration:
+                    try:
+                        # Check Modal function status
+                        call_graph = await modal.functions.FunctionCall.from_id(modal_function_id).get_call_graph.aio()
+                        if call_graph and len(call_graph) > 0:
+                            status = call_graph[0].status
+                            print(f"poll_modal_function_status Modal function status: {status}")
+                            
+                            # Check if function has completed or failed
+                            if status == InputStatus.SUCCESS:
+                                # Function completed successfully, but URL might not be in queue yet
+                                pass
+                            elif status in [InputStatus.FAILURE, InputStatus.TERMINATED]:
+                                # Function failed or was terminated
+                                send_log_entry(session_id, machine_id, f"Modal function failed with status: {status.name}", "info")
+                                send_log_entry(session_id, machine_id, "Recommending rebuilding the machine to fix this issue.", "info")
+                                async with get_db_context() as db:
+                                    await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+                                break
+                                # raise Exception(f"poll_modal_function_status Modal function failed with status: {status}")
                         
-                #         if gpuEvent.tunnel_url:
-                #             logger.info(f"Session {session_id} tunnel URL updated")
-                #             return gpuEvent
+                    except Exception as e:
+                        logger.error(f"poll_modal_function_status Error polling Modal function status: {e}")
                     
-                #     await asyncio.sleep(1)
+                    await asyncio.sleep(poll_interval)
+                
+                # Timeout reached without getting URL
+                return None
+            
+            
+            queue_task = asyncio.create_task(wait_for_url_from_queue())
+            poll_task = asyncio.create_task(poll_modal_function_status())
+            
+            # Wait for the first one to complete
+            done, pending = await asyncio.wait(
+                [queue_task, poll_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel any pending tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-            # done, pending = await asyncio.wait(
-            #     [
-            #         asyncio.create_task(wait_for_url_from_queue()),
-            #         asyncio.create_task(wait_for_url_from_callback())
-            #     ],
-            #     return_when=asyncio.FIRST_COMPLETED
-            # )
-
-            # print("done", done.result())
-
-            # # Cancel any pending tasks
-            # for task in pending:
-            #     task.cancel()
-
-            # return done.result()
-
-            result = await wait_for_url_from_queue()
-
+            # Get the result from the completed task
+            result = None
+            for task in done:
+                if not task.cancelled():
+                    task_result = await task
+                    if task_result:
+                        result = task_result
+                        break
+            
+            if not result:
+                raise Exception("Failed to get tunnel URL within timeout period")
+                
             return result
     except Exception as e:
         send_log_entry(session_id, machine_id, str(e), "info")
