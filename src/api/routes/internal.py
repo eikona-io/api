@@ -213,12 +213,12 @@ redis_realtime = (
     else None
 )
 
-async def ensure_redis_stream_expires(run_id: str):
+async def ensure_redis_stream_expires(run_id: str, ttl: int = 43200):
     # Set TTL (this will fail silently if key already has TTL, but that's fine)
     try:
         if redis is None:
             return
-        await redis.execute(["EXPIRE", run_id, "43200"])
+        await redis.execute(["EXPIRE", run_id, ttl])
     except:
         # Key already has TTL or other non-critical error, safe to ignore
         pass
