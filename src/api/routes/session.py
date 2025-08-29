@@ -411,6 +411,8 @@ async def create_session_background_task(
                 max_duration = 10 * 60 # 10 minutes
                 poll_interval = 2  # seconds
                 
+                consumed = False
+                
                 while (asyncio.get_event_loop().time() - start_time) < max_duration:
                     try:
                         # Check Modal function status
@@ -422,6 +424,7 @@ async def create_session_background_task(
                             # Check if function has completed or failed
                             if status == InputStatus.SUCCESS:
                                 # Function completed successfully, but URL might not be in queue yet
+                                consumed = True
                                 break
                             elif status in [InputStatus.FAILURE, InputStatus.TERMINATED]:
                                 # Function failed or was terminated
@@ -429,6 +432,7 @@ async def create_session_background_task(
                                 send_log_entry(session_id, machine_id, "Recommending rebuilding the machine to fix this issue.", "info")
                                 async with get_db_context() as db:
                                     await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+                                consumed = True
                                 break
                                 # raise Exception(f"poll_modal_function_status Modal function failed with status: {status}")
                         
@@ -436,11 +440,13 @@ async def create_session_background_task(
                         logger.error(f"poll_modal_function_status Error polling Modal function status: {e}")
                     
                     await asyncio.sleep(poll_interval)
-                
+            
+                if not consumed:
                 # Timeout reached without getting URL
-                async with get_db_context() as db:
-                    send_log_entry(session_id, machine_id, "Reached timeout period 10 minutes, deleting session, contact support if needed.", "info")
-                    await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+                    async with get_db_context() as db:
+                        send_log_entry(session_id, machine_id, "Reached timeout period 10 minutes, deleting session, contact support if needed.", "info")
+                        await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+                    
                 return None
             
             
