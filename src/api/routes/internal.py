@@ -427,7 +427,7 @@ async def update_run(
                     # Skip returning the workflow run to avoid re-fetching the data
                     # .returning(WorkflowRun)
                 )
-                # result = await db.execute(update_stmt)
+                await db.execute(update_stmt)
                 await db.commit()
 
                 # workflow_run = result.scalar_one()
