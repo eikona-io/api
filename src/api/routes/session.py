@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import inspect
 import os
 from pprint import pprint
-from .internal import insert_log_entry_to_redis, clear_redis_log
+from .internal import insert_log_entry_to_redis, clear_redis_log, publish_progress_update
 from api.routes.machines import (
     GitCommitHash,
     redeploy_machine,
@@ -81,6 +81,7 @@ from api.models import (
     GPUEvent,
     Machine,
     MachineVersion,
+    WorkflowRun,
     get_machine_columns,
 )
 from api.database import get_db, get_db_context
@@ -349,6 +350,7 @@ async def create_session_background_task(
 
     try:
         print("async_creation", status_queue)
+        send_log_entry(session_id, machine_id, "Warming up ComfyUI...", "info")
         async with modal.Queue.ephemeral() as q:
             if has_increase_timeout:
                 if has_new_tunnel_params:
@@ -1438,6 +1440,43 @@ class DeleteSessionResponse(BaseModel):
     success: bool
 
 
+# async def mark_sessions_run_as_cancelled(session_id: str):
+#     async with get_db_context() as db:
+#         # Update and return the IDs in a single query
+        
+#         # print("mark_sessions_run_as_cancelled", session_id)
+#         result = await db.execute(
+#             update(WorkflowRun)
+#             .where(WorkflowRun.gpu_event_id == session_id)
+#             .values(status="cancelled")
+#             .returning(WorkflowRun.id, WorkflowRun.workflow_id, WorkflowRun.user_id, WorkflowRun.org_id)
+#         )
+        
+#         # Extract the run IDs from the result
+#         run_ids = [row[0] for row in result.fetchall()]
+#         workflow_ids = [row[1] for row in result.fetchall()]
+#         user_ids = [row[2] for row in result.fetchall()]
+#         org_ids = [row[3] for row in result.fetchall()]
+        
+#         for run_id, workflow_id, user_id, org_id in zip(run_ids, workflow_ids, user_ids, org_ids):
+#             status_event = {
+#                 "run_id": str(run_id),
+#                 "workflow_id": workflow_id,
+#                 "status": "cancelled",
+#             }
+            
+#             # print("mark_sessions_run_as_cancelled:update", str(run_id), status_event, str(user_id) if user_id else None, str(org_id) if org_id else None)
+            
+#             await publish_progress_update(
+#                 str(run_id),
+#                 status_event,
+#                 user_id=str(user_id) if user_id else None,
+#                 org_id=str(org_id) if org_id else None,
+#             )
+        
+#         # Return the list of cancelled run IDs
+#         return run_ids
+
 # Delete a session by id
 @router.delete(
     "/session/{session_id}",
@@ -1581,6 +1620,8 @@ async def delete_session(
 
     if redis is not None:
         await redis.delete("session:" + session_id + ":timeout_end")
+        
+    # asyncio.create_task(mark_sessions_run_as_cancelled(session_id))
 
     if wait_for_shutdown:
         max_wait_time = 30  # Maximum wait time in seconds

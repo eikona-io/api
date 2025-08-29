@@ -353,6 +353,11 @@ export const workflowRunsTable = dbSchema.table(
                 table.status,
                 desc(table.created_at)
             ),
+
+            // Index for optimizing gpu_event_id queries
+            // idx_workflow_run_gpu_event: index("idx_workflow_run_gpu_event").on(
+            //     table.gpu_event_id,
+            // ),
         };
     },
 );

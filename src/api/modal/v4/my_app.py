@@ -1129,7 +1129,7 @@ class BaseComfyDeployRunner:
         self.current_tunnel_url = "exhausted"
         self.container_start_time = None
 
-        await task
+        # await task
 
     @modal.method()
     async def close_container(self):
