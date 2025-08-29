@@ -379,7 +379,6 @@ async def create_session_background_task(
                 gpuEvent = result.scalar_one()
                 await db.refresh(gpuEvent)
 
-
             async def wait_for_url_from_queue():
                 while True:
                     msg = await q.get.aio()
@@ -428,8 +427,8 @@ async def create_session_background_task(
                                 return None
                             elif status in [InputStatus.FAILURE, InputStatus.TERMINATED]:
                                 # Function failed or was terminated
-                                send_log_entry(session_id, machine_id, f"Modal function failed with status: {status.name}", "info")
-                                send_log_entry(session_id, machine_id, "Recommending rebuilding the machine to fix this issue.", "info")
+                                await send_log_entry_now(session_id, machine_id, f"Modal function failed with status: {status.name}", "info")
+                                await send_log_entry_now(session_id, machine_id, "Recommending rebuilding the machine to fix this issue.", "info")
                                 # async with get_db_context() as db:
                                 #     await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
                                 # consumed = True
@@ -442,10 +441,9 @@ async def create_session_background_task(
                     await asyncio.sleep(poll_interval)
             
                 if not consumed:
-                # Timeout reached without getting URL
-                    # async with get_db_context() as db:
-                    send_log_entry(session_id, machine_id, "Reached timeout period 10 minutes, deleting session, contact support if needed.", "info")
-                        # await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+                    # This is not consumed, so we should return None
+                    # Timeout reached without getting URL
+                    await send_log_entry_now(session_id, machine_id, "Reached timeout period 10 minutes, deleting session, contact support if needed.", "info")
                     
                 return None
             
@@ -481,7 +479,7 @@ async def create_session_background_task(
                 
             return result
     except Exception as e:
-        send_log_entry(session_id, machine_id, str(e), "info")
+        await send_log_entry_now(session_id, machine_id, str(e), "info")
         async with get_db_context() as db:
             await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
         raise e
@@ -879,6 +877,35 @@ def send_log_entry(
     # Use session_id as the stream key since that's what sessions use for identification
     # The log streaming endpoints can handle session-based streams
     asyncio.create_task(insert_log_entry_to_redis(str(session_id), [log_entry]))
+    
+    
+async def send_log_entry_now(
+    session_id: UUID,
+    machine_id: Optional[str],
+    log_message: str,
+    log_type: str = "info",
+):
+    """
+    Send log entry using Redis streams.
+    
+    Args:
+        session_id: The session ID (used as the stream key)
+        machine_id: Optional machine ID for context
+        log_message: The log message content
+        log_type: Log level (info, error, warning, etc.)
+    """
+    # Create log entry in the format expected by the Redis streams
+    log_entry = {
+        "timestamp": datetime.now().timestamp(),
+        "logs": log_message,
+        "level": log_type,
+        "machine_id": machine_id,
+        "session_id": str(session_id)
+    }
+    
+    # Use session_id as the stream key since that's what sessions use for identification
+    # The log streaming endpoints can handle session-based streams
+    await insert_log_entry_to_redis(str(session_id), [log_entry])
 
 
 os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
