@@ -103,7 +103,7 @@ async def run_update(
     },
 )
 @router.get("/run", response_model=WorkflowRunModel, include_in_schema=False)
-async def get_run(request: Request, run_id: UUID, queue_position: bool = False, db: AsyncSession = Depends(get_db)):
+async def get_run(request: Request, run_id: UUID, queue_position: bool = False, db: AsyncSession = Depends(get_db), background_tasks: BackgroundTasks = BackgroundTasks()):
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user.get("org_id", None)
@@ -176,6 +176,23 @@ async def get_run(request: Request, run_id: UUID, queue_position: bool = False, 
             if gpu_event and gpu_event.end_time is not None:
                 run.status = "cancelled"
                 await db.commit()
+                
+                status_event = {
+                    "run_id": str(run.id),
+                    "workflow_id": str(run.workflow_id),
+                    "machine_id": str(run.machine_id),
+                    "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+                    "progress": run.progress if run.progress is not None else -1,
+                    "status": run.status,
+                    "log": None,
+                }
+                background_tasks.add_task(
+                    publish_progress_update,
+                    str(run.id),
+                    status_event,
+                    user_id=str(run.user_id) if run.user_id else None,
+                    org_id=str(run.org_id) if run.org_id else None,
+                )
 
     user_settings = await get_user_settings(request, db)
     ensure_run_timeout(run)
@@ -554,6 +571,20 @@ async def cancel_run(
                             # client=client,
                         )
                     )
+                    
+                status_event = {
+                    "run_id": str(run_id),
+                    "workflow_id": str(workflow_run.workflow_id),
+                    "machine_id": str(workflow_run.machine_id),
+                    "timestamp": dt.datetime.now(dt.UTC).isoformat(),
+                }
+                background_tasks.add_task(
+                    publish_progress_update,
+                    str(run_id),
+                    status_event,
+                    user_id=str(workflow_run.user_id) if workflow_run.user_id else None,
+                    org_id=str(workflow_run.org_id) if workflow_run.org_id else None,
+                )
 
         return {"status": "success", "message": "Function cancelled"}
     except Exception as e:

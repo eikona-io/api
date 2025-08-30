@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import inspect
 import os
 from pprint import pprint
-from .internal import insert_log_entry_to_redis, clear_redis_log
+from .internal import ensure_redis_stream_expires, insert_log_entry_to_redis, clear_redis_log, publish_progress_update
 from api.routes.machines import (
     GitCommitHash,
     redeploy_machine,
@@ -81,6 +81,7 @@ from api.models import (
     GPUEvent,
     Machine,
     MachineVersion,
+    WorkflowRun,
     get_machine_columns,
 )
 from api.database import get_db, get_db_context
@@ -349,6 +350,7 @@ async def create_session_background_task(
 
     try:
         print("async_creation", status_queue)
+        send_log_entry(session_id, machine_id, "Warming up ComfyUI...", "info")
         async with modal.Queue.ephemeral() as q:
             if has_increase_timeout:
                 if has_new_tunnel_params:
@@ -360,26 +362,6 @@ async def create_session_background_task(
 
             modal_function_id = result.object_id
             print("modal_function_id", modal_function_id)
-
-            # gpuEvent = None
-            # while gpuEvent is None:
-            # async with get_db_context() as db:
-            #     gpuEvent = cast(
-            #         Optional[GPUEvent],
-            #         (
-            #             await db.execute(
-            #                 (
-            #                     select(GPUEvent)
-            #                     .where(GPUEvent.session_id == str(session_id))
-            #                     .where(GPUEvent.end_time.is_(None))
-            #                     .apply_org_check(request)
-            #                 )
-            #             )
-            #         ).scalar_one_or_none(),
-            #     )
-
-            # if gpuEvent is None:
-            #     await asyncio.sleep(1)
 
             print("async_creation", status_queue)
             if status_queue is not None:
@@ -396,7 +378,6 @@ async def create_session_background_task(
                 await db.commit()
                 gpuEvent = result.scalar_one()
                 await db.refresh(gpuEvent)
-
 
             async def wait_for_url_from_queue():
                 while True:
@@ -422,45 +403,83 @@ async def create_session_background_task(
                     await db.refresh(gpuEvent)
                     return gpuEvent
                 
-            # async def wait_for_url_from_callback():
-                # while True:
-                #     async with get_db_context() as db:
-                #         result = await db.execute(
-                #             select(GPUEvent)
-                #             .where(GPUEvent.session_id == session_id)
-                #             .where(GPUEvent.end_time.is_(None))
-                #         )
-                #         gpuEvent = result.scalar_one_or_none()
-
-                #         print("gpuEvent", gpuEvent.modal_function_id)
+            async def poll_modal_function_status():
+                """Poll Modal function status every 2 seconds for up to 20 seconds"""
+                print("poll_modal_function_status", modal_function_id)
+                start_time = asyncio.get_event_loop().time()
+                max_duration = 10 * 60 # 10 mins
+                poll_interval = 2  # seconds
+                
+                consumed = False
+                
+                while (asyncio.get_event_loop().time() - start_time) < max_duration:
+                    try:
+                        # Check Modal function status
+                        call_graph = await modal.functions.FunctionCall.from_id(modal_function_id).get_call_graph.aio()
+                        if call_graph and len(call_graph) > 0:
+                            status = call_graph[0].status
+                            print(f"poll_modal_function_status Modal function status: {status}")
+                            
+                            # Check if function has completed or failed
+                            if status == InputStatus.SUCCESS:
+                                # Function completed successfully, but URL might not be in queue yet
+                                # consumed = True
+                                return None
+                            elif status in [InputStatus.FAILURE, InputStatus.TERMINATED]:
+                                # Function failed or was terminated
+                                await send_log_entry_now(session_id, machine_id, f"Modal function failed with status: {status.name}", "info")
+                                await send_log_entry_now(session_id, machine_id, "Recommending rebuilding the machine to fix this issue.", "info")
+                                # async with get_db_context() as db:
+                                #     await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
+                                # consumed = True
+                                return None
+                                # raise Exception(f"poll_modal_function_status Modal function failed with status: {status}")
                         
-                #         if gpuEvent.tunnel_url:
-                #             logger.info(f"Session {session_id} tunnel URL updated")
-                #             return gpuEvent
+                    except Exception as e:
+                        logger.error(f"poll_modal_function_status Error polling Modal function status: {e}")
                     
-                #     await asyncio.sleep(1)
+                    await asyncio.sleep(poll_interval)
+            
+                if not consumed:
+                    # This is not consumed, so we should return None
+                    # Timeout reached without getting URL
+                    await send_log_entry_now(session_id, machine_id, "Reached timeout period 10 minutes, deleting session, contact support if needed.", "info")
+                    
+                return None
+            
+            
+            queue_task = asyncio.create_task(wait_for_url_from_queue())
+            poll_task = asyncio.create_task(poll_modal_function_status())
+            
+            # Wait for the first one to complete
+            done, pending = await asyncio.wait(
+                [queue_task, poll_task],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel any pending tasks
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-            # done, pending = await asyncio.wait(
-            #     [
-            #         asyncio.create_task(wait_for_url_from_queue()),
-            #         asyncio.create_task(wait_for_url_from_callback())
-            #     ],
-            #     return_when=asyncio.FIRST_COMPLETED
-            # )
-
-            # print("done", done.result())
-
-            # # Cancel any pending tasks
-            # for task in pending:
-            #     task.cancel()
-
-            # return done.result()
-
-            result = await wait_for_url_from_queue()
-
+            # Get the result from the completed task
+            result = None
+            for task in done:
+                if not task.cancelled():
+                    task_result = await task
+                    if task_result:
+                        result = task_result
+                        break
+            
+            if not result:
+                raise Exception("Failed to start session.")
+                
             return result
     except Exception as e:
-        send_log_entry(session_id, machine_id, str(e), "info")
+        await send_log_entry_now(session_id, machine_id, str(e), "info")
         async with get_db_context() as db:
             await delete_session(request, str(session_id), wait_for_shutdown=True, db=db)
         raise e
@@ -858,6 +877,35 @@ def send_log_entry(
     # Use session_id as the stream key since that's what sessions use for identification
     # The log streaming endpoints can handle session-based streams
     asyncio.create_task(insert_log_entry_to_redis(str(session_id), [log_entry]))
+    
+    
+async def send_log_entry_now(
+    session_id: UUID,
+    machine_id: Optional[str],
+    log_message: str,
+    log_type: str = "info",
+):
+    """
+    Send log entry using Redis streams.
+    
+    Args:
+        session_id: The session ID (used as the stream key)
+        machine_id: Optional machine ID for context
+        log_message: The log message content
+        log_type: Log level (info, error, warning, etc.)
+    """
+    # Create log entry in the format expected by the Redis streams
+    log_entry = {
+        "timestamp": datetime.now().timestamp(),
+        "logs": log_message,
+        "level": log_type,
+        "machine_id": machine_id,
+        "session_id": str(session_id)
+    }
+    
+    # Use session_id as the stream key since that's what sessions use for identification
+    # The log streaming endpoints can handle session-based streams
+    await insert_log_entry_to_redis(str(session_id), [log_entry])
 
 
 os.environ["MODAL_IMAGE_BUILDER_VERSION"] = "2024.04"
@@ -1425,6 +1473,43 @@ class DeleteSessionResponse(BaseModel):
     success: bool
 
 
+# async def mark_sessions_run_as_cancelled(session_id: str):
+#     async with get_db_context() as db:
+#         # Update and return the IDs in a single query
+        
+#         # print("mark_sessions_run_as_cancelled", session_id)
+#         result = await db.execute(
+#             update(WorkflowRun)
+#             .where(WorkflowRun.gpu_event_id == session_id)
+#             .values(status="cancelled")
+#             .returning(WorkflowRun.id, WorkflowRun.workflow_id, WorkflowRun.user_id, WorkflowRun.org_id)
+#         )
+        
+#         # Extract the run IDs from the result
+#         run_ids = [row[0] for row in result.fetchall()]
+#         workflow_ids = [row[1] for row in result.fetchall()]
+#         user_ids = [row[2] for row in result.fetchall()]
+#         org_ids = [row[3] for row in result.fetchall()]
+        
+#         for run_id, workflow_id, user_id, org_id in zip(run_ids, workflow_ids, user_ids, org_ids):
+#             status_event = {
+#                 "run_id": str(run_id),
+#                 "workflow_id": workflow_id,
+#                 "status": "cancelled",
+#             }
+            
+#             # print("mark_sessions_run_as_cancelled:update", str(run_id), status_event, str(user_id) if user_id else None, str(org_id) if org_id else None)
+            
+#             await publish_progress_update(
+#                 str(run_id),
+#                 status_event,
+#                 user_id=str(user_id) if user_id else None,
+#                 org_id=str(org_id) if org_id else None,
+#             )
+        
+#         # Return the list of cancelled run IDs
+#         return run_ids
+
 # Delete a session by id
 @router.delete(
     "/session/{session_id}",
@@ -1465,7 +1550,9 @@ async def delete_session(
         )
 
     modal_function_id = gpuEvent.modal_function_id
-    await clear_redis_log(session_id)
+    # await clear_redis_log(session_id)
+    # 10 mins
+    await ensure_redis_stream_expires(session_id, 600)
 
     # Checking for a stuck case and modal_function_id is not set
     if (
@@ -1568,6 +1655,8 @@ async def delete_session(
 
     if redis is not None:
         await redis.delete("session:" + session_id + ":timeout_end")
+        
+    # asyncio.create_task(mark_sessions_run_as_cancelled(session_id))
 
     if wait_for_shutdown:
         max_wait_time = 30  # Maximum wait time in seconds

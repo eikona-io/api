@@ -615,7 +615,7 @@ async def get_workflow(
     )
 
 
-@router.get("/workflow/{workflow_id}/version/{version}", response_model=WorkflowModel)
+@router.get("/workflow/{workflow_id}/version/{version}", response_model=WorkflowVersionModel)
 async def get_workflow_version(
     request: Request,
     workflow_id: str,
@@ -641,7 +641,7 @@ async def get_workflow_version(
     return JSONResponse(content=workflow_version.to_dict())
 
 
-@router.get("/workflow-version/{version}", response_model=WorkflowModel)
+@router.get("/workflow-version/{version}", response_model=WorkflowVersionModel)
 async def get_workflow_version_by_id(
     request: Request,
     version: UUID,

@@ -12,7 +12,7 @@ from modal import (
     enter,
     exit,
 )
-from typing import Optional, cast
+from typing import List, Optional, cast
 import json
 import urllib.request
 import urllib.parse
@@ -71,6 +71,7 @@ API_KEY_COMFY_ORG_SECRET = modal.Secret.from_dict(
 )
 
 app = App(name=config["name"])
+version_id = config.get("version_id", None)
 
 skip_static_assets = config["skip_static_assets"]
 
@@ -96,6 +97,13 @@ disable_metadata = config["disable_metadata"] == "True"
 
 print("disable_metadata: ", disable_metadata)
 secrets = config["secrets"]
+
+class ErrorLogEntry(BaseModel):
+    timestamp: float
+    message: str
+
+crashed_in_startup = False
+cached_startup_errors: List[ErrorLogEntry] = []  # Cache for startup errors
 
 contain_custom_comfyui_api_org = secrets.get("API_KEY_COMFY_ORG", "False") != "False"
 
@@ -160,7 +168,6 @@ else:
 dockerfile_image = dockerfile_image.add_local_file(
     "./data/extra_model_paths.yaml", "/comfyui/extra_model_paths.yaml"
 )
-
 
 # Time to wait between API check attempts in milliseconds
 COMFY_API_AVAILABLE_INTERVAL_MS = 50
@@ -718,6 +725,82 @@ async def delete_session(update_endpoint: str, session_id: str):
         raise
 
 
+async def cancel_run_if_crashed_in_startup(input: Input | None = None, session_id: str | None = None):
+    global crashed_in_startup, cached_startup_errors
+    
+    if crashed_in_startup:
+        update_endpoint = config["gpu_event_callback_url"].split("/api/")[0]
+        
+        if input is not None:
+            await send_status_update(input, "failed", function_id=modal.current_function_call_id())
+            await asyncio.sleep(1)
+            
+            # Send individual error messages
+            logs = []
+            
+            # Add the main error message
+            logs.append({"logs": "Session crashed in startup", "timestamp": time.time()})
+            
+            # Add each cached error as a separate log entry
+            for error in cached_startup_errors:
+                logs.append({"logs": error.message, "timestamp": error.timestamp})
+            
+            await send_log_batch(
+                run_id=input.prompt_id,
+                session_id=None,
+                logs=logs,
+                status_endpoint=input.status_endpoint,
+            )
+            modal.functions.FunctionCall.from_id(modal.current_function_call_id()).cancel()
+            os._exit(0)
+        elif session_id is not None:
+            # Combine all error messages for session log
+            error_message = "Session crashed in startup"
+            if cached_startup_errors:
+                error_messages = [error.message for error in cached_startup_errors]
+                error_message = f"{error_message}\n\n" + "\n\n".join(error_messages)
+                
+            await send_log_async(
+                update_endpoint,
+                session_id,
+                config["machine_id"],
+                error_message,
+            )
+            await delete_session(update_endpoint, session_id)
+            os._exit(0)
+        raise modal.exception.InputCancellation()
+
+async def send_log_batch(run_id: str | None, session_id: str | None, logs: list[str], status_endpoint: str):
+        if not logs:
+            return  # Don't send empty log batches
+
+        async with aiohttp.ClientSession() as session:
+            data = json.dumps(
+                {
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "machine_id": config["machine_id"],
+                    "logs": logs,
+                }
+            ).encode("utf-8")
+            print("sending log batch", run_id, session_id, status_endpoint)
+            try:
+                async with session.post(
+                    status_endpoint,
+                    data=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "bypass-tunnel-reminder": "true",
+                        "Authorization": f"Bearer {config['auth_token']}",
+                    },
+                ) as response:
+                    if response.status != 200:
+                        print(
+                            f"Failed to send logs for run_id {run_id}. Status: {response.status}"
+                        )
+            except Exception as e:
+                print(f"Error sending logs for run_id {run_id}: {str(e)}")
+
 class BaseComfyDeployRunner:
     _is_workspace: bool = False
     _gpu: str | None = None
@@ -790,7 +873,7 @@ class BaseComfyDeployRunner:
                 if len(self.cold_start_queue) > 0 and self.status_endpoint:
                     logs = list(self.cold_start_queue)
                     print("sending log batch", len(logs))
-                    await self.send_log_batch(
+                    await send_log_batch(
                         run_id=self.current_input.prompt_id
                         if self.current_input
                         else None,
@@ -805,7 +888,7 @@ class BaseComfyDeployRunner:
                     logs = list(self.log_queues[0]["logs"])
                     input = self.log_queues[0]["current_input"]
                     if logs:
-                        await self.send_log_batch(
+                        await send_log_batch(
                             run_id=input.prompt_id,
                             session_id=self._session_id,
                             logs=logs,
@@ -817,41 +900,12 @@ class BaseComfyDeployRunner:
         except Exception as e:
             print("Error in process_log_queue", e)
 
-    async def send_log_batch(self, run_id, session_id, logs, status_endpoint):
-        if not logs:
-            return  # Don't send empty log batches
-
-        async with aiohttp.ClientSession() as session:
-            data = json.dumps(
-                {
-                    "run_id": run_id,
-                    "session_id": session_id,
-                    "machine_id": config["machine_id"],
-                    "logs": logs,
-                }
-            ).encode("utf-8")
-            print("sending log batch", run_id, session_id, status_endpoint)
-            try:
-                async with session.post(
-                    status_endpoint,
-                    data=data,
-                    headers={
-                        "Content-Type": "application/json",
-                        "bypass-tunnel-reminder": "true",
-                        "Authorization": f"Bearer {config['auth_token']}",
-                    },
-                ) as response:
-                    if response.status != 200:
-                        print(
-                            f"Failed to send logs for run_id {run_id}. Status: {response.status}"
-                        )
-            except Exception as e:
-                print(f"Error sending logs for run_id {run_id}: {str(e)}")
-
     @modal.method()
     async def streaming(
         self, input: Input, kill: bool = False, extend_timeout: Optional[int] = None
     ):
+        await cancel_run_if_crashed_in_startup(input, self._session_id)
+        
         if isinstance(input, dict):
             input = Input(**input)
 
@@ -944,193 +998,6 @@ class BaseComfyDeployRunner:
             finally:
                 await send_status_update(input, "cancelled", self.gpu_event_id)
 
-    @modal.method()
-    async def read_output_file(self, file):
-        from fastapi import HTTPException
-        # Read the file from the volume and yield its contents as bytes
-        try:
-            with open(file, "rb") as f:
-                while True:
-                    chunk = f.read()  # Read as much as possible
-                    if not chunk:
-                        break
-                    yield chunk
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="File not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
-
-    # @modal.method()
-    # async def websocket_endpoint(self, websocket: WebSocket):
-    #     await websocket.accept()
-
-    #     query_params = websocket.query_params
-    #     query_string = urllib.parse.urlencode(query_params)
-    #     sid = uuid.uuid4().hex
-    #     ws_url = (
-    #         f"http://127.0.0.1:8188/comfyui-deploy/ws?{query_string}&clientId={sid}"
-    #     )
-
-    #     try:
-    #         ok = await check_server(
-    #             f"http://{COMFY_HOST}",
-    #             COMFY_API_AVAILABLE_MAX_RETRIES,
-    #             COMFY_API_AVAILABLE_INTERVAL_MS,
-    #         )
-
-    #         # ws_timeout = 2
-
-    #         if not ok:
-    #             raise Exception("ComfyUI API is not available")
-
-    #         async def timeout_check(sid: str):
-    #             wait_time = 0
-    #             while True:
-    #                 data = await check_ws_status(sid)
-    #                 # print(data)
-    #                 if "remaining_queue" in data and data["remaining_queue"] == 0:
-    #                     if wait_time >= ws_timeout:
-    #                         return True
-
-    #                     await asyncio.sleep(0.10)
-    #                     wait_time += 0.10
-    #                 else:
-    #                     await asyncio.sleep(0.10)
-
-    #         try:
-    #             async with aiohttp.ClientSession() as session:
-    #                 async with session.ws_connect(ws_url) as local_ws:
-
-    #                     async def websocket_to_local():
-    #                         try:
-    #                             while True:
-    #                                 ws_receive_task = asyncio.create_task(
-    #                                     websocket.receive()
-    #                                 )
-    #                                 # Prepare the check_ws_status coroutine (with some delay if needed)
-    #                                 check_status_task = asyncio.create_task(
-    #                                     timeout_check(sid)
-    #                                 )
-
-    #                                 done, pending = await asyncio.wait(
-    #                                     {ws_receive_task, check_status_task},
-    #                                     return_when=asyncio.FIRST_COMPLETED,
-    #                                 )
-
-    #                                 for task in pending:
-    #                                     task.cancel()
-
-    #                                 if ws_receive_task in done:
-    #                                     ws_msg = ws_receive_task.result()
-
-    #                                     # Timeout for the input
-    #                                     # ws_msg = await asyncio.wait_for(websocket.receive(), ws_timeout)
-    #                                     # print(ws_msg)
-
-    #                                     if (
-    #                                         "type" in ws_msg
-    #                                         and ws_msg["type"] == "websocket.disconnect"
-    #                                     ):
-    #                                         local_to_websocket_task.cancel()
-    #                                         websocket_to_local_task.cancel()
-    #                                         print("cancelled from remote client")
-    #                                         break
-
-    #                                     if (
-    #                                         "bytes" in ws_msg
-    #                                         and ws_msg["bytes"] is not None
-    #                                     ):
-    #                                         print("Received binary data")
-    #                                         await local_ws.send_bytes(ws_msg["bytes"])
-    #                                     elif (
-    #                                         "text" in ws_msg
-    #                                         and ws_msg["text"] is not None
-    #                                     ):
-    #                                         print("Received text data")
-    #                                         await local_ws.send_str(ws_msg["text"])
-
-    #                                 if (
-    #                                     check_status_task in done
-    #                                     and check_status_task.result()
-    #                                 ):
-    #                                     raise asyncio.TimeoutError(
-    #                                         "Queue processing timeout."
-    #                                     )
-
-    #                         except asyncio.TimeoutError:
-    #                             local_to_websocket_task.cancel()
-    #                             websocket_to_local_task.cancel()
-    #                             print(
-    #                                 f"Timeout: No message received in {ws_timeout} seconds."
-    #                             )
-    #                             await websocket.close(
-    #                                 1000,
-    #                                 reason=f"Timeout: No message received in {ws_timeout} seconds.",
-    #                             )
-    #                         except asyncio.CancelledError:
-    #                             await local_ws.close()
-
-    #                     async def local_to_websocket():
-    #                         try:
-    #                             while True:
-    #                                 msg = await local_ws.receive()  # await asyncio.wait_for(, ws_timeout)  # 10-second timeout
-    #                                 # print(msg.type.name)
-    #                                 if msg.type in [
-    #                                     aiohttp.WSMsgType.CLOSE,
-    #                                     aiohttp.WSMsgType.CLOSED,
-    #                                 ]:
-    #                                     local_to_websocket_task.cancel()
-    #                                     websocket_to_local_task.cancel()
-    #                                     print("cancelled from localhost")
-    #                                     break
-    #                                 elif msg.type in [aiohttp.WSMsgType.TEXT]:
-    #                                     await websocket.send_text(msg.data)
-    #                                 elif msg.type in [aiohttp.WSMsgType.BINARY]:
-    #                                     await websocket.send_bytes(msg.data)
-    #                         except asyncio.TimeoutError:
-    #                             print(
-    #                                 f"Timeout: No message received in {ws_timeout} seconds."
-    #                             )
-    #                             await websocket.close(
-    #                                 1000,
-    #                                 reason=f"Timeout: No message received in {ws_timeout} seconds.",
-    #                             )
-    #                         except asyncio.CancelledError:
-    #                             pass  # Task was cancelled, ignore
-    #                             await websocket.close()
-
-    #                     websocket_to_local_task = asyncio.create_task(
-    #                         websocket_to_local()
-    #                     )
-    #                     local_to_websocket_task = asyncio.create_task(
-    #                         local_to_websocket()
-    #                     )
-
-    #                     try:
-    #                         await asyncio.gather(
-    #                             websocket_to_local_task, local_to_websocket_task
-    #                         )
-    #                     except asyncio.CancelledError:
-    #                         pass  # Task was cancelled, ignore
-
-    #                     print("both task finished")
-    #         except Exception as e:
-    #             print(f"Error in WebSocket communication: {e}")
-    #         finally:
-    #             pass
-    #             # if websocket.state !=
-    #             # await websocket.close()
-    #             # print("closing for ws");
-
-    #     except Exception as e:
-    #         pass
-    #     finally:
-    #         pass
-    #         # stdout_task.cancel()
-    #         # stderr_task.cancel()
-    #         # await stdout_task
-    #         # await stderr_task
-
     async def read_stream(self, stream, isStderr):
         import time
 
@@ -1178,7 +1045,7 @@ class BaseComfyDeployRunner:
     async def create_tunnel(
         self, q, status_endpoint, timeout, session_id: str | None = None
     ):
-        update_endpoint = status_endpoint.split("/api/")[0]
+        update_endpoint = config["gpu_event_callback_url"].split("/api/")[0]
         if self.current_tunnel_url == "exhausted":
             send_log_entry(
                 update_endpoint,
@@ -1204,6 +1071,8 @@ class BaseComfyDeployRunner:
                 custom_timestamp=self.container_start_time,
             )
         print("gpu event id", self.gpu_event_id)
+        
+        await cancel_run_if_crashed_in_startup(session_id = session_id)
 
         self.status_endpoint = status_endpoint
         self.start_time = time.time()
@@ -1260,40 +1129,11 @@ class BaseComfyDeployRunner:
         self.current_tunnel_url = "exhausted"
         self.container_start_time = None
 
-        await task
+        # await task
 
     @modal.method()
     async def close_container(self):
         await self.timeout_and_exit(0, True)
-
-    #     def hijack_argparse(self):
-    #         """
-    #         Hijack the argparse module to disable the args_parsing flag
-    #         """
-    #         import os
-
-    #         # Create the directory if it doesn't exist
-    #         options_dir = "/comfyui/comfy/"
-    #         # os.makedirs(options_dir, exist_ok=True)
-
-    #         # Create the options.py file with the specified content
-    #         options_file_path = os.path.join(options_dir, "options.py")
-    #         options_content = """args_parsing = False
-
-    # def enable_args_parsing(enable=True):
-    #     global args_parsing
-    #     # To ensure that the args_parsing flag always is set to False
-    #     args_parsing = False
-    # """
-
-    #         try:
-    #             with open(options_file_path, 'w') as f:
-    #                 f.write(options_content)
-    #         except Exception as e:
-    #             print(f"Failed to create options file at: {options_file_path}")
-    #             print(f"Error: {e}")
-
-    #         print(f"Created options file at: {options_file_path}")
 
     def disable_customnodes(self, nodes_to_disable: list[str]):
         """
@@ -1329,17 +1169,13 @@ class BaseComfyDeployRunner:
         # timeout input is in minutes, so we need to convert it to seconds
         self.session_timeout = self.session_timeout + (timeout * 60)
 
-    # kill_session_asap = False
-
-    # @modal.method()
-    # async def kill_session(self):
-    #     self.kill_session_asap = True
-
     @modal.method()
     async def run(self, input: Input):
         if isinstance(input, dict):
             input = Input(**input)
             input.gpu_event_id = self.gpu_event_id
+            
+        await cancel_run_if_crashed_in_startup(input = input, session_id = self._session_id)
 
         try:
             self.log_queues.append({"logs": deque(), "current_input": input})
@@ -1544,9 +1380,6 @@ class BaseComfyDeployRunner:
         # Make sure that the ComfyUI API is available
         print("comfy-modal - check server")
 
-        # if (self.private_volume is None):
-        # private_volume = modal.Volume.from_name(self.volume_name, create_if_missing=True)
-
         # reload volumes
         try:
             await read_only_public_model_volume.reload.aio()
@@ -1557,17 +1390,6 @@ class BaseComfyDeployRunner:
         # Disable specified custom nodes
         self.disable_customnodes(["ComfyUI-Manager"])
         # self.hijack_argparse()
-
-        # directory_path = "/comfyui/models"
-        # if os.path.exists(directory_path):
-        #     directory_contents = os.listdir(directory_path)
-        #     directory_path = "/comfyui/models/ipadapter"
-        #     print(directory_contents)
-        #     if os.path.exists(directory_path):
-        #         directory_contents = os.listdir(directory_path)
-        #         print(directory_contents)
-        # else:
-        #     print(f"Directory {directory_path} does not exist.")
 
         pass
 
@@ -1666,6 +1488,161 @@ class BaseComfyDeployRunner:
 
         return handler
 
+
+
+async def send_error_start_logs(version_id: str, logs: List[ErrorLogEntry]):
+    update_endpoint = config.get("gpu_event_callback_url").split("/api/")[0]
+    
+    async with aiohttp.ClientSession() as client:
+        token = config.get("auth_token")
+        try:
+            async with client.post(
+                update_endpoint + "/api/machine-version/" + version_id + "/error-start-logs",
+                headers={"Authorization": f"Bearer {token}"},
+                json=[log.dict() for log in logs]
+            ) as response:
+                if response.status != 200:
+                    print(f"Failed to send error logs: {response.status} {response.text}")
+                    return False
+                return True
+        except Exception as e:
+            print(f"Error sending error logs: {e}")
+            return False
+
+
+def capture_machine_start_errors(include_traceback: bool = True, custom_message: Optional[str] = None):
+    """
+    Simple decorator that uses the global version_id for error logging.
+    
+    Usage:
+        @capture_errors_simple()
+        async def your_function():
+            # Your code here
+            pass
+        
+        @capture_errors_simple(include_traceback=False)
+        def your_sync_function():
+            # Your code here
+            pass
+    
+    Args:
+        include_traceback: Whether to include full traceback in error message
+        custom_message: Optional custom message prefix
+    """
+    import traceback
+    
+    def decorator(func):
+        # print("decorator", args, kwargs)
+        is_async = inspect.iscoroutinefunction(func)
+        
+        if is_async:
+            async def async_wrapper(*args, **kwargs):
+                global crashed_in_startup, cached_startup_errors
+                try:
+                    print("async_wrapper", args, kwargs)
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    # Use global version_id
+                    if version_id is None:
+                        print(f"Warning: No global version_id configured for error logging in {func.__name__}")
+                        # Cache the error even without version_id
+                        error_parts = []
+                        if custom_message:
+                            error_parts.append(custom_message)
+                        error_parts.append(f"Error in {func.__name__}: {type(e).__name__}: {str(e)}")
+                        if include_traceback:
+                            error_parts.append(f"\nTraceback:\n{traceback.format_exc()}")
+                        cached_startup_errors.append(ErrorLogEntry(
+                            timestamp=time.time(),
+                            message="\n".join(error_parts)
+                        ))
+                        crashed_in_startup = True
+                        # raise
+                        # kill_container()
+                    
+                    # Build error message
+                    error_parts = []
+                    if custom_message:
+                        error_parts.append(custom_message)
+                    error_parts.append(f"Error in {func.__name__}: {type(e).__name__}: {str(e)}")
+                    
+                    if include_traceback:
+                        error_parts.append(f"\nTraceback:\n{traceback.format_exc()}")
+                    
+                    error_log = ErrorLogEntry(
+                        timestamp=time.time(),
+                        message="\n".join(error_parts)
+                    )
+                    
+                    # Cache the error globally
+                    cached_startup_errors.append(error_log)
+                    
+                    try:
+                        await send_error_start_logs(version_id, [error_log])
+                    except Exception as log_error:
+                        print(f"Failed to send error log: {log_error}")
+                    
+                    crashed_in_startup = True
+                    # Re-raise the exception so Modal can handle it properly
+                    # raise
+            
+            return async_wrapper
+        else:
+            def sync_wrapper(*args, **kwargs):
+                global crashed_in_startup, cached_startup_errors
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    # Use global version_id
+                    if version_id is None:
+                        print(f"Warning: No global version_id configured for error logging in {func.__name__}")
+                        # Cache the error even without version_id
+                        error_parts = []
+                        if custom_message:
+                            error_parts.append(custom_message)
+                        error_parts.append(f"Error in {func.__name__}: {type(e).__name__}: {str(e)}")
+                        if include_traceback:
+                            error_parts.append(f"\nTraceback:\n{traceback.format_exc()}")
+                        cached_startup_errors.append(ErrorLogEntry(
+                            timestamp=time.time(),
+                            message="\n".join(error_parts)
+                        ))
+                        crashed_in_startup = True
+                        # raise
+                    
+                    # Build error message
+                    error_parts = []
+                    if custom_message:
+                        error_parts.append(custom_message)
+                    error_parts.append(f"Error in {func.__name__}: {type(e).__name__}: {str(e)}")
+                    
+                    if include_traceback:
+                        error_parts.append(f"\nTraceback:\n{traceback.format_exc()}")
+                    
+                    error_log = ErrorLogEntry(
+                        timestamp=time.time(),
+                        message="\n".join(error_parts)
+                    )
+                    
+                    # Cache the error globally
+                    cached_startup_errors.append(error_log)
+                    
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            asyncio.create_task(send_error_start_logs(version_id, [error_log]))
+                        else:
+                            asyncio.run(send_error_start_logs(version_id, [error_log]))
+                    except Exception as log_error:
+                        print(f"Failed to send error log: {log_error}")
+                    
+                    crashed_in_startup = True
+                    # Re-raise the exception so Modal can handle it properly
+                    # raise
+            
+            return sync_wrapper
+    
+    return decorator
 
 class _ComfyDeployRunner(BaseComfyDeployRunner):
     workflow_api_raw = None
@@ -2273,7 +2250,8 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
     session_id: str = modal.parameter(default="")
 
     @modal.enter(snap=False)
-    async def launch_comfy_background(self):
+    @capture_machine_start_errors(include_traceback=True, custom_message="Machine runtime error")
+    async def launch_comfy_background(self, *args):
         self._is_workspace = self.is_workspace
         if self.gpu != "":
             self._gpu = self.gpu
@@ -2403,7 +2381,8 @@ class ComfyDeployRunnerOptimizedImports(_ComfyDeployRunner):
         return (sd, metadata) if return_metadata else sd
 
     @modal.enter(snap=True)
-    async def load(self):
+    @capture_machine_start_errors(include_traceback=True, custom_message="Machine snapshot setup error")
+    async def load(self, *args):
         with self.force_cpu_during_snapshot():
             import torch
             import sys
@@ -2662,8 +2641,11 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
     gpu: str = modal.parameter(default="")
     session_id: str = modal.parameter(default="")
 
-    @enter()
-    async def setup(self):
+    @modal.enter()
+    @capture_machine_start_errors(include_traceback=True, custom_message="Machine runtime setup error")
+    async def setup(self, *args):
+        # Modal's @modal.enter() decorator passes additional arguments (usually None values)
+        # We accept them with *args to avoid TypeError
         self._is_workspace = self.is_workspace
         if self.gpu != "":
             self._gpu = self.gpu
@@ -2682,7 +2664,7 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
             stderr=asyncio.subprocess.PIPE,
             cwd="/comfyui",
         )
-
+        
         self.stdout_task = asyncio.create_task(
             self.read_stream(self.server_process.stdout, False)
         )
@@ -2694,7 +2676,7 @@ class ComfyDeployRunner(BaseComfyDeployRunner):
 
         await self.handle_container_enter()
 
-    @exit()
+    @modal.exit()
     async def cleanup(self):
         self.stdout_task.cancel()
         self.stderr_task.cancel()

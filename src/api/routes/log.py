@@ -222,7 +222,7 @@ async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, cli
     Stream logs using TCP Redis with blocking XREAD. No polling loop, minimal idle commands.
     Each client tails the stream independently (broadcast semantics).
     """
-    await register_active_stream(run_id, client_id)
+    # await register_active_stream(run_id, client_id)
 
     if redis_stream_client is None:
         # Fallback if misconfigured
@@ -230,8 +230,8 @@ async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, cli
         return
 
     stream_name = run_id
-    # Start from new messages only
-    last_id = "$"
+    # Start from the beginning of the stream
+    last_id = "0"
 
     try:
         while True:
@@ -291,7 +291,8 @@ async def stream_logs_blocking(run_id: str, log_level: Optional[str] = None, cli
         logger.error(f"Error in blocking Redis stream for client {client_id}: {e}")
         raise
     finally:
-        await unregister_active_stream(run_id)
+        pass
+        # await unregister_active_stream(run_id)
 
 
 def normalize_log_data(log_data: Any, log_level_filter: Optional[str] = None) -> list:

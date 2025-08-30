@@ -213,12 +213,12 @@ redis_realtime = (
     else None
 )
 
-async def ensure_redis_stream_expires(run_id: str):
+async def ensure_redis_stream_expires(run_id: str, ttl: int = 43200):
     # Set TTL (this will fail silently if key already has TTL, but that's fine)
     try:
         if redis is None:
             return
-        await redis.execute(["EXPIRE", run_id, "43200"])
+        await redis.execute(["EXPIRE", run_id, ttl])
     except:
         # Key already has TTL or other non-critical error, safe to ignore
         pass
@@ -427,7 +427,7 @@ async def update_run(
                     # Skip returning the workflow run to avoid re-fetching the data
                     # .returning(WorkflowRun)
                 )
-                # result = await db.execute(update_stmt)
+                await db.execute(update_stmt)
                 await db.commit()
 
                 # workflow_run = result.scalar_one()
@@ -543,23 +543,6 @@ async def update_run(
                     except Exception as e:
                         # Log the error but don't send webhook
                         logging.error(f"Error processing webhook URL parameters: {str(e)}")
-
-                # TODO: Send to upload to clickhouse
-                # output_data = [
-                #     (
-                #         workflow_run.user_id,
-                #         workflow_run.org_id,
-                #         workflow_run.machine_id,
-                #         body.gpu_event_id,
-                #         workflow_run.workflow_id,
-                #         workflow_run.workflow_version_id,
-                #         body.run_id,
-                #         updated_at,
-                #         "output",
-                #         body.progress if body.progress is not None else -1,
-                #         json.dumps(body.output_data),
-                #     )
-                # ]
                 
                 if is_blocking_log_update is False:
                     # background_tasks.add_task(
@@ -587,6 +570,10 @@ async def update_run(
 
             elif body.status is not None:
                 # Get existing run
+                
+                # if body.status is not None:
+                    # print("update_run", body.status, body.run_id)
+                
                 existing_run = await db.execute(
                     select(WorkflowRun).where(WorkflowRun.id == body.run_id)
                 )
@@ -597,7 +584,7 @@ async def update_run(
                     raise HTTPException(status_code=404, detail="WorkflowRun not found")
 
                 # If the run is already cancelled, don't update it
-                if body.status == "cancelled":
+                if workflow_run.status == "cancelled":
                     return {"status": "success"}
 
                 # If the run is already timed out, don't update it
