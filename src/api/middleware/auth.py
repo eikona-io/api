@@ -212,6 +212,10 @@ async def get_current_user(request: Request):
         if user_data is not None:
             user_data["user_id"] = user_data["sub"]
             is_clerk_token = True
+            
+            # Handle Clerk's new organization structure (o object) vs old org_id
+            if "org_id" not in user_data and "o" in user_data and user_data["o"]:
+                user_data["org_id"] = user_data["o"].get("id")
 
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -220,5 +224,5 @@ async def get_current_user(request: Request):
     if "exp" not in user_data and not is_clerk_token:
         if await is_key_revoked(token):
             raise HTTPException(status_code=401, detail="Revoked token")
-
+    
     return user_data
