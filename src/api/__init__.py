@@ -2,23 +2,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from typing import Optional
 from api.middleware.subscriptionMiddleware import SubscriptionMiddleware
-from sqlalchemy import select
 
-from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import (
-    JSONResponse,
     RedirectResponse,
 )  # Add RedirectResponse import
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 import os
-from jose import JWTError, jwt
-from sqlalchemy.orm import Session  # Import Session from SQLAlchemy
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.database import AsyncSessionLocal, engine
 from api.routes import (
     run,
     volumes,
@@ -40,43 +32,24 @@ from api.routes import (
     admin,
     image_optimization,
     share,
+    auth_response,
+    clerk_webhook,
+    autumn_webhook,
 )
 from api.modal import builder
-from api.models import APIKey
 
 
 import logfire
 import logging
-from scalar_fastapi import get_scalar_api_reference
-from fastapi.openapi.utils import get_openapi
-from fastapi import APIRouter
 
 # import all you need from fastapi-pagination
 # from fastapi_pagination import Page, add_pagination, paginate
-from pprint import pprint
 from api.middleware.authMiddleware import AuthMiddleware
-from api.middleware.spendLimitMiddleware import SpendLimitMiddleware
 
-from opentelemetry.context import get_current
-from opentelemetry.propagate import set_global_textmap
-from opentelemetry.propagators.textmap import TextMapPropagator
 
 # from logtail import LogtailHandler
 import logging
 from api.router import app, public_api_router, api_router
-
-# logtail_host = os.getenv("LOGTAIL_INGESTING_HOST")
-# logtail_source_token = os.getenv("LOGTAIL_SOURCE_TOKEN")
-
-# if logtail_host and logtail_source_token:
-#     handler = LogtailHandler(
-#         source_token=logtail_source_token,
-#         host=logtail_host,
-#     )
-#     logger = logging.getLogger(__name__)
-#     logger.setLevel(logging.INFO)
-#     logger.handlers = []
-#     logger.addHandler(handler)
 
 
 logger = logfire
@@ -151,6 +124,9 @@ api_router.include_router(search.router)
 api_router.include_router(form.router)
 api_router.include_router(admin.router)  # Add the admin router to internal API
 api_router.include_router(image_optimization.router)
+api_router.include_router(auth_response.router)
+api_router.include_router(clerk_webhook.router)
+api_router.include_router(autumn_webhook.router)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)

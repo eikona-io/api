@@ -53,6 +53,7 @@ from api.models import SharedWorkflow
 from api.database import get_db
 import logging
 from typing import Any, Dict, List, Optional
+from api.utils.autumn import autumn_client
 # from .share import get_dub_link
 # from fastapi_pagination import Page, add_pagination, paginate
 
@@ -142,6 +143,40 @@ async def delete_workflow(
 
     await db.commit()
 
+    # Update workflow usage in autumn
+    current_user = request.state.current_user
+    org_id = current_user.get("org_id")
+    user_id = current_user["user_id"]
+    customer_id = org_id if org_id else user_id
+    
+    # Count total workflows for this customer after deletion
+    workflow_count_query = (
+        select(func.count())
+        .select_from(Workflow)
+        .where(~Workflow.deleted)
+    )
+    if org_id:
+        workflow_count_query = workflow_count_query.where(Workflow.org_id == org_id)
+    else:
+        workflow_count_query = workflow_count_query.where(
+            Workflow.user_id == user_id,
+            Workflow.org_id.is_(None)
+        )
+    
+    workflow_count = await db.execute(workflow_count_query)
+    workflow_count = workflow_count.scalar()
+    
+    # Set feature usage for workflow limit
+    try:
+        await autumn_client.set_feature_usage(
+            customer_id=customer_id,
+            feature_id="workflow_limit",
+            value=workflow_count
+        )
+    except Exception as e:
+        logger.error(f"Failed to update workflow usage in autumn: {str(e)}")
+        # Don't fail the request if autumn update fails
+
     return {"message": "Workflow deleted successfully"}
 
 
@@ -216,6 +251,37 @@ async def clone_workflow(
         db.add(new_version)
 
     await db.commit()
+
+    # Update workflow usage in autumn
+    customer_id = current_org_id if current_org_id else current_user_id
+    
+    # Count total workflows for this customer
+    workflow_count_query = (
+        select(func.count())
+        .select_from(Workflow)
+        .where(~Workflow.deleted)
+    )
+    if current_org_id:
+        workflow_count_query = workflow_count_query.where(Workflow.org_id == current_org_id)
+    else:
+        workflow_count_query = workflow_count_query.where(
+            Workflow.user_id == current_user_id,
+            Workflow.org_id.is_(None)
+        )
+    
+    workflow_count = await db.execute(workflow_count_query)
+    workflow_count = workflow_count.scalar()
+    
+    # Set feature usage for workflow limit
+    try:
+        await autumn_client.set_feature_usage(
+            customer_id=customer_id,
+            feature_id="workflow_limit",
+            value=workflow_count
+        )
+    except Exception as e:
+        logger.error(f"Failed to update workflow usage in autumn: {str(e)}")
+        # Don't fail the request if autumn update fails
 
     return new_workflow
 
@@ -854,6 +920,53 @@ async def create_workflow(
     except (AttributeError, KeyError):
         return JSONResponse(status_code=401, content={"error": "Unauthorized access. "})
 
+    # Check workflow limit using autumn
+    from api.utils.autumn import autumn_client
+    
+    customer_id = (
+        request.state.current_user.get("org_id") or 
+        request.state.current_user.get("user_id")
+    )
+    
+    # Count current workflows
+    workflow_count_query = (
+        select(func.count())
+        .select_from(Workflow)
+        .where(~Workflow.deleted)
+    )
+    if request.state.current_user.get("org_id"):
+        workflow_count_query = workflow_count_query.where(
+            Workflow.org_id == request.state.current_user["org_id"]
+        )
+    else:
+        workflow_count_query = workflow_count_query.where(
+            Workflow.user_id == user_id,
+            Workflow.org_id.is_(None)
+        )
+    
+    current_count = await db.execute(workflow_count_query)
+    current_count = current_count.scalar()
+    
+    # Check if user can create another workflow
+    check_result = await autumn_client.check(
+        customer_id=customer_id,
+        feature_id="workflow_limit",
+        required_balance=current_count + 1,  # Check if they can have one more
+        with_preview=True
+    )
+    
+    if not check_result or not check_result.get("allowed", False):
+        preview_data = check_result.get("preview", {}) if check_result else {}
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Workflow limit reached",
+                "message": f"You have reached your workflow limit of {current_count} workflows.",
+                "current_count": current_count,
+                "preview": preview_data
+            }
+        )
+
     # Validate JSON first
     try:
         json.loads(body.workflow_json)
@@ -944,6 +1057,37 @@ async def create_workflow(
             )
 
         await db.commit()
+
+        # Update workflow usage in autumn
+        customer_id = org_id if org_id else user_id
+        
+        # Count total workflows for this customer
+        workflow_count_query = (
+            select(func.count())
+            .select_from(Workflow)
+            .where(~Workflow.deleted)
+        )
+        if org_id:
+            workflow_count_query = workflow_count_query.where(Workflow.org_id == org_id)
+        else:
+            workflow_count_query = workflow_count_query.where(
+                Workflow.user_id == user_id,
+                Workflow.org_id.is_(None)
+            )
+        
+        workflow_count = await db.execute(workflow_count_query)
+        workflow_count = workflow_count.scalar()
+        
+        # Set feature usage for workflow limit
+        try:
+            await autumn_client.set_feature_usage(
+                customer_id=customer_id,
+                feature_id="workflow_limit",
+                value=workflow_count
+            )
+        except Exception as e:
+            logger.error(f"Failed to update workflow usage in autumn: {str(e)}")
+            # Don't fail the request if autumn update fails
 
         return JSONResponse(
             status_code=200,

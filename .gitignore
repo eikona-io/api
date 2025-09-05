@@ -181,3 +181,4 @@ pyrightconfig.json
 
 node_modules
 redis/
+.DS_Store

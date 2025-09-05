@@ -1,5 +1,5 @@
 import os
-from api.utils.autumn import get_autumn_customer
+from api.utils.autumn import get_autumn_customer, autumn_client
 # from api.middleware.subscriptionMiddleware import get_customer_plan_cached, get_customer_plan_cached_5_seconds
 from api.utils.multi_level_cache import multi_level_cached
 import logfire
@@ -39,6 +39,7 @@ import json
 import resend
 import uuid
 from sqlalchemy.exc import IntegrityError
+from clerk_backend_api import Clerk
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -68,7 +69,7 @@ async def get_user_settings(
 async def get_autumn_data_endpoint(
     request: Request,
 ):
-    print(request.state.current_user)
+    # print(request.state.current_user)
     user_id = request.state.current_user.get("user_id")
     org_id = request.state.current_user.get("org_id")
     
@@ -88,7 +89,7 @@ async def get_autumn_data_endpoint(
     
     # Transform the usage list using the credit schema
     transformed_list = []
-    usage_list = autumn_query.get("list", [])
+    usage_list = autumn_query.get("list", []) if autumn_query else []
     
     # First pass: identify GPU types that have zero usage across all periods
     gpu_totals = {}
@@ -129,6 +130,60 @@ async def get_autumn_data_endpoint(
         "list": transformed_list,
         "credit_schema": credit_schema,  # Include for debugging/reference
     }
+
+
+@router.post("/platform/check-limit")
+async def check_feature_limit(
+    request: Request,
+    feature_id: str,
+    required_balance: int = 1,
+) -> Dict[str, Any]:
+    """
+    Check if a customer has access to a feature based on their limits.
+    
+    Args:
+        feature_id: The feature ID to check (e.g., 'workflow_limit', 'machine_limit')
+        required_balance: The amount of feature required (default: 1)
+        
+    Returns:
+        Check response with allowed status and limit information
+    """
+    from api.utils.autumn import autumn_client
+    
+    current_user = request.state.current_user
+    customer_id = current_user.get("org_id") or current_user.get("user_id")
+    
+    if not customer_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        # Check feature access using autumn client
+        check_result = await autumn_client.check(
+            customer_id=customer_id,
+            feature_id=feature_id,
+            required_balance=required_balance,
+            with_preview=True  # Include preview data for paywall/upgrade UI
+        )
+        
+        if not check_result:
+            # If no result, assume not allowed
+            return {
+                "allowed": False,
+                "feature_id": feature_id,
+                "message": f"Unable to verify {feature_id} access"
+            }
+        
+        return check_result
+        
+    except Exception as e:
+        logfire.error(f"Error checking feature limit: {str(e)}")
+        # Don't fail hard, return a conservative response
+        return {
+            "allowed": False,
+            "feature_id": feature_id,
+            "message": f"Error checking {feature_id} limit",
+            "error": str(e)
+        }
 
 
 @router.get("/user/{user_id}")
@@ -178,10 +233,6 @@ async def create_api_key(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    plan = request.state.current_user.get("plan")
-    if plan == "free":
-        raise HTTPException(status_code=403, detail="Free plan users cannot create API keys")
-    
     return await create_api_key_auth(request, db)
 
 @router.delete("/platform/api-keys/{key_id}")
@@ -1101,26 +1152,6 @@ async def slugify(workflow_name: str, current_user_id: str, from_nanoid: bool = 
 
     return f"{user_part}_{slug_part}"
 
-
-# Define allowed Stripe webhook events
-ALLOWED_STRIPE_EVENTS = [
-    "customer.subscription.created",
-    "checkout.session.completed",
-    "customer.subscription.paused",
-    "customer.subscription.resumed",
-    "customer.subscription.deleted",
-    "customer.subscription.updated",
-    "customer.subscription.trial_will_end",
-    "invoice.created",
-    "invoice.finalized",
-    "invoice.paid",
-    "payment_intent.succeeded",
-    "customer.updated",
-    "invoice.payment_succeeded",
-    "invoice.updated",
-    "charge.succeeded"
-]
-
 # PostHog event mapping
 POSTHOG_EVENT_MAPPING = {
     "customer.subscription.created": "create_subscription",
@@ -1130,213 +1161,9 @@ POSTHOG_EVENT_MAPPING = {
     "customer.subscription.updated": "update_subscription"
 }
 
-async def process_all_active_subscriptions(
-    db: AsyncSession,
-    dry_run: bool = False,
-    send_email: bool = False
-) -> List[Dict]:
-    processed_subscriptions = []
-    try:
-        # Get all active subscriptions from Stripe with pagination
-        has_more = True
-        starting_after = None
-        
-        while has_more:
-            subscriptions = await stripe.Subscription.list_async(
-                status="active",
-                expand=["data.customer"],
-                limit=20,  # Maximum allowed by Stripe
-                starting_after=starting_after
-            )
-            
-            logfire.info(f"Processing batch of {len(subscriptions.data)} active subscriptions")
-            
-            for subscription in subscriptions.data:
-                try:
-                    # Get metadata from subscription
-                    metadata = subscription.metadata
-                    user_id = metadata.get("userId")
-                    org_id = metadata.get("orgId")
-                    
-                    if not user_id and not org_id:
-                        logfire.warning(f"Subscription {subscription.id} has no user_id or org_id in metadata")
-                        continue
-                    
-                    # Get current plan to ensure Redis data exists and is up to date
-                    current_plan = await get_current_plan(db, user_id, org_id)
-                    if not current_plan:
-                        logfire.warning(f"No plan data found for subscription {subscription.id}")
-                        continue
-                    
-                    # Calculate usage charges
-                    final_cost, last_invoice_timestamp = await calculate_usage_charges(
-                        user_id=user_id,
-                        org_id=org_id,
-                        end_time=datetime.now(),
-                        db=db,
-                        dry_run=dry_run
-                    )
-                    
-                    # Extract only essential customer info
-                    customer_info = {
-                        "id": subscription.customer.id,
-                        "email": subscription.customer.email
-                    } if subscription.customer else {"id": None, "email": None}
-                    
-                    subscription_info = {
-                        "subscription_id": subscription.id,
-                        "customer": customer_info,
-                        "user_id": user_id,
-                        "org_id": org_id,
-                        "final_cost": final_cost,
-                        "last_invoice_timestamp": last_invoice_timestamp
-                    }
-                    
-                    if final_cost > 0:
-                        # Convert to cents for Stripe
-                        amount = int(final_cost * 100)
-                        subscription_info["amount_cents"] = amount
-                        
-                        if not dry_run:
-                            # Create invoice immediately
-                            invoice = await stripe.Invoice.create_async(
-                                customer=subscription.customer.id,
-                                auto_advance=True,
-                                collection_method="charge_automatically",
-                                subscription=subscription.id,
-                            )
-                            invoice_item = await stripe.InvoiceItem.create_async(
-                                customer=subscription.customer.id,
-                                amount=amount,
-                                currency="usd",
-                                description="GPU Compute Usage",
-                                invoice=invoice.id,
-                                period={
-                                    "start": int(last_invoice_timestamp),
-                                    "end": int(datetime.now().timestamp())
-                                }
-                            )
-                            invoice = await stripe.Invoice.finalize_invoice_async(invoice.id)
-                            logfire.info(f"Added GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
-                        else:
-                            logfire.info(f"[DRY RUN] Would add GPU Compute Usage ({amount} cents) for subscription {subscription.id}")
-                        
-                        if send_email:
-                            try:
-                                # Get user email from Clerk
-                                user_data = None
-                                if user_id and user_id.startswith("user_"):
-                                    user_data = await get_clerk_user(user_id)
-                                elif org_id and org_id.startswith("org_"):
-                                    user_data = await get_clerk_org(org_id)
-                                    
-                                if user_data:
-                                    email = None
-                                    if "email_addresses" in user_data:
-                                        email = next(
-                                            (email["email_address"] for email in user_data["email_addresses"]
-                                             if email["id"] == user_data["primary_email_address_id"]),
-                                            None
-                                        )
-                                    elif "email" in user_data:
-                                        email = user_data["email"]
-                                        
-                                    if email:
-                                        message = f"""
-                                        <h2>GPU Usage Invoice</h2>
-                                        <p>Here's your GPU usage summary:</p>
-                                        <ul>
-                                            <li>Total Usage Cost: ${final_cost:.2f}</li>
-                                            <li>Period End: {datetime.fromtimestamp(last_invoice_timestamp).strftime('%Y-%m-%d %H:%M:%S')}</li>
-                                        </ul>
-                                        <p>{'This is a dry run notification.' if dry_run else 'An invoice will be generated for this usage.'}</p>
-                                        """
-                                        params: resend.Emails.SendParams = {
-                                            "from": "Comfy Deploy <billing@comfydeploy.com>",
-                                            "to": email,
-                                            "subject": "Comfy Deploy - GPU Usage Summary" if final_cost == 0 else "Comfy Deploy - GPU Usage Invoice",
-                                            "html": message
-                                        }
-                                        email_result = resend.Emails.send(params)
-                                        subscription_info["email_sent"] = True
-                                        subscription_info["email_id"] = email_result["id"]
-                                        logfire.info(f"Sent usage email to {email}")
-                            except Exception as e:
-                                logfire.error(f"Error sending email for subscription {subscription.id}: {str(e)}")
-                                subscription_info["email_error"] = str(e)
-                    
-                    if not dry_run:
-                        # Update Redis with new last invoice timestamp
-                        await update_subscription_redis_data(
-                            subscription_id=subscription.id,
-                            user_id=user_id,
-                            org_id=org_id,
-                            last_invoice_timestamp=last_invoice_timestamp,
-                            db=db
-                        )
-                    
-                    processed_subscriptions.append(subscription_info)
-                    
-                except Exception as e:
-                    logfire.error(f"Error processing subscription {subscription.id}: {str(e)}")
-                    continue
-            
-            has_more = subscriptions.has_more
-            if has_more and subscriptions.data:
-                starting_after = subscriptions.data[-1].id
-                
-    except stripe.error.StripeError as e:
-        logfire.error(f"Error fetching subscriptions from Stripe: {str(e)}")
-        raise
-    except Exception as e:
-        logfire.error(f"Unexpected error in process_all_active_subscriptions: {str(e)}")
-        raise
-        
-    return processed_subscriptions
-
 # Add Resend client
 resend.api_key = os.getenv("RESEND_API_KEY")
 
-@router.post("/platform/stripe/webhook")
-async def stripe_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    """Handle Stripe webhook events"""
-    try:
-        # Get the raw request body
-        body = await request.body()
-        body_str = body.decode('utf-8')
-        
-        # Get Stripe signature from headers
-        stripe_signature = request.headers.get('stripe-signature')
-        if not stripe_signature:
-            raise HTTPException(status_code=400, detail="No Stripe signature found")
-            
-        # Verify webhook signature
-        webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-        if not webhook_secret:
-            raise HTTPException(status_code=500, detail="Webhook secret not configured")
-            
-        # Update webhook event construction
-        event = stripe.Webhook.construct_event(
-            body_str,
-            stripe_signature,
-            webhook_secret
-        )
-        
-        print(f"Webhook event type: {event.get('type')}")
-        # print(f"Webhook metadata: {event.get('data', {}).get('object', {}).get('metadata', {})}")
-        
-        # Use the generic event handler
-        await handle_stripe_event(event, db)
-        return {"result": event, "ok": True}
-        
-    except Exception as e:
-        print(f"Error processing webhook: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error processing webhook: {str(e)}"
-        )
-        
-        
 @router.get("/platform/checkout")
 async def stripe_checkout(
     request: Request,
@@ -1370,74 +1197,40 @@ async def stripe_checkout(
         None,
     )
     
-    # Call Autumn API to attach customer
-    if AUTUMN_API_KEY:
-        try:
-            print(f"Attaching customer {user_id} to Autumn")
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {AUTUMN_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                
-                autumn_payload = {
-                    "customer_id": org_id if org_id else user_id,
-                    "product_id": plan,  # Using the plan as product_id
-                    "force_checkout": not upgrade,
-                    "success_url": redirect_url,
-                    "customer_data": {
-                        "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
-                        "email": user_email,
-                    }
-                }
-                
-                async with session.post(
-                    f"{AUTUMN_API_URL}/attach",
-                    headers=headers,
-                    json=autumn_payload
-                ) as response:
-                    response_text = await response.text()
-                    
-                    try:
-                        response_data = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        response_data = {}
-                    
-                    if response.status != 200:
-                        logfire.error(f"Failed to attach customer to Autumn: {response_text}")
-                        
-                        # Check if error is because customer already has the product
-                        error_code = response_data.get("code", "")
-                        if error_code == "customer_already_has_product" or "customer_already_has_product" in response_text:
-                            # Customer already has product, get billing portal URL instead
-                            logfire.info(f"Customer already has product. Redirecting to billing portal.")
-                            
-                            customer_id = org_id if org_id else user_id
-                            async with session.get(
-                                f"{AUTUMN_API_URL}/customers/{customer_id}/billing_portal",
-                                headers=headers
-                            ) as portal_response:
-                                portal_text = await portal_response.text()
-                                try:
-                                    portal_data = json.loads(portal_text)
-                                    portal_url = portal_data.get("url")
-                                    if portal_url:
-                                        return {"url": portal_url}
-                                except json.JSONDecodeError:
-                                    logfire.error(f"Failed to parse billing portal response: {portal_text}")
-                                
-                                logfire.error(f"Failed to get billing portal URL: {portal_text}")
-                    
-                        return {"error": response_text}
-                    else:
-                        logfire.info(f"Successfully attached customer {user_id} to Autumn")
-                        print(response_data)
-                        if response_data.get("checkout_url"):
-                            return {"url": response_data.get("checkout_url")}
-                        else:
-                            return response_data
-        except Exception as e:
-            logfire.error(f"Error calling Autumn API: {str(e)}")
+    try:
+        print(f"Attaching customer {user_id} to Autumn")
+        
+        customer_id = org_id if org_id else user_id
+        response_data = await autumn_client.attach(
+            customer_id=customer_id,
+            product_id=plan,  # Using the plan as product_id
+            force_checkout=not upgrade,
+            success_url=redirect_url,
+            customer_data={
+                "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
+                "email": user_email,
+            }
+        )
+        
+        if response_data:
+            logfire.info(f"Successfully attached customer {user_id} to Autumn")
+            print(response_data)
+            if response_data.get("checkout_url"):
+                return {"url": response_data.get("checkout_url")}
+            else:
+                return response_data
+        else:
+            # The autumn client logs errors internally and returns None on failure
+            # Check if the customer already has the product by trying to get billing portal
+            logfire.info(f"Attach failed. Attempting to get billing portal URL.")
+            
+            portal_data = await autumn_client.get_billing_portal(customer_id)
+            if portal_data and portal_data.get("url"):
+                return {"url": portal_data["url"]}
+            
+            return {"error": "Failed to create subscription"}
+    except Exception as e:
+        logfire.error(f"Error calling Autumn API: {str(e)}")
             
 
 def r(price: float) -> float:
@@ -1780,47 +1573,89 @@ async def get_dashboard_url(
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
-    headers = {
-        "Authorization": f"Bearer {AUTUMN_API_KEY}",
-    }
+    customer_id = org_id or user_id
+    portal_data = await autumn_client.get_billing_portal(customer_id)
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            f"{AUTUMN_API_URL}/customers/{org_id or user_id}/billing_portal",
-            headers=headers
-        ) as portal_response:
-            portal_text = await portal_response.text()
-            try:
-                portal_data = json.loads(portal_text)
-                portal_url = portal_data.get("url")
-                if portal_url:
-                    return {"url": portal_url}
-            except json.JSONDecodeError:
-                logfire.error(f"Failed to parse billing portal response: {portal_text}")
-        
-        logfire.error(f"Failed to get billing portal URL: {portal_text}")
-        
-    return
-
-    # Get user's subscription
-    sub = await get_current_plan(
-        db=db,
-        org_id=org_id,
-        user_id=user_id
-    )
+    if portal_data and portal_data.get("url"):
+        return {"url": portal_data["url"]}
     
-    if not sub:
-        raise HTTPException(status_code=404, detail="No subscription found")
+    logfire.error(f"Failed to get billing portal URL for customer {customer_id}")
+    raise HTTPException(status_code=500, detail="Failed to get billing portal URL")
 
-    # Create Stripe billing portal session
-    session = await stripe.billing_portal.Session.create_async(
-        customer=sub["stripe_customer_id"],
-        return_url=redirect_url
-    )
 
-    return JSONResponse({
-        "url": session.url
-    })
+class TopUpRequest(BaseModel):
+    amount: float
+
+@router.post("/platform/topup")
+async def topup_credits(
+    request: Request,
+    body: TopUpRequest,
+):
+    """
+    Create a checkout session for topping up GPU credits.
+    $1 = 100 credits
+    """
+    user_id = request.state.current_user.get("user_id")
+    org_id = request.state.current_user.get("org_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    # Validate amount
+    if body.amount < 10:
+        raise HTTPException(status_code=400, detail="Minimum top-up amount is $10")
+    
+    if body.amount > 1000:
+        raise HTTPException(status_code=400, detail="Maximum top-up amount is $1000")
+    
+    customer_id = org_id or user_id
+    
+    try:
+        # Get user data from Clerk for checkout
+        user_data = await get_clerk_user(user_id)
+        user_email = next(
+            (
+                email["email_address"]
+                for email in user_data["email_addresses"]
+                if email["id"] == user_data["primary_email_address_id"]
+            ),
+            None,
+        )
+        
+        # Convert dollars to credit quantity ($1 = 100 credits)
+        credit_quantity = int(body.amount * 100)
+        
+        logfire.info(f"Creating credit checkout for customer {customer_id} - ${body.amount} ({credit_quantity} credits)")
+        
+        response_data = await autumn_client.checkout(
+            customer_id=customer_id,
+            product_id="credit",  # Credit product ID in Autumn
+            options=[
+                {
+                    "feature_id": "gpu-credit",
+                    "quantity": credit_quantity
+                }
+            ],
+            success_url=f"{os.getenv('FRONTEND_URL', 'https://app.comfydeploy.com')}/usage?topup=success",
+            customer_data={
+                "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
+                "email": user_email,
+            }
+        )
+        
+        if response_data:
+            logfire.info(f"Successfully created credit checkout for customer {customer_id}")
+            if response_data.get("url"):
+                return {"url": response_data["url"]}
+            else:
+                return response_data
+        else:
+            logfire.error(f"Failed to create credit checkout for customer {customer_id}")
+            raise HTTPException(status_code=500, detail="Failed to create checkout session")
+            
+    except Exception as e:
+        logfire.error(f"Error creating credit checkout: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create checkout: {str(e)}")
 
 async def get_subscription_items(subscription_id: str) -> List[Dict]:
     """Helper function to get subscription items from Stripe"""
@@ -1833,71 +1668,6 @@ async def get_subscription_items(subscription_id: str) -> List[Dict]:
     except stripe.error.StripeError as e:
         print(f"Error fetching subscription items: {e}")
         return []
-
-async def handle_stripe_event(event: dict, db: AsyncSession):
-    """Generic event handler for Stripe webhook events"""
-    event_type = event.get("type")
-    if event_type not in ALLOWED_STRIPE_EVENTS:
-        print(f"Unhandled event type: {event_type}")
-        return
-        
-    event_object = event.get("data", {}).get("object", {})
-    
-    # Extract common fields
-    customer_id = event_object.get("customer")
-    if isinstance(customer_id, dict):
-        customer_id = customer_id.get("id")
-        
-    # For invoice events, get the subscription from the invoice
-    subscription_id = None
-    if event_type.startswith("invoice."):
-        subscription_id = event_object.get("subscription")
-        if subscription_id:
-            try:
-                # Fetch the full subscription object
-                subscription = await stripe.Subscription.retrieve_async(subscription_id)
-                event_object = subscription
-            except stripe.error.StripeError as e:
-                logfire.error(f"Error fetching subscription from invoice: {str(e)}")
-                return
-    else:
-        subscription_id = event_object.get("id")
-    
-    metadata = event_object.get("metadata", {})
-    
-    # If metadata is empty in the event object, try to get it from the subscription
-    if not metadata and customer_id:
-        try:
-            # Get customer to find associated subscription
-            customer = await stripe.Customer.retrieve_async(customer_id, expand=['subscriptions'])
-            if customer.get('subscriptions') and customer.subscriptions.data:
-                latest_sub = customer.subscriptions.data[0]
-                metadata = latest_sub.metadata
-                if not subscription_id:
-                    subscription_id = latest_sub.id
-                    event_object = latest_sub
-        except stripe.error.StripeError as e:
-            logfire.error(f"Error fetching customer data: {str(e)}")
-    
-    user_id = metadata.get("userId")
-    org_id = metadata.get("orgId")
-    
-    # Skip if we can't identify the user/org
-    if not user_id and not org_id:
-        logfire.error(f"Could not identify user/org from event: {event_type}")
-        return
-    
-    try:
-        await update_subscription_redis_data(
-            subscription_id=subscription_id,
-            user_id=user_id,
-            org_id=org_id,
-            # last_invoice_timestamp=int(event_object.get("current_period_end")) if event_type == "invoice.finalized" else None,
-            db=db
-        )
-        logfire.info(f"Updated Redis data for plan:{org_id or user_id} after {event_type}")
-    except Exception as e:
-        logfire.error(f"Error updating Redis data: {str(e)}")
 
 async def calculate_usage_charges(
     user_id: Optional[str] = None,
@@ -2184,6 +1954,23 @@ async def update_seats(
     # Set minimum seats based on plan type
     minimum_seats = 10 if plan_type == "business" else 4  # 4 for deployment plans
     
+    async with Clerk(
+        bearer_auth=os.getenv("CLERK_SECRET_KEY"),
+    ) as clerk:
+        org_data = await clerk.organizations.retrieve(org_id)
+        current_max_seats = org_data["max_allowed_memberships"]
+        
+        # Don't update if current max is 0 (unlimited) or already meets minimum
+        if current_max_seats == 0 or current_max_seats >= minimum_seats:
+            return {
+                "status": "success", 
+                "message": "No update needed, seats already sufficient",
+                "current_seats": "unlimited" if current_max_seats == 0 else current_max_seats
+            }
+            
+        # Update seats to minimum required for plan
+        org_data = await clerk.organizations.update(org_id, max_allowed_memberships=minimum_seats)
+        
     async with aiohttp.ClientSession() as session:
         headers = {
             "Authorization": f"Bearer {os.getenv('CLERK_SECRET_KEY')}",
@@ -2234,92 +2021,3 @@ async def update_seats(
                 
                 return result
 
-# Local ComfyUI
-@router.get("/platform/comfyui/auth-response")
-async def get_local_comfyui_auth_response(
-    request_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    auth_key = (
-        select(AuthRequest)
-        .where(
-            and_(
-                AuthRequest.request_id == request_id,
-                AuthRequest.expired_date > datetime.now(),
-            )
-        )
-        .limit(1)
-    )
-    result = await db.execute(auth_key)
-    auth_request = result.scalar_one_or_none()
-    
-    if not auth_request:
-        raise HTTPException(status_code=404, detail="Auth request not found")
-    
-    # Handle timezone-aware/naive datetime comparison
-    current_time = datetime.now(timezone.utc)
-    created_at = auth_request.created_at
-
-    # If created_at is naive (no timezone info), assume it's UTC
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-
-    time_since_created = current_time - created_at
-    if time_since_created.total_seconds() > 30:
-        raise HTTPException(status_code=410, detail="Auth request has expired. ")
-    
-    user_id = auth_request.user_id
-    org_id = auth_request.org_id
-
-    user_data = await get_clerk_org(org_id) if org_id else await get_clerk_user(user_id)
-    
-    return {
-        "api_key": auth_request.api_hash,
-        "name": user_data["name"] if org_id else user_data["username"]
-    }
-
-class CreateLocalComfyuiAuthRequest(BaseModel):
-    request_id: str
-
-@router.post("/platform/comfyui/auth-request")
-async def create_local_comfyui_auth_request(
-    request: Request,
-    body: CreateLocalComfyuiAuthRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    # Get current user info from request
-    user_id = request.state.current_user["user_id"]
-    org_id = request.state.current_user.get("org_id")
-    
-    # Set expiration date to one week from now
-    expired_date = datetime.now(timezone.utc) + timedelta(weeks=1)
-    
-    # Generate a JWT token for API access to a week
-    api_hash = generate_jwt_token(user_id, org_id, expires_in=604800)
-    
-    # Create the auth request
-    auth_request = AuthRequest(
-        request_id=body.request_id,
-        user_id=user_id,
-        org_id=org_id,
-        api_hash=api_hash,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
-        expired_date=expired_date
-    )
-    
-    try:
-        # Save to database
-        db.add(auth_request)
-        await db.commit()
-        await db.refresh(auth_request)
-        
-        return {
-            "request_id": auth_request.request_id,
-            "api_hash": auth_request.api_hash,
-            "expired_date": auth_request.expired_date.isoformat(),
-            "status": "success"
-        }
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail="Auth request with this ID already exists")

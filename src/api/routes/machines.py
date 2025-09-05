@@ -60,6 +60,7 @@ from api.models import (
 from api.database import get_db, get_db_context
 import logging
 from typing import Any, Dict, List, Optional, Literal
+from api.utils.autumn import autumn_client
 
 # from fastapi_pagination import Page, add_pagination, paginate
 from api.utils.multi_level_cache import multi_level_cached
@@ -522,83 +523,85 @@ async def validate_free_plan_restrictions(
             )
 
     # Check restricted fields
-    restricted_fields = [
-        "extra_docker_commands",
-        "base_docker_image",
-        "prestart_command",
-        "extra_args",
-        "install_custom_node_with_gpu",
-    ]
+    
+    # restricted_fields = [
+    #     "extra_docker_commands",
+    #     "base_docker_image",
+    #     "prestart_command",
+    #     "extra_args",
+    #     "install_custom_node_with_gpu",
+    # ]
 
-    for field in restricted_fields:
-        if field in machine_data and machine_data[field]:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Free plan users cannot use {field}. Please upgrade to use this feature.",
-            )
+    # for field in restricted_fields:
+    #     if field in machine_data and machine_data[field]:
+    #         raise HTTPException(
+    #             status_code=403,
+    #             detail=f"Free plan users cannot use {field}. Please upgrade to use this feature.",
+    #         )
 
     # Check docker_command_steps - only allow ComfyUI Deploy node
-    if (
-        "docker_command_steps" in machine_data
-        and machine_data["docker_command_steps"] is not None
-    ):
-        steps = machine_data["docker_command_steps"].get("steps", [])
+    
+    # if (
+    #     "docker_command_steps" in machine_data
+    #     and machine_data["docker_command_steps"] is not None
+    # ):
+    #     steps = machine_data["docker_command_steps"].get("steps", [])
         
-        # Count ComfyUI Deploy nodes and other nodes
-        comfydeploy_count = 0
-        other_nodes_count = 0
+    #     # Count ComfyUI Deploy nodes and other nodes
+    #     comfydeploy_count = 0
+    #     other_nodes_count = 0
         
-        for step in steps:
-            step_type = step.get("type")
+    #     for step in steps:
+    #         step_type = step.get("type")
             
-            # Check for custom commands
-            if step_type == "commands":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Free plan users cannot include custom commands. Please upgrade to use this feature.",
-                )
+    #         # Check for custom commands
+    #         if step_type == "commands":
+    #             raise HTTPException(
+    #                 status_code=403,
+    #                 detail="Free plan users cannot include custom commands. Please upgrade to use this feature.",
+    #             )
             
-            # Check for custom nodes
-            if step_type == "custom-node":
-                data = step.get("data", {})
-                url = data.get("url", "").lower()
+    #         # Check for custom nodes
+    #         if step_type == "custom-node":
+    #             data = step.get("data", {})
+    #             url = data.get("url", "").lower()
                 
-                # Check if it's the ComfyUI Deploy node
-                is_comfydeploy = any(allowed_url in url for allowed_url in [
-                    "github.com/bennykok/comfyui-deploy",
-                    "github.com/bennykok/comfyui-deploy.git",
-                    "git@github.com:bennykok/comfyui-deploy"
-                ])
+    #             # Check if it's the ComfyUI Deploy node
+    #             is_comfydeploy = any(allowed_url in url for allowed_url in [
+    #                 "github.com/bennykok/comfyui-deploy",
+    #                 "github.com/bennykok/comfyui-deploy.git",
+    #                 "git@github.com:bennykok/comfyui-deploy"
+    #             ])
                 
-                if is_comfydeploy:
-                    comfydeploy_count += 1
-                else:
-                    other_nodes_count += 1
-                    node_name = data.get("name", "Unknown")
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"Free plan users can only use the ComfyUI Deploy custom node. '{node_name}' is not allowed. Please upgrade to use additional custom nodes.",
-                    )
+    #             if is_comfydeploy:
+    #                 comfydeploy_count += 1
+    #             else:
+    #                 other_nodes_count += 1
+    #                 node_name = data.get("name", "Unknown")
+    #                 raise HTTPException(
+    #                     status_code=403,
+    #                     detail=f"Free plan users can only use the ComfyUI Deploy custom node. '{node_name}' is not allowed. Please upgrade to use additional custom nodes.",
+    #                 )
             
-            # Check for custom node manager
-            if step_type == "custom-node-manager":
-                data = step.get("data", {})
-                node_id = data.get("node_id", "")
+    #         # Check for custom node manager
+    #         if step_type == "custom-node-manager":
+    #             data = step.get("data", {})
+    #             node_id = data.get("node_id", "")
                 
-                # Only allow comfyui-deploy through the manager
-                if node_id == "comfyui-deploy":
-                    comfydeploy_count += 1
-                else:
-                    other_nodes_count += 1
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"Free plan users can only use the ComfyUI Deploy custom node. Please upgrade to use additional custom nodes.",
-                    )
+    #             # Only allow comfyui-deploy through the manager
+    #             if node_id == "comfyui-deploy":
+    #                 comfydeploy_count += 1
+    #             else:
+    #                 other_nodes_count += 1
+    #                 raise HTTPException(
+    #                     status_code=403,
+    #                     detail=f"Free plan users can only use the ComfyUI Deploy custom node. Please upgrade to use additional custom nodes.",
+    #                 )
         
-        # Ensure at least one ComfyUI Deploy node exists (for updates)
-        if other_nodes_count == 0 and comfydeploy_count == 0 and len(steps) > 0:
-            # This shouldn't happen, but just in case
-            pass
+    #     # Ensure at least one ComfyUI Deploy node exists (for updates)
+    #     if other_nodes_count == 0 and comfydeploy_count == 0 and len(steps) > 0:
+    #         # This shouldn't happen, but just in case
+    #         pass
 
 
 @router.post("/machine/serverless")
@@ -612,6 +615,49 @@ async def create_serverless_machine(
     await validate_free_plan_restrictions(
         request=request, machine_data=machine.model_dump(), db=db
     )
+
+    # Check machine limit using autumn
+    from api.utils.autumn import autumn_client
+    
+    current_user = request.state.current_user
+    customer_id = current_user.get("org_id") or current_user.get("user_id")
+    
+    # Count current machines
+    machine_count_query = (
+        select(func.count())
+        .select_from(Machine)
+        .where(~Machine.deleted)
+    )
+    if current_user.get("org_id"):
+        machine_count_query = machine_count_query.where(Machine.org_id == current_user["org_id"])
+    else:
+        machine_count_query = machine_count_query.where(
+            Machine.user_id == current_user["user_id"],
+            Machine.org_id.is_(None)
+        )
+    
+    current_count = await db.execute(machine_count_query)
+    current_count = current_count.scalar()
+    
+    # Check if user can create another machine
+    check_result = await autumn_client.check(
+        customer_id=customer_id,
+        feature_id="machine_limit",
+        required_balance=current_count + 1,  # Check if they can have one more
+        with_preview=True
+    )
+    
+    if not check_result or not check_result.get("allowed", False):
+        preview_data = check_result.get("preview", {}) if check_result else {}
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "Machine limit reached",
+                "message": f"You have reached your machine limit of {current_count} machines.",
+                "current_count": current_count,
+                "preview": preview_data
+            }
+        )
 
     wait_for_build = machine.wait_for_build
 
@@ -709,6 +755,37 @@ async def create_serverless_machine(
         await build_logic(params)
     else:
         background_tasks.add_task(build_logic, params)
+
+    # Update machine usage in autumn
+    customer_id = org_id if org_id else user_id
+    
+    # Count total machines for this customer
+    machine_count_query = (
+        select(func.count())
+        .select_from(Machine)
+        .where(~Machine.deleted)
+    )
+    if org_id:
+        machine_count_query = machine_count_query.where(Machine.org_id == org_id)
+    else:
+        machine_count_query = machine_count_query.where(
+            Machine.user_id == user_id,
+            Machine.org_id.is_(None)
+        )
+    
+    machine_count = await db.execute(machine_count_query)
+    machine_count = machine_count.scalar()
+    
+    # Set feature usage for machine limit
+    try:
+        await autumn_client.set_feature_usage(
+            customer_id=customer_id,
+            feature_id="machine_limit",
+            value=machine_count
+        )
+    except Exception as e:
+        logger.error(f"Failed to update machine usage in autumn: {str(e)}")
+        # Don't fail the request if autumn update fails
 
     return JSONResponse(content=machine.to_dict())
 
@@ -1934,6 +2011,40 @@ async def delete_machine(
         except Exception as e:
             logger.error(f"Error stopping modal app for machine {machine.id}: {str(e)}")
 
+    # Update machine usage in autumn
+    current_user = request.state.current_user
+    org_id = current_user.get("org_id")
+    user_id = current_user["user_id"]
+    customer_id = org_id if org_id else user_id
+    
+    # Count total machines for this customer after deletion
+    machine_count_query = (
+        select(func.count())
+        .select_from(Machine)
+        .where(~Machine.deleted)
+    )
+    if org_id:
+        machine_count_query = machine_count_query.where(Machine.org_id == org_id)
+    else:
+        machine_count_query = machine_count_query.where(
+            Machine.user_id == user_id,
+            Machine.org_id.is_(None)
+        )
+    
+    machine_count = await db.execute(machine_count_query)
+    machine_count = machine_count.scalar()
+    
+    # Set feature usage for machine limit
+    try:
+        await autumn_client.set_feature_usage(
+            customer_id=customer_id,
+            feature_id="machine_limit",
+            value=machine_count
+        )
+    except Exception as e:
+        logger.error(f"Failed to update machine usage in autumn: {str(e)}")
+        # Don't fail the request if autumn update fails
+
     return JSONResponse(content={"message": "Machine deleted"})
 
 
@@ -1967,6 +2078,48 @@ async def create_custom_machine(
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
 
+    # Check machine limit using autumn
+    from api.utils.autumn import autumn_client
+    
+    customer_id = org_id or user_id
+    
+    # Count current machines
+    machine_count_query = (
+        select(func.count())
+        .select_from(Machine)
+        .where(~Machine.deleted)
+    )
+    if org_id:
+        machine_count_query = machine_count_query.where(Machine.org_id == org_id)
+    else:
+        machine_count_query = machine_count_query.where(
+            Machine.user_id == user_id,
+            Machine.org_id.is_(None)
+        )
+    
+    current_count = await db.execute(machine_count_query)
+    current_count = current_count.scalar()
+    
+    # Check if user can create another machine
+    check_result = await autumn_client.check(
+        customer_id=customer_id,
+        feature_id="machine_limit",
+        required_balance=current_count + 1,  # Check if they can have one more
+        with_preview=True
+    )
+    
+    if not check_result or not check_result.get("allowed", False):
+        preview_data = check_result.get("preview", {}) if check_result else {}
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "Machine limit reached",
+                "message": f"You have reached your machine limit of {current_count} machines.",
+                "current_count": current_count,
+                "preview": preview_data
+            }
+        )
+
     machine = Machine(
         id=uuid.uuid4(),
         name=machine.name,
@@ -1982,6 +2135,37 @@ async def create_custom_machine(
     db.add(machine)
     await db.commit()
     await db.refresh(machine)
+
+    # Update machine usage in autumn
+    customer_id = org_id if org_id else user_id
+    
+    # Count total machines for this customer
+    machine_count_query = (
+        select(func.count())
+        .select_from(Machine)
+        .where(~Machine.deleted)
+    )
+    if org_id:
+        machine_count_query = machine_count_query.where(Machine.org_id == org_id)
+    else:
+        machine_count_query = machine_count_query.where(
+            Machine.user_id == user_id,
+            Machine.org_id.is_(None)
+        )
+    
+    machine_count = await db.execute(machine_count_query)
+    machine_count = machine_count.scalar()
+    
+    # Set feature usage for machine limit
+    try:
+        await autumn_client.set_feature_usage(
+            customer_id=customer_id,
+            feature_id="machine_limit",
+            value=machine_count
+        )
+    except Exception as e:
+        logger.error(f"Failed to update machine usage in autumn: {str(e)}")
+        # Don't fail the request if autumn update fails
 
     return JSONResponse(content=machine.to_dict())
 

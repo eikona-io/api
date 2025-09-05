@@ -30,10 +30,24 @@ from upstash_redis.asyncio import Redis
 from .utils import select
 from pydantic import BaseModel, Field
 
-
 from modal._output import OutputManager
 from modal.call_graph import InputStatus
 
+from api.models import (
+    GPUEvent,
+    Machine,
+    MachineVersion,
+    WorkflowRun,
+    get_machine_columns,
+)
+from api.database import get_db, get_db_context
+from typing import Any, Dict, List, Optional, cast, Union
+from uuid import UUID, uuid4
+import logging
+from typing import Optional
+from sqlalchemy import update, func
+from fastapi import BackgroundTasks
+from api.utils.autumn import send_autumn_usage_event, get_autumn_customer
 
 class CustomOutputManager(OutputManager):
     _context_id = None
@@ -75,24 +89,6 @@ class CustomOutputManager(OutputManager):
 
 
 modal._output.OutputManager = CustomOutputManager
-
-# from sqlalchemy import select
-from api.models import (
-    GPUEvent,
-    Machine,
-    MachineVersion,
-    WorkflowRun,
-    get_machine_columns,
-)
-from api.database import get_db, get_db_context
-from typing import Any, Dict, List, Optional, cast, Union
-from uuid import UUID, uuid4
-import logging
-from typing import Optional
-from sqlalchemy import update, func
-from fastapi import BackgroundTasks
-from api.utils.autumn import send_autumn_usage_event
-import re
 
 redis_url = os.getenv("UPSTASH_REDIS_META_REST_URL")
 redis_token = os.getenv("UPSTASH_REDIS_META_REST_TOKEN")
@@ -575,6 +571,33 @@ class IncreaseTimeoutBody2(BaseModel):
     minutes: int
 
 
+async def get_user_credit_balance(user_id: str, org_id: str) -> float:
+    """
+    Get the user's current GPU credit balance from Autumn system.
+    
+    Args:
+        user_id: The user ID
+        org_id: The organization ID (if applicable)
+        
+    Returns:
+        Current credit balance in dollars (converted from cents)
+    """
+    try:
+        customer_id = org_id or user_id
+        autumn_data = await get_autumn_customer(customer_id, include_features=True)
+        
+        if autumn_data and autumn_data.get("features") and autumn_data["features"].get("gpu-credit"):
+            gpu_credit_feature = autumn_data["features"]["gpu-credit"]
+            # Balance is stored in cents, convert to dollars
+            balance_cents = gpu_credit_feature.get("balance", 0)
+            return balance_cents / 100.0
+        
+        return 0.0
+    except Exception as e:
+        logger.error(f"Error fetching user credit balance: {str(e)}")
+        return 0.0
+
+
 @router.post("/session/{session_id}/increase-timeout")
 async def increase_timeout_2(
     request: Request,
@@ -604,27 +627,39 @@ async def increase_timeout_2(
         raise HTTPException(status_code=404, detail="Timeout end not found for session")
 
     if plan == "free":
-        max_timeout_minutes = 30
-        if not gpu_event.start_time:
-            raise HTTPException(status_code=400, detail="Session has not started yet")
+        # Get current user credit balance
+        user_id = request.state.current_user.get("user_id")
+        org_id = request.state.current_user.get("org_id")
+        current_credit_balance = await get_user_credit_balance(user_id, org_id)
+        
+        # Only apply timeout restrictions if credit balance is lower than $5
+        if current_credit_balance < 5.0:
+            max_timeout_minutes = 30
+            if not gpu_event.start_time:
+                raise HTTPException(status_code=400, detail="Session has not started yet")
 
-        # Calculate the new timeout end time
-        current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
-        new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
+            # Calculate the new timeout end time
+            current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
+            new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
 
-        # Calculate total session duration from start to new end time
-        total_duration = (new_timeout_end - gpu_event.start_time).total_seconds() / 60
-        elapsed_minutes = (
-            datetime.utcnow() - gpu_event.start_time
-        ).total_seconds() / 60
+            # Calculate total session duration from start to new end time
+            total_duration = (new_timeout_end - gpu_event.start_time).total_seconds() / 60
+            elapsed_minutes = (
+                datetime.utcnow() - gpu_event.start_time
+            ).total_seconds() / 60
 
-        if total_duration > max_timeout_minutes:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Free plan users are limited to {max_timeout_minutes} minutes total session time. "
-                f"Session has been running for {int(elapsed_minutes)} minutes. "
-                f"Maximum remaining time: {max(0, int(max_timeout_minutes - elapsed_minutes))} minutes",
-            )
+            if total_duration > max_timeout_minutes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Free plan users with credit balance below $5.00 are limited to {max_timeout_minutes} minutes total session time. "
+                    f"Session has been running for {int(elapsed_minutes)} minutes. "
+                    f"Maximum remaining time: {max(0, int(max_timeout_minutes - elapsed_minutes))} minutes. "
+                    f"Current credit balance: ${current_credit_balance:.2f}",
+                )
+        else:
+            # User has sufficient credit balance (>= $5), no timeout restrictions
+            current_timeout_end = datetime.fromisoformat(current_timeout_end_str)
+            new_timeout_end = current_timeout_end + timedelta(minutes=body.minutes)
     else:
         # Calculate the new timeout end time for non-free plans
         current_timeout_end = datetime.fromisoformat(current_timeout_end_str)

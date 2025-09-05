@@ -58,7 +58,7 @@ from datetime import datetime, timezone
 import datetime as dt
 
 from fastapi import Depends
-from api.utils.autumn import send_autumn_usage_event
+from api.utils.autumn import send_autumn_usage_event, autumn_client
 
 from upstash_redis.asyncio import Redis
 from .log import cancel_active_streams, delayed_archive_logs_for_run, is_terminal_status, signal_stream_end
@@ -66,6 +66,40 @@ from .log import cancel_active_streams, delayed_archive_logs_for_run, is_termina
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+
+async def track_gpu_concurrency_change(
+    customer_id: str,
+    increment: int,
+    gpu_event_id: str
+):
+    """
+    Track GPU concurrency change by increment (+1 for start, -1 for end).
+    
+    Args:
+        customer_id: The customer ID (org_id or user_id)
+        increment: +1 for gpu_start, -1 for gpu_end
+        gpu_event_id: The GPU event ID to use for idempotency
+    """
+    try:
+        # Create idempotency key with appropriate prefix
+        prefix = "start_" if increment > 0 else "end_"
+        idempotency_key = f"{prefix}{gpu_event_id}"
+        
+        # Track feature usage increment/decrement in Autumn
+        await autumn_client.track_feature_usage(
+            customer_id=customer_id,
+            feature_id="gpu_concurrency_limit",
+            value=increment,
+            idempotency_key=idempotency_key
+        )
+        
+        action = "incremented" if increment > 0 else "decremented"
+        logger.info(f"GPU concurrency count {action} by {abs(increment)} for customer {customer_id} (event: {gpu_event_id})")
+        
+    except Exception as e:
+        logger.error(f"Failed to track GPU concurrency change for customer {customer_id}: {str(e)}")
+        # Don't fail the request if tracking fails
 
 
 def json_safe_value(value):
@@ -839,9 +873,17 @@ async def create_gpu_event(
                     select(GPUEvent).where(GPUEvent.session_id == session_id)
                 )
                 gpu_event = gpu_event.scalar_one_or_none()
-                gpu_event.start_time = datetime.fromisoformat(timestamp)
-                # gpu_event.modal_function_id = modal_function_id
-                await db.commit()
+                if gpu_event:
+                    gpu_event.start_time = datetime.fromisoformat(timestamp)
+                    # gpu_event.modal_function_id = modal_function_id
+                    await db.commit()
+                    
+                    # Track GPU concurrency change (+1 for gpu_start)
+                    await track_gpu_concurrency_change(
+                        customer_id=gpu_event.org_id or gpu_event.user_id,
+                        increment=1,
+                        gpu_event_id=str(gpu_event.id)
+                    )
             else:
                 # Insert new GPU event
                 if machine_id:
@@ -869,6 +911,13 @@ async def create_gpu_event(
 
                 db.add(gpu_event)
                 await db.commit()
+                
+                # Track GPU concurrency change (+1 for gpu_start)
+                await track_gpu_concurrency_change(
+                    customer_id=final_org_id or final_user_id,
+                    increment=1,
+                    gpu_event_id=str(gpu_event.id)
+                )
 
             logging.info(f"gpu_event: {gpu_event.id}")
             return {"event_id": gpu_event.id}
@@ -888,6 +937,13 @@ async def create_gpu_event(
             result = await db.execute(stmt)
             event = result.scalar_one()
             await db.commit()
+            
+            # Track GPU concurrency change (-1 for gpu_end)
+            await track_gpu_concurrency_change(
+                customer_id=event.org_id or event.user_id,
+                increment=-1,
+                gpu_event_id=str(event.id)
+            )
 
             # Send usage data to Autumn API
             await send_autumn_usage_event(
@@ -1033,96 +1089,4 @@ async def get_file_upload_url(
             "is_public": public,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class EmailAddress(BaseModel):
-    email_address: str
-    id: str
-    verification: dict
-
-
-class ClerkWebhookData(BaseModel):
-    data: dict
-    type: str
-    timestamp: int
-
-
-@router.post("/clerk/webhook", include_in_schema=False)
-async def handle_clerk_webhook(
-    webhook_data: ClerkWebhookData,
-    db: AsyncSession = Depends(get_db),
-):
-    try:
-        user_data = webhook_data.data
-
-        if webhook_data.type == "user.created":
-            # Check if user already exists
-            existing_user = await db.execute(
-                select(User).where(User.id == user_data["id"])
-            )
-            if existing_user.scalar_one_or_none():
-                return {"status": "success", "message": "User already exists"}
-
-            # Get username fallback (username or first_name + last_name)
-            username_fallback = user_data.get("username") or (
-                (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
-            )
-
-            # Get name fallback
-            name_fallback = (user_data.get("first_name") or "") + (
-                user_data.get("last_name") or ""
-            )
-            if not name_fallback:
-                name_fallback = username_fallback
-
-            # Create new user
-            new_user = User(
-                id=user_data["id"],
-                username=username_fallback,
-                name=name_fallback,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-
-            db.add(new_user)
-            await db.commit()
-            await db.refresh(new_user)
-
-            return {"status": "success", "message": "User created successfully"}
-
-        elif webhook_data.type == "user.updated":
-            # Get existing user
-            existing_user = await db.execute(
-                select(User).where(User.id == user_data["id"])
-            )
-            user = existing_user.scalar_one_or_none()
-
-            if not user:
-                raise HTTPException(status_code=404, detail="User not found")
-
-            # Update username and name with same fallback logic
-            username_fallback = user_data.get("username") or (
-                (user_data.get("first_name") or "") + (user_data.get("last_name") or "")
-            )
-
-            name_fallback = (user_data.get("first_name") or "") + (
-                user_data.get("last_name") or ""
-            )
-            if not name_fallback:
-                name_fallback = username_fallback
-
-            user.username = username_fallback
-            user.name = name_fallback
-            user.updated_at = datetime.now(timezone.utc)
-
-            await db.commit()
-            await db.refresh(user)
-
-            return {"status": "success", "message": "User updated successfully"}
-
-        return {"status": "success", "message": "Event processed"}
-
-    except Exception as e:
-        await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

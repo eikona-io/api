@@ -141,6 +141,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "boto3" },
     { name = "cachetools" },
+    { name = "clerk-backend-api" },
     { name = "cryptography" },
     { name = "discord-py" },
     { name = "fastapi" },
@@ -183,6 +184,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "boto3", specifier = ">=1.35.5" },
     { name = "cachetools", specifier = ">=5.3.0" },
+    { name = "clerk-backend-api", specifier = ">=3.3.0" },
     { name = "cryptography", specifier = ">=43.0.1" },
     { name = "discord-py", specifier = ">=2.4.0" },
     { name = "fastapi", specifier = ">=0.112.1" },
@@ -341,6 +343,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/37/a0/2410e5e6032a174c95e0806b1a6585eb21e12f445ebe239fac441995226a/charset_normalizer-3.4.2-cp312-cp312-win32.whl", hash = "sha256:db4c7bf0e07fc3b7d89ac2a5880a6a8062056801b83ff56d8464b70f65482b6c", size = 98357 },
     { url = "https://files.pythonhosted.org/packages/6c/4f/c02d5c493967af3eda9c771ad4d2bbc8df6f99ddbeb37ceea6e8716a32bc/charset_normalizer-3.4.2-cp312-cp312-win_amd64.whl", hash = "sha256:5a9979887252a82fefd3d3ed2a8e3b937a7a809f65dcb1e068b090e165bbe99e", size = 105776 },
     { url = "https://files.pythonhosted.org/packages/20/94/c5790835a017658cbfabd07f3bfb549140c3ac458cfc196323996b10095a/charset_normalizer-3.4.2-py3-none-any.whl", hash = "sha256:7f56930ab0abd1c45cd15be65cc741c28b1c9a34876ce8c17a2fa107810c0af0", size = 52626 },
+]
+
+[[package]]
+name = "clerk-backend-api"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pyjwt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/df/e376eaa2b01b0b572e4799fb3d833bdf8779e9fef0e7af3e9f064e98e556/clerk_backend_api-3.3.0.tar.gz", hash = "sha256:a4b4428f22cd1e642e94ec273c427c3cbe17bcb81cb34d43300b35ed7fd742b4", size = 188444 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/74/58d0389c0c375b7fdf8c63b5efa3ce9864e58cdfdd7f0e6c3bafd37c1701/clerk_backend_api-3.3.0-py3-none-any.whl", hash = "sha256:2b68da6e928c24c1c6b25ce2c4da2938c764b7c46a5a19c7663cce7c4a12ced4", size = 385088 },
 ]
 
 [[package]]
@@ -1092,6 +1110,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/7c/2d/c3338d48ea6cc0feb8446d8e6937e1408088a72a39937982cc6111d17f84/pygments-2.19.1.tar.gz", hash = "sha256:61c16d2a8576dc0649d9f39e089b5f02bcd27fba10d8fb4dcc28173f7a45151f", size = 4968581 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8a/0b/9fcc47d19c48b59121088dd6da2488a49d5f72dacf8262e2790a1d2c7d15/pygments-2.19.1-py3-none-any.whl", hash = "sha256:9ea1544ad55cecf4b8242fab6dd35a93bbce657034b0611ee383099054ab6d8c", size = 1225293 },
+]
+
+[[package]]
+name = "pyjwt"
+version = "2.10.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/46/bd74733ff231675599650d3e47f361794b22ef3e3770998dda30d3b63726/pyjwt-2.10.1.tar.gz", hash = "sha256:3cc5772eb20009233caf06e9d8a0577824723b44e6648ee0a2aedb6cf9381953", size = 87785 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/ad/689f02752eeec26aed679477e80e632ef1b682313be70793d798c1d5fc8f/PyJWT-2.10.1-py3-none-any.whl", hash = "sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb", size = 22997 },
 ]
 
 [[package]]

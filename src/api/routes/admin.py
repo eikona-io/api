@@ -3,7 +3,6 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
-import logfire
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +14,6 @@ from api.routes.deployments import (
     _deactivate_deployment_internal,
     ENVIRONMENT_TTL_MAP
 )
-from api.routes.platform import process_all_active_subscriptions
 
 logger = logging.getLogger(__name__)
 
@@ -211,50 +209,3 @@ async def scan_legacy_deployments(
     except Exception as e:
         logger.error(f"Error scanning legacy deployments: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-class ProcessSubscriptionsResponse(BaseModel):
-    status: str
-    processed_subscriptions: List[dict]
-    dry_run: bool
-    emails_sent: bool
-
-@router.post(
-    "/process-subscriptions",
-    response_model=ProcessSubscriptionsResponse,
-    openapi_extra={
-        "x-speakeasy-name-override": "processSubscriptions",
-    },
-)
-async def process_subscriptions_endpoint(
-    request: Request,
-    dry_run: bool = False,
-    send_email: bool = False,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Process all active subscriptions and charge for GPU usage.
-    This endpoint should be called by a cron job.
-    Only accessible by admin organization.
-    
-    Parameters:
-        dry_run: If True, only simulate the process without creating invoices
-        send_email: If True, send email notifications about usage
-    """
-    check_admin_org(request)
-    
-    try:
-        processed_subscriptions = await process_all_active_subscriptions(
-            db=db,
-            dry_run=dry_run,
-            send_email=send_email
-        )
-        
-        return ProcessSubscriptionsResponse(
-            status="success",
-            processed_subscriptions=processed_subscriptions,
-            dry_run=dry_run,
-            emails_sent=send_email
-        )
-    except Exception as e:
-        logger.error(f"Error processing subscriptions: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}") 
