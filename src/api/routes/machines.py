@@ -504,40 +504,24 @@ async def validate_free_plan_restrictions(
     if plan != "free":
         return
 
-    # Check machine count limit (only for creation)
-    if not is_update:
-        max_machine_count = 1
-        machine_count = (
-            await db.execute(
-                select(func.count())
-                .select_from(Machine)
-                .where(~Machine.deleted)
-                .apply_org_check_by_type(Machine, request)
-            )
-        ).scalar()
-
-        if machine_count >= max_machine_count:
-            raise HTTPException(
-                status_code=400, 
-                detail="Free plan is limited to 1 machine. Please upgrade to create more machines."
-            )
+    # Defer machine limit enforcement to Autumn checks during creation
+    # (see autumn_client.check in create_serverless_machine)
 
     # Check restricted fields
-    
-    # restricted_fields = [
-    #     "extra_docker_commands",
-    #     "base_docker_image",
-    #     "prestart_command",
-    #     "extra_args",
-    #     "install_custom_node_with_gpu",
-    # ]
+    restricted_fields = [
+        "extra_docker_commands",
+        "base_docker_image",
+        "prestart_command",
+        "extra_args",
+        "install_custom_node_with_gpu",
+    ]
 
-    # for field in restricted_fields:
-    #     if field in machine_data and machine_data[field]:
-    #         raise HTTPException(
-    #             status_code=403,
-    #             detail=f"Free plan users cannot use {field}. Please upgrade to use this feature.",
-    #         )
+    for field in restricted_fields:
+        if field in machine_data and machine_data[field]:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Free plan users cannot use {field}. Please upgrade to use this feature.",
+            )
 
     # Check docker_command_steps - only allow ComfyUI Deploy node
     
@@ -2685,6 +2669,48 @@ async def import_machine(
         # Ensure we always have a reference for later checks
         machine_version = None
 
+        # Enforce machine limit (Autumn) before creating imported machine
+        current_user = request.state.current_user
+        user_id = current_user["user_id"]
+        org_id = current_user.get("org_id")
+        customer_id = org_id or user_id
+
+        # Count current machines for this customer (exclude deleted)
+        machine_count_query = (
+            select(func.count())
+            .select_from(Machine)
+            .where(~Machine.deleted)
+        )
+        if org_id:
+            machine_count_query = machine_count_query.where(Machine.org_id == org_id)
+        else:
+            machine_count_query = machine_count_query.where(
+                Machine.user_id == user_id,
+                Machine.org_id.is_(None)
+            )
+
+        current_count = await db.execute(machine_count_query)
+        current_count = current_count.scalar()
+
+        check_result = await autumn_client.check(
+            customer_id=customer_id,
+            feature_id="machine_limit",
+            required_balance=current_count + 1,
+            with_preview=True
+        )
+
+        if not check_result or not check_result.get("allowed", False):
+            preview_data = check_result.get("preview", {}) if check_result else {}
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "Machine limit reached",
+                    "message": f"You have reached your machine limit of {current_count} machines.",
+                    "current_count": current_count,
+                    "preview": preview_data
+                }
+            )
+
         required_fields = ["name", "type"]
         for field in required_fields:
             if field not in machine_data:
@@ -2771,6 +2797,18 @@ async def import_machine(
                 new_machine.machine_version_id = machine_version.id
         
         await db.commit()
+
+        # Update machine usage in Autumn after creation
+        try:
+            machine_count = await db.execute(machine_count_query)
+            machine_count = machine_count.scalar()
+            await autumn_client.set_feature_usage(
+                customer_id=customer_id,
+                feature_id="machine_limit",
+                value=machine_count
+            )
+        except Exception as e:
+            logger.error(f"Failed to update machine usage in autumn: {str(e)}")
         
         if new_machine.type == "comfy-deploy-serverless" and machine_version:
             current_endpoint = str(request.base_url).rstrip("/")
@@ -2882,6 +2920,14 @@ async def get_error_logs(
     try:
         # Get logs from Redis stream
         logs = await redis.get(f"error_start_log:{str(version_id)}")
+        if logs is None:
+            # No logs yet; return empty list instead of error
+            return JSONResponse(content={"logs": []})
+
+        # logs is stored as JSON string; parse safely
+        if isinstance(logs, (bytes, bytearray)):
+            logs = logs.decode("utf-8")
+
         return JSONResponse(content={"logs": json.loads(logs)})
     except Exception as e:
         logger.error(f"Error getting error logs: {str(e)}")

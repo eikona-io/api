@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from api.middleware.subscriptionMiddleware import SubscriptionMiddleware
+from api.middleware.autumnAccessMiddleware import AutumnAccessMiddleware
 
 from fastapi.responses import (
     RedirectResponse,
@@ -151,6 +152,7 @@ app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 
 # Add CORS middleware
 # app.add_middleware(SpendLimitMiddleware)
+app.add_middleware(AutumnAccessMiddleware)
 app.add_middleware(SubscriptionMiddleware)
 app.add_middleware(AuthMiddleware)
 

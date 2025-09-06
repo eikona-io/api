@@ -47,7 +47,7 @@ import logging
 from typing import Optional
 from sqlalchemy import update, func
 from fastapi import BackgroundTasks
-from api.utils.autumn import send_autumn_usage_event, get_autumn_customer
+from api.utils.autumn import send_autumn_usage_event, get_autumn_customer, autumn_client
 
 class CustomOutputManager(OutputManager):
     _context_id = None
@@ -1419,6 +1419,44 @@ async def snapshot_session(
         and body is not None
         and body.machine_name is not None
     ):
+        # Enforce machine limit (Autumn) before creating a workspace machine
+        customer_id = org_id or user_id
+
+        # Count current machines for this customer (exclude deleted)
+        machine_count_query = (
+            select(func.count())
+            .select_from(Machine)
+            .where(~Machine.deleted)
+        )
+        if org_id:
+            machine_count_query = machine_count_query.where(Machine.org_id == org_id)
+        else:
+            machine_count_query = machine_count_query.where(
+                Machine.user_id == user_id,
+                Machine.org_id.is_(None),
+            )
+
+        current_count_result = await db.execute(machine_count_query)
+        current_count = current_count_result.scalar()
+
+        check_result = await autumn_client.check(
+            customer_id=customer_id,
+            feature_id="machine_limit",
+            required_balance=current_count + 1,
+            with_preview=True,
+        )
+
+        if not check_result or not check_result.get("allowed", False):
+            preview_data = check_result.get("preview", {}) if check_result else {}
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "Machine limit reached",
+                    "message": f"You have reached your machine limit of {current_count} machines.",
+                    "current_count": current_count,
+                    "preview": preview_data,
+                },
+            )
         machine = Machine(
             id=uuid4(),
             type=MachineType.COMFY_DEPLOY_SERVERLESS,
@@ -1435,6 +1473,19 @@ async def snapshot_session(
         )
         db.add(machine)
         await db.flush()
+
+        # Update machine usage in Autumn after creation
+        try:
+            # Recount to include the newly created machine
+            machine_count_result = await db.execute(machine_count_query)
+            machine_count = machine_count_result.scalar()
+            await autumn_client.set_feature_usage(
+                customer_id=customer_id,
+                feature_id="machine_limit",
+                value=machine_count,
+            )
+        except Exception as e:
+            logger.error(f"Failed to update machine usage in autumn: {str(e)}")
 
         gpuEvent.machine_id = machine.id
 
@@ -1750,4 +1801,3 @@ async def check_and_close_sessions(request: Request, session_id: str):
 
     except Exception as e:
         logger.error(f"Error checking session {session_id}: {str(e)}")
-
