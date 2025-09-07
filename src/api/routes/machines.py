@@ -2045,6 +2045,7 @@ class UpdateCustomMachineModel(BaseModel):
     endpoint: Optional[str] = None
     auth_token: Optional[str] = None
 
+from api.utils.autumn import autumn_client
 
 @router.post("/machine/custom")
 async def create_custom_machine(
@@ -2052,18 +2053,17 @@ async def create_custom_machine(
     machine: CustomMachineModel,
     db: AsyncSession = Depends(get_db),
 ) -> MachineModel:
-    plan = request.state.current_user.get("plan")
-    if plan == "free":
-        raise HTTPException(
-            status_code=403, detail="Free plan users cannot create custom machines"
-        )
+    # plan = request.state.current_user.get("plan")
+    # if plan == "free":
+    #     raise HTTPException(
+    #         status_code=403, detail="Free plan users cannot create custom machines"
+    #     )
 
     current_user = request.state.current_user
     user_id = current_user["user_id"]
     org_id = current_user["org_id"] if "org_id" in current_user else None
 
     # Check machine limit using autumn
-    from api.utils.autumn import autumn_client
     
     customer_id = org_id or user_id
     

@@ -120,14 +120,18 @@ class AutumnAccessMiddleware(BaseHTTPMiddleware):
                 decision = all(allowed for allowed, _ in results)
 
             if not decision:
-                # Deny with the richest response (first failing one with data)
-                detail: Dict[str, Any] = {"detail": "Insufficient balance for requested operation"}
-
                 # Pick a failing check response to include extra data
                 failing = next((res for allowed, res in results if not allowed and res), None)
+                
+                # Only show "Insufficient balance" for gpu-credit feature
+                if failing and failing.get("feature_id") == "gpu-credit":
+                    detail: Dict[str, Any] = {"detail": "Insufficient balance for requested operation"}
+                else:
+                    detail: Dict[str, Any] = {"detail": "Access denied for requested operation"}
+
                 if failing:
                     detail.update({
-                        "feature_id": failing.get("feature_id"),
+                        "feature_id": feature_id,
                         "allowed": failing.get("allowed"),
                         "balances": failing.get("balances"),
                         "preview": failing.get("preview"),

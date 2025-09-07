@@ -1648,7 +1648,19 @@ async def topup_credits(
             if response_data.get("url"):
                 return {"url": response_data["url"]}
             else:
-                return response_data
+                response_data = await autumn_client.attach(
+                    customer_id=customer_id,
+                    product_id="credit",
+                    options=[
+                        {"feature_id": "gpu-credit", "quantity": credit_quantity}
+                    ]
+                )
+                if response_data:
+                    logfire.info(f"Successfully attached credit for customer {customer_id}")
+                    return {"success": True, "message": "Credits added successfully", "data": response_data}
+                else:
+                    logfire.error(f"Failed to attach credit for customer {customer_id}")
+                    raise HTTPException(status_code=500, detail="Failed to attach credit")
         else:
             logfire.error(f"Failed to create credit checkout for customer {customer_id}")
             raise HTTPException(status_code=500, detail="Failed to create checkout session")
