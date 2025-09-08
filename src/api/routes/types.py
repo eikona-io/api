@@ -1,3 +1,5 @@
+from pydantic import BaseModel
+from typing import List
 from enum import Enum
 
 from api.sqlmodels import WorkflowRunStatus
@@ -409,6 +411,8 @@ class InitiateMultipartUploadRequest(BaseModel):
 class InitiateMultipartUploadResponse(BaseModel):
     uploadId: str
     key: str
+    partSize: int
+    maxConcurrency: int
 
 
 class GeneratePartUploadUrlRequest(BaseModel):

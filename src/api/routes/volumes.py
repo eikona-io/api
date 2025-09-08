@@ -1471,7 +1471,25 @@ async def initiate_multipart_upload_route(
     base_prefix = f"models_{org_id}" if org_id else f"models_{user_id}"
     key = f"{base_prefix}/{uuid.uuid4()}_{body.filename}"
     upload_id = await initiate_multipart_upload(request, db, key, body.contentType)
-    return {"uploadId": upload_id, "key": key}
+
+    GB = 1024 * 1024 * 1024
+    def choose_part_size(size: int) -> int:
+        if size < 1 * GB:
+            return 5 * 1024 * 1024
+        if size < 5 * GB:
+            return 25 * 1024 * 1024
+        if size < 20 * GB:
+            return 50 * 1024 * 1024
+        return 100 * 1024 * 1024
+
+    part_size = choose_part_size(body.size)
+    max_parts = (body.size + part_size - 1) // part_size
+    if max_parts > 10000:
+        part_size = max(part_size, (body.size // 10000) + 1)
+
+    max_concurrency = 10
+
+    return {"uploadId": upload_id, "key": key, "partSize": int(part_size), "maxConcurrency": int(max_concurrency)}
 
 @router.post("/volume/file/generate-part-upload-url", response_model=GeneratePartUploadUrlResponse)
 async def generate_part_upload_url_route(
