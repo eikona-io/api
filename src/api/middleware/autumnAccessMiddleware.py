@@ -124,7 +124,7 @@ class AutumnAccessMiddleware(BaseHTTPMiddleware):
                 failing = next((res for allowed, res in results if not allowed and res), None)
                 
                 # Return simple message based on feature type
-                if failing and failing.get("feature_id") == "gpu-credit":
+                if feature_id == "gpu-credit":
                     message = "Insufficient balance for requested operation"
                 else:
                     message = "Access denied for requested operation"
