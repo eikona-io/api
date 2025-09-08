@@ -398,6 +398,44 @@ class WorkflowRunRequest(WorkflowRequestShare):
         }
     }
 
+from typing import List
+
+class InitiateMultipartUploadRequest(BaseModel):
+    filename: str
+    contentType: str
+    size: int
+
+
+class InitiateMultipartUploadResponse(BaseModel):
+    uploadId: str
+    key: str
+
+
+class GeneratePartUploadUrlRequest(BaseModel):
+    uploadId: str
+    key: str
+    partNumber: int
+
+
+class GeneratePartUploadUrlResponse(BaseModel):
+    uploadUrl: str
+
+
+class CompletedPart(BaseModel):
+    partNumber: int
+    eTag: str
+
+
+class CompleteMultipartUploadRequest(BaseModel):
+    uploadId: str
+    key: str
+    parts: List[CompletedPart]
+
+
+class AbortMultipartUploadRequest(BaseModel):
+    uploadId: str
+    key: str
+
 
 class WorkflowRunVersionRequest(WorkflowRequestShare):
     workflow_version_id: UUID

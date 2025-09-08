@@ -1,13 +1,13 @@
 import time
 
 from api.utils.multi_level_cache import multi_level_cached
-from .types import Model, GenerateUploadUrlRequest, GenerateUploadUrlResponse
+from .types import Model, GenerateUploadUrlRequest, GenerateUploadUrlResponse, InitiateMultipartUploadRequest, InitiateMultipartUploadResponse, GeneratePartUploadUrlRequest, GeneratePartUploadUrlResponse, CompleteMultipartUploadRequest, AbortMultipartUploadRequest
 from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
 from typing import Any, Dict, List, Tuple, Union, Optional, Literal
 import logging
 import os
 import uuid
-from .utils import get_user_settings, select, generate_presigned_url, delete_s3_object
+from .utils import get_user_settings, select, generate_presigned_url, delete_s3_object, initiate_multipart_upload, generate_part_upload_url, complete_multipart_upload, abort_multipart_upload
 from api.utils.storage_helper import get_s3_config
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
@@ -1455,6 +1455,57 @@ async def generate_upload_url(
     except Exception as e:
         logger.error(f"Error generating upload URL: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends, Request
+import uuid
+
+@router.post("/volume/file/initiate-multipart-upload", response_model=InitiateMultipartUploadResponse)
+async def initiate_multipart_upload_route(
+    request: Request,
+    body: InitiateMultipartUploadRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    current_user = request.state.current_user
+    user_id = current_user.get("user_id")
+    org_id = current_user.get("org_id")
+    base_prefix = f"models_{org_id}" if org_id else f"models_{user_id}"
+    key = f"{base_prefix}/{uuid.uuid4()}_{body.filename}"
+    upload_id = await initiate_multipart_upload(request, db, key, body.contentType)
+    return {"uploadId": upload_id, "key": key}
+
+@router.post("/volume/file/generate-part-upload-url", response_model=GeneratePartUploadUrlResponse)
+async def generate_part_upload_url_route(
+    request: Request,
+    body: GeneratePartUploadUrlRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    upload_url = await generate_part_upload_url(request, db, body.key, body.uploadId, body.partNumber)
+    return {"uploadUrl": upload_url}
+
+@router.post("/volume/file/complete-multipart-upload")
+async def complete_multipart_upload_route(
+    request: Request,
+    body: CompleteMultipartUploadRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    await complete_multipart_upload(
+        request,
+        db,
+        body.key,
+        body.uploadId,
+        [p.model_dump() for p in body.parts],
+    )
+    return {"status": "ok", "key": body.key}
+
+@router.post("/volume/file/abort-multipart-upload")
+async def abort_multipart_upload_route(
+    request: Request,
+    body: AbortMultipartUploadRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    await abort_multipart_upload(request, db, body.key, body.uploadId)
+    return {"status": "aborted"}
+
 
 
 @router.post("/volume/model")
