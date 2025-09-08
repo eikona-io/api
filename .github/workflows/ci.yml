@@ -16,6 +16,7 @@ jobs:
       SPACES_KEY_V2: ${{ secrets.SPACES_KEY }}
       SPACES_SECRET_V2: ${{ secrets.SPACES_SECRET }}
       LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+      AUTUMN_SECRET_KEY: ${{ secrets.AUTUMN_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 
