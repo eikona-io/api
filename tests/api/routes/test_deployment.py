@@ -203,12 +203,12 @@ async def test_run_deployment_with_webhook_no_target_events(
 
 @pytest.mark.asyncio
 async def test_run_deployment_on_a_wrong_user(
-    app, paid_user, test_free_user, test_create_workflow_deployment
+    app, paid_user, paid_user_2, test_create_workflow_deployment
 ):
     """Test running a deployment with webhook notifications and machine"""
     deployment_id = test_create_workflow_deployment
 
-    async with get_test_client(app, test_free_user) as client:
+    async with get_test_client(app, paid_user_2) as client:
         response = await client.post(
             "/run/deployment/sync", json={"deployment_id": deployment_id}
         )

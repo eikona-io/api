@@ -75,6 +75,8 @@ import json
 import httpx
 import base64
 from api.utils.retrieve_s3_config_helper import retrieve_s3_config
+from api.utils.autumn import autumn_client
+from api.routes.platform import get_customer_plan_cached
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +245,77 @@ async def redeploy_comfy_deploy_runner_if_exists(machine_id: str, gpu: str, depl
         
     ComfyDeployRunner = modal.Cls.from_name(target_app_name, "ComfyDeployRunner")
     return ComfyDeployRunner.with_options(gpu=gpu if gpu != "CPU" else None)(gpu=gpu)
+
+
+async def perform_run_feature_gate_check(
+    request: Request,
+    db: AsyncSession,
+    deployment: Optional[Deployment] = None,
+    is_public_deployment: bool = False,
+):
+    """
+    Perform feature gate checks for run creation based on deployment context.
+    - For deployment runs: check deployment owner's plan/credits
+    - For workflow runs: check current user's plan/credits  
+    - For public deployments: skip checks
+    """
+    # Skip checks for public deployments
+    if is_public_deployment:
+        return
+
+    current_user = request.state.current_user
+    
+    # Determine whose plan/credits to check
+    if deployment and not is_public_deployment:
+        # Check deployment owner's plan/credits
+        check_user_id = deployment.user_id
+        check_org_id = deployment.org_id
+    else:
+        # Check current user's plan/credits
+        check_user_id = current_user["user_id"]
+        check_org_id = current_user.get("org_id")
+    
+    # Get the customer ID (org_id takes precedence over user_id)
+    customer_id = check_org_id or check_user_id
+    
+    # Get the plan to determine if we should apply the check
+    try:
+        plan_data = await get_customer_plan_cached(customer_id)
+        if plan_data and plan_data.get("plans"):
+            effective_plan = plan_data["plans"][0]
+        else:
+            effective_plan = "free"
+    except Exception as e:
+        logger.warning(f"Failed to get customer plan for {customer_id}, defaulting to free: {e}")
+        effective_plan = "free"
+    
+    # Only apply the check for free plan users (matching the original rule)
+    if effective_plan != "free":
+        return
+    
+    # Perform the gpu-credit check (matching the original rule)
+    try:
+        res = await autumn_client.check(
+            customer_id=customer_id,
+            feature_id="gpu-credit",
+            required_balance=1,
+        )
+    except Exception as e:
+        # If Autumn is misconfigured or unreachable, fail-open (allow).
+        logger.error(f"Autumn check failed for gpu-credit: {e}")
+        return
+    
+    # If result is None (e.g., misconfiguration or network), allow request
+    allowed = True if res is None else bool(res.get("allowed") is True)
+    
+    if not allowed:
+        # Determine whose credits are insufficient for better error message
+        owner_type = "deployment owner's" if deployment and not is_public_deployment else "your"
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Insufficient {owner_type} GPU credits to create run"
+        )
+
 
 @router.post(
     "/run",
@@ -921,6 +994,14 @@ async def _create_run(
             logger.warning(f"Failed to process S3 URLs in inputs: {str(e)}")
             # Continue without processing - don't fail the run
             pass
+
+    # Perform feature gate checks based on deployment context
+    await perform_run_feature_gate_check(
+        request=request,
+        db=db,
+        deployment=deployment,
+        is_public_deployment=is_public_deployment,
+    )
 
     if not is_model_run:
         if not workflow_api_raw:

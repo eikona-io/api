@@ -24,7 +24,7 @@ class AutumnAccessMiddleware(BaseHTTPMiddleware):
                 # If blocked, _should_block already returns a JSONResponse; but
                 # to keep the interface clear, we return from here.
                 # However, the method returns bool, so we construct the response here.
-                return JSONResponse(status_code=403, content={"detail": "Access denied by Autumn guard"})
+                return JSONResponse(status_code=403, content={"detail": "Access denied for requested operation"})
 
             response = await call_next(request)
             return response
@@ -120,23 +120,15 @@ class AutumnAccessMiddleware(BaseHTTPMiddleware):
                 decision = all(allowed for allowed, _ in results)
 
             if not decision:
-                # Pick a failing check response to include extra data
+                # Pick a failing check response to get the feature type
                 failing = next((res for allowed, res in results if not allowed and res), None)
                 
-                # Only show "Insufficient balance" for gpu-credit feature
+                # Return simple message based on feature type
                 if failing and failing.get("feature_id") == "gpu-credit":
-                    detail: Dict[str, Any] = {"detail": "Insufficient balance for requested operation"}
+                    message = "Insufficient balance for requested operation"
                 else:
-                    detail: Dict[str, Any] = {"detail": "Access denied for requested operation"}
+                    message = "Access denied for requested operation"
 
-                if failing:
-                    detail.update({
-                        "feature_id": feature_id,
-                        "allowed": failing.get("allowed"),
-                        "balances": failing.get("balances"),
-                        "preview": failing.get("preview"),
-                    })
-
-                raise HTTPException(status_code=403, detail=detail)
+                raise HTTPException(status_code=403, detail=message)
 
         return False

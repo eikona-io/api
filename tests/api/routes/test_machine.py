@@ -107,7 +107,7 @@ Paid user
 
 
 @pytest.mark.parametrize("user_fixture,expected_status", [
-    ("free_user", 403),
+    ("free_user", 200),
     ("paid_user", 200),
 ], indirect=["user_fixture"])
 @pytest.mark.asyncio
@@ -250,7 +250,7 @@ async def test_update_serverless_machine(app, paid_user, test_serverless_machine
         )
 
 @pytest.mark.parametrize("user_fixture,expected_status,validate_values", [
-    ("free_user", 403, False),
+    ("free_user", 200, True),
     ("paid_user", 200, True),
     ("paid_user_2", 200, False),
 ], indirect=["user_fixture"])

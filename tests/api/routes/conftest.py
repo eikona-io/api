@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession  # noqa: E4
 from sqlalchemy.pool import AsyncAdaptedQueuePool  # noqa: E402
 from dotenv import load_dotenv
 
+from api.utils.autumn import autumn_client
+
+
 load_dotenv()
 
 # Register custom markers
@@ -276,7 +279,23 @@ async def paid_user():
             name="Business User",
         )
         db.add(user)
+        
+    await autumn_client.create_customer(
+        id=user_id,
+        name="Business User",
+    )
+    
+    await autumn_client.attach(
+        customer_id=user_id,
+        product_id="business_monthly",
+        enable_product_immediately=True,
+        finalize_invoice=False,
+        invoice=True,
+    )
+    
     yield user
+    
+    await autumn_client.delete_customer(user_id, delete_in_stripe=True)
 
 @pytest_asyncio.fixture(scope="session")
 async def paid_user_2():
@@ -309,8 +328,23 @@ async def paid_user_2():
             name="Business User",
         )
         db.add(user)
+        
+    await autumn_client.create_customer(
+        id=user_id,
+        name="Business User",
+    )
+    
+    await autumn_client.attach(
+        customer_id=user_id,
+        product_id="business_monthly",
+        enable_product_immediately=True,
+        finalize_invoice=False,
+        invoice=True,
+    )
+    
     yield user
 
+    await autumn_client.delete_customer(user_id, delete_in_stripe=True)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -338,6 +372,12 @@ async def free_user():
     redis.set(f"plan:{user_id}", json.dumps(data_with_timestamp))
     print("redis set", redis.get(f"plan:{user_id}"))
 
+    # Attach autumn customer for free plan
+    await autumn_client.create_customer(
+        id=user_id,
+        name="Free User",
+    )
+
     async with get_db_context() as db:
         user = User(
             id=user_id,
@@ -346,6 +386,9 @@ async def free_user():
         )
         db.add(user)
     yield user
+
+    # Cleanup: Delete autumn customer after tests
+    await autumn_client.delete_customer(user_id, delete_in_stripe=True)
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -565,9 +608,17 @@ async def test_run_deployment_sync_public_with_output(app, test_free_user, test_
 @pytest_asyncio.fixture(scope="session")
 async def test_free_user():
     """Fixture for a test user with free plan"""
+    user_id = str(uuid4())
+    
+    # Attach autumn customer for free plan
+    await autumn_client.create_customer(
+        id=user_id,
+        name="Test Free User",
+    )
+    
     async with get_db_context() as db:
         user = User(
-            id=str(uuid4()),
+            id=user_id,
             username="test_free_user",
             name="Test Free User",
             # The plan will be handled by the backend based on user's subscription
@@ -576,6 +627,9 @@ async def test_free_user():
         await db.commit()
         await db.refresh(user)
     yield user
+
+    # Cleanup: Delete autumn customer after tests
+    await autumn_client.delete_customer(user_id, delete_in_stripe=True)
 
 
 @pytest_asyncio.fixture(scope="function")

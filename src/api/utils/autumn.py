@@ -53,8 +53,8 @@ class AutumnClient:
                     method=method,
                     url=url,
                     headers=headers,
-                    json=data if method in ["POST", "PUT", "PATCH"] else None,
-                    params=data if method == "GET" else None
+                    json=data if method in ["POST", "PUT", "PATCH", "DELETE"] else None,
+                    params=data if method in ["GET"] else None
                 ) as response:
                     response_text = await response.text()
                     
@@ -78,6 +78,37 @@ class AutumnClient:
             return None
     
     # Customer Management
+    async def create_customer(
+        self,
+        id: str,
+        email: Optional[str] = None,
+        name: Optional[str] = None,
+        fingerprint: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create a new customer in Autumn.
+        
+        Args:
+            id: Your unique identifier for the customer
+            email: Customer's email address  
+            name: Customer's name
+            fingerprint: Unique identifier (eg, serial number) to detect duplicate 
+                        customers and prevent free trial abuse
+            
+        Returns:
+            Created customer data or None if error
+        """
+        payload = {
+            "id": id,
+            "email": email,
+            "name": name
+        }
+        
+        if fingerprint:
+            payload["fingerprint"] = fingerprint
+            
+        return await self._make_request("POST", "customers", data=payload)
+    
     async def get_customer(self, customer_id: str, include_features: bool = False) -> Optional[Dict[str, Any]]:
         """
         Get customer data from Autumn.
@@ -91,6 +122,23 @@ class AutumnClient:
         """
         extra_headers = {"x-api-version": "1.2"} if include_features else None
         return await self._make_request("GET", f"customers/{customer_id}", extra_headers=extra_headers)
+    
+    async def delete_customer(self, customer_id: str, delete_in_stripe: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Delete a customer from Autumn.
+        
+        Args:
+            customer_id: The customer ID to delete
+            delete_in_stripe: Whether to also delete the linked Stripe customer (default: False)
+            
+        Returns:
+            Deleted customer data or None if error
+        """
+        params = {}
+        if delete_in_stripe:
+            params["delete_in_stripe"] = delete_in_stripe
+            
+        return await self._make_request("DELETE", f"customers/{customer_id}", data=params)
     
     # Usage Tracking
     async def send_usage_event(
@@ -390,7 +438,10 @@ class AutumnClient:
         force_checkout: bool = False,
         customer_data: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        checkout_session_params: Optional[Dict[str, Any]] = None
+        checkout_session_params: Optional[Dict[str, Any]] = None,
+        enable_product_immediately: Optional[bool] = False,
+        finalize_invoice: Optional[bool] = False,
+        invoice: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Attach a product to a customer and handle payment if card is on file.
@@ -437,6 +488,12 @@ class AutumnClient:
             payload["metadata"] = metadata
         if checkout_session_params:
             payload["checkout_session_params"] = checkout_session_params
+        if enable_product_immediately:
+            payload["enable_product_immediately"] = enable_product_immediately
+        if finalize_invoice:
+            payload["finalize_invoice"] = finalize_invoice
+        if invoice:
+            payload["invoice"] = invoice
             
         return await self._make_request("POST", "attach", data=payload)
     

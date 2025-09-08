@@ -42,18 +42,6 @@ AUTUMN_GUARD_RULES: List[Dict[str, Any]] = [
         ],
     },
     {
-        "pattern": "/api/run*",
-        "methods": ["POST"],
-        "exclude": [
-            "/api/run/*/cancel",
-        ],
-        "only_free": True,
-        "mode": "all",
-        "checks": [
-            {"feature_id": "gpu-credit", "required_balance": 1},
-        ],
-    },
-    {
         "pattern": "/api/session",
         "methods": ["POST"],
         "only_free": True,

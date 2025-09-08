@@ -18,7 +18,7 @@ async def test_session_for_free_user(
         )
         print(f"Response status: {response.status_code}")
         assert response.status_code == 403
-        assert("Free plan users cannot create sessions, we are mitigating abuse, please wait" in response.json()["detail"])
+        assert("Access denied for requested operation" in response.json()["detail"])
 
 
 @pytest.mark.asyncio
