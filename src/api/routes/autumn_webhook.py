@@ -111,10 +111,17 @@ async def handle_customer_products_updated(data: Dict[str, Any], db: AsyncSessio
     
     # Extract customer ID from webhook data
     customer_data = data.get("customer", {})
-    customer_id = customer_data.get("id")
+    
+    # Handle nested customer structure where ID is at data.customer.customer.id
+    customer_inner = customer_data.get("customer", {})
+    customer_id = customer_inner.get("id")
+    
+    # Fallback to direct customer.id structure if the nested structure doesn't exist
+    if not customer_id:
+        customer_id = customer_data.get("id")
     
     if not customer_id:
-        logger.error("No customer ID found in webhook data")
+        logger.error("No customer ID found in webhook data", extra={"webhook_data": data})
         raise HTTPException(status_code=400, detail="Customer ID not found in webhook data")
     
     logger.info(f"Processing customer.products.updated for customer {customer_id}")
