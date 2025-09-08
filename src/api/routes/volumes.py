@@ -1481,8 +1481,8 @@ async def initiate_multipart_upload_route(
     current_user = request.state.current_user
     user_id = current_user.get("user_id")
     org_id = current_user.get("org_id")
-    base_prefix = f"models_{org_id}" if org_id else f"models_{user_id}"
-    key = f"{base_prefix}/{uuid.uuid4()}_{body.filename}"
+    owner_id = org_id if org_id else user_id
+    key = f"temp-uploads/{owner_id}/{uuid.uuid4()}/{body.filename}"
     upload_id = await initiate_multipart_upload(request, db, key, body.contentType)
 
     GB = 1024 * 1024 * 1024
