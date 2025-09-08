@@ -412,7 +412,6 @@ class InitiateMultipartUploadResponse(BaseModel):
     uploadId: str
     key: str
     partSize: int
-    maxConcurrency: int
 
 
 class GeneratePartUploadUrlRequest(BaseModel):

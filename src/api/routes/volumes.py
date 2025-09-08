@@ -1,38 +1,54 @@
-import time
-
-from api.utils.multi_level_cache import multi_level_cached
-from .types import Model, GenerateUploadUrlRequest, GenerateUploadUrlResponse, InitiateMultipartUploadRequest, InitiateMultipartUploadResponse, GeneratePartUploadUrlRequest, GeneratePartUploadUrlResponse, CompleteMultipartUploadRequest, AbortMultipartUploadRequest
-from fastapi import HTTPException, APIRouter, Request, BackgroundTasks
-from typing import Any, Dict, List, Tuple, Union, Optional, Literal
+# Python standard library
 import logging
 import os
+import re
 import uuid
-from .utils import get_user_settings, select, generate_presigned_url, delete_s3_object, initiate_multipart_upload, generate_part_upload_url, complete_multipart_upload, abort_multipart_upload
-from api.utils.storage_helper import get_s3_config
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
-from api.database import get_db
-from api.models import Model as ModelDB, UserVolume
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Literal
+from urllib.parse import urlparse
+
+# Third-party imports
+import aiohttp
+import grpclib
+import logfire
+import modal
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from huggingface_hub import repo_info
+from huggingface_hub.utils import RepositoryNotFoundError
+from modal import Volume
+from pydantic import BaseModel
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
-from .types import ModalVolFile
-from sqlalchemy.exc import MultipleResultsFound
-from pydantic import BaseModel
-from enum import Enum
-import re
-import grpclib
-from modal import Volume, Secret
-import modal
-from huggingface_hub import HfApi, repo_info
-import logfire
-from huggingface_hub.utils import RepositoryNotFoundError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-import aiohttp
-from urllib.parse import urlparse
-import re
-from typing import Optional, Tuple
+# Local imports
+from .types import (
+    Model,
+    ModalVolFile,
+    GenerateUploadUrlRequest,
+    GenerateUploadUrlResponse,
+    InitiateMultipartUploadRequest,
+    InitiateMultipartUploadResponse,
+    GeneratePartUploadUrlRequest,
+    GeneratePartUploadUrlResponse,
+    CompleteMultipartUploadRequest,
+    AbortMultipartUploadRequest
+)
+from .utils import (
+    get_user_settings,
+    select,
+    generate_presigned_url,
+    delete_s3_object,
+    initiate_multipart_upload,
+    generate_part_upload_url,
+    complete_multipart_upload,
+    abort_multipart_upload
+)
+from api.database import get_db
+from api.models import Model as ModelDB, UserVolume
+from api.utils.storage_helper import get_s3_config
 
 logger = logging.getLogger(__name__)
 
@@ -1455,9 +1471,6 @@ async def generate_upload_url(
     except Exception as e:
         logger.error(f"Error generating upload URL: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends, Request
-import uuid
 
 @router.post("/volume/file/initiate-multipart-upload", response_model=InitiateMultipartUploadResponse)
 async def initiate_multipart_upload_route(
@@ -1474,22 +1487,22 @@ async def initiate_multipart_upload_route(
 
     GB = 1024 * 1024 * 1024
     def choose_part_size(size: int) -> int:
-        if size < 1 * GB:
+        if size < 500 * 1024 * 1024:  # < 500MB
             return 5 * 1024 * 1024
+        if size < 2 * GB:             # 500MB - 2GB  
+            return 100 * 1024 * 1024  # 100MB parts (was 25MB)
         if size < 5 * GB:
-            return 25 * 1024 * 1024
+            return 200 * 1024 * 1024  # 200MB parts (was 25MB)
         if size < 20 * GB:
-            return 50 * 1024 * 1024
-        return 100 * 1024 * 1024
+            return 200 * 1024 * 1024  # 200MB parts (was 50MB)
+        return 500 * 1024 * 1024      # 500MB parts (was 100MB)
 
     part_size = choose_part_size(body.size)
     max_parts = (body.size + part_size - 1) // part_size
     if max_parts > 10000:
         part_size = max(part_size, (body.size // 10000) + 1)
 
-    max_concurrency = 10
-
-    return {"uploadId": upload_id, "key": key, "partSize": int(part_size), "maxConcurrency": int(max_concurrency)}
+    return {"uploadId": upload_id, "key": key, "partSize": int(part_size)}
 
 @router.post("/volume/file/generate-part-upload-url", response_model=GeneratePartUploadUrlResponse)
 async def generate_part_upload_url_route(
