@@ -28,6 +28,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/clerk/webhook",
             "/api/user/*",
             "/api/platform/stripe/webhook",
+            "/api/autumn/webhook",
             "/api/platform/comfyui/auth-response",
             "/api/deployments/community",
         ]
