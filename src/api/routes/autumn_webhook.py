@@ -77,6 +77,12 @@ async def update_clerk_org_seats(org_id: str, target_seats: int) -> Dict[str, An
 
             current_max_seats = org_data.max_allowed_memberships
 
+            # Make sure to update this
+            await autumn_client.set_feature_usage(
+                customer_id=org_id,
+                feature_id="seats",
+                value=org_data.members_count
+            )
             # Don't update if current max is 0 (unlimited) or already at target
             if current_max_seats == 0 or current_max_seats == target_seats:
                 return {
@@ -88,11 +94,6 @@ async def update_clerk_org_seats(org_id: str, target_seats: int) -> Dict[str, An
 
             # Update seats to target count
             await clerk.organizations.update_async(organization_id=org_id, max_allowed_memberships=target_seats)
-            await autumn_client.set_feature_usage(
-                customer_id=org_id,
-                feature_id="seats",
-                value=org_data.members_count
-            )
 
             result = {
                 "status": "success",
