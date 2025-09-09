@@ -11,7 +11,8 @@ import os
 
 
 from api.database import get_db
-from api.utils.autumn import get_autumn_customer
+from api.utils import autumn
+from api.utils.autumn import autumn_client, get_autumn_customer
 from api.utils.webhook import WebhookRegistry, WebhookResponse
 from clerk_backend_api import Clerk
 import logfire
@@ -87,6 +88,11 @@ async def update_clerk_org_seats(org_id: str, target_seats: int) -> Dict[str, An
 
             # Update seats to target count
             await clerk.organizations.update_async(organization_id=org_id, max_allowed_memberships=target_seats)
+            await autumn_client.set_feature_usage(
+                customer_id=org_id,
+                feature_id="seats",
+                value=org_data.members_count
+            )
 
             result = {
                 "status": "success",
