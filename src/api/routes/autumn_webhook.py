@@ -17,6 +17,16 @@ from api.utils.webhook import WebhookRegistry, WebhookResponse
 from clerk_backend_api import Clerk
 import logfire
 
+from api.models import (
+    Machine,
+    Workflow,
+)
+from sqlalchemy import (
+    func,
+)
+from .utils import select
+
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -82,7 +92,8 @@ async def update_clerk_org_seats(org_id: str, target_seats: int) -> Dict[str, An
                 customer_id=org_id,
                 feature_id="seats",
                 value=org_data.members_count
-            )
+            ) 
+            
             # Don't update if current max is 0 (unlimited) or already at target
             if current_max_seats == 0 or current_max_seats == target_seats:
                 return {
@@ -120,6 +131,56 @@ def is_org_id(customer_id: str) -> bool:
     return customer_id.startswith("org_")
 
 
+async def update_features_usage(customer_id: str, db: AsyncSession) -> Dict[str, Any]:
+    # get machine count
+    machine_count_query = (
+        select(func.count())
+        .select_from(Machine)
+        .where(~Machine.deleted)
+    )
+    if customer_id.startswith("org_"):
+        machine_count_query = machine_count_query.where(Machine.org_id == customer_id)
+    else:
+        machine_count_query = machine_count_query.where(
+            Machine.user_id == customer_id,
+            Machine.org_id.is_(None)
+        )
+    
+    machine_count = await db.execute(machine_count_query)
+    machine_count = machine_count.scalar()
+    
+    # Update seat usage for machine limit
+    await autumn_client.set_feature_usage(
+        customer_id=customer_id,
+        feature_id="machine_limit",
+        value=machine_count
+    )
+    
+    # Count total workflows for this customer
+    workflow_count_query = (
+        select(func.count())
+        .select_from(Workflow)
+        .where(~Workflow.deleted)
+    )
+    if customer_id.startswith("org_"):
+        workflow_count_query = workflow_count_query.where(Workflow.org_id == customer_id)
+    else:
+        workflow_count_query = workflow_count_query.where(
+            Workflow.user_id == customer_id,
+            Workflow.org_id.is_(None)
+        )
+    
+    workflow_count = await db.execute(workflow_count_query)
+    workflow_count = workflow_count.scalar()
+    
+    # Update seat usage for workflow limit
+    await autumn_client.set_feature_usage(
+        customer_id=customer_id,
+        feature_id="workflow_limit",
+        value=workflow_count
+    )
+
+
 @autumn_registry.handler("customer.products.updated")
 async def handle_customer_products_updated(data: Dict[str, Any], db: AsyncSession) -> WebhookResponse:
     """Handle customer.products.updated webhook event."""
@@ -140,6 +201,8 @@ async def handle_customer_products_updated(data: Dict[str, Any], db: AsyncSessio
         raise HTTPException(status_code=400, detail="Customer ID not found in webhook data")
 
     logger.info(f"Processing customer.products.updated for customer {customer_id}")
+    
+    await update_features_usage(customer_id, db)
 
     # Only process if this is an organization
     if not is_org_id(customer_id):
