@@ -1585,6 +1585,8 @@ async def get_dashboard_url(
 
 class TopUpRequest(BaseModel):
     amount: float
+    confirmed: Optional[bool] = None
+    return_url: Optional[str] = None
 
 @router.post("/platform/topup")
 async def topup_credits(
@@ -1627,40 +1629,40 @@ async def topup_credits(
         
         logfire.info(f"Creating credit checkout for customer {customer_id} - ${body.amount} ({credit_quantity} credits)")
         
-        response_data = await autumn_client.checkout(
-            customer_id=customer_id,
-            product_id="credit",  # Credit product ID in Autumn
-            options=[
-                {
-                    "feature_id": "gpu-credit",
-                    "quantity": credit_quantity
-                }
-            ],
-            success_url=f"{os.getenv('FRONTEND_URL', 'https://app.comfydeploy.com')}/usage?topup=success",
-            customer_data={
-                "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
-                "email": user_email,
-            }
-        )
+        if body.confirmed:
+            response_data = await autumn_client.attach(
+                customer_id=customer_id,
+                product_id="credit",
+                options=[
+                    {"feature_id": "gpu-credit", "quantity": credit_quantity}
+                ],
+            )
+            if response_data:
+                logfire.info(f"Successfully attached credit for customer {customer_id}")
+                return {"success": True, "message": "Credits added successfully", "data": response_data}
+            else:
+                logfire.error(f"Failed to attach credit for customer {customer_id}")
+                raise HTTPException(status_code=500, detail="Failed to attach credit")
+        else:
+            response_data = await autumn_client.checkout(
+                customer_id=customer_id,
+                product_id="credit",  # Credit product ID in Autumn
+                options=[
+                    {
+                        "feature_id": "gpu-credit",
+                        "quantity": credit_quantity
+                    }
+                ],
+                success_url=body.return_url or f"{os.getenv('FRONTEND_URL', 'https://app.comfydeploy.com')}/usage?topup=success",
+                customer_data={
+                    "name": (user_data.get("first_name") or "") + " " + (user_data.get("last_name") or ""),
+                    "email": user_email,
+                },
+            )
         
         if response_data:
             logfire.info(f"Successfully created credit checkout for customer {customer_id}")
-            if response_data.get("url"):
-                return {"url": response_data["url"]}
-            else:
-                response_data = await autumn_client.attach(
-                    customer_id=customer_id,
-                    product_id="credit",
-                    options=[
-                        {"feature_id": "gpu-credit", "quantity": credit_quantity}
-                    ]
-                )
-                if response_data:
-                    logfire.info(f"Successfully attached credit for customer {customer_id}")
-                    return {"success": True, "message": "Credits added successfully", "data": response_data}
-                else:
-                    logfire.error(f"Failed to attach credit for customer {customer_id}")
-                    raise HTTPException(status_code=500, detail="Failed to attach credit")
+            return response_data
         else:
             logfire.error(f"Failed to create credit checkout for customer {customer_id}")
             raise HTTPException(status_code=500, detail="Failed to create checkout session")
