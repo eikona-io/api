@@ -51,7 +51,7 @@ def get_seats_from_autumn_data(autumn_customer: Dict[str, Any]) -> Optional[int]
         return None
 
     # Use balance or included_usage as the seat count
-    seats_count = seats_feature.get("balance") or seats_feature.get("included_usage")
+    seats_count = seats_feature.get("included_usage")
 
     return seats_count if seats_count and seats_count > 0 else None
 
