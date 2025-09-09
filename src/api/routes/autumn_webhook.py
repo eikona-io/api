@@ -66,7 +66,7 @@ async def update_clerk_org_seats(org_id: str, target_seats: int) -> Dict[str, An
         async with Clerk(
             bearer_auth=os.getenv("CLERK_SECRET_KEY"),
         ) as clerk:
-            org_data = await clerk.organizations.get_async(organization_id=org_id)
+            org_data = await clerk.organizations.get_async(organization_id=org_id, include_members_count=True)
 
             if org_data is None:
                 return {
