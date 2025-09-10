@@ -1,12 +1,36 @@
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.openapi.utils import get_openapi
 from fastapi import APIRouter
+from pydantic import BaseModel
 from scalar_fastapi import get_scalar_api_reference
 from fastapi.responses import JSONResponse
 import os
+from autumn.asgi import AutumnASGI
+from typing import TYPE_CHECKING, Optional, TypedDict
+from contextlib import asynccontextmanager
+from clerk_backend_api import Clerk
+
+from api.utils.multi_level_cache import multi_level_cached
+
+if TYPE_CHECKING:
+    from starlette.requests import Request as StarletteRequest
+    from autumn.asgi import AutumnIdentifyData
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for FastAPI app startup and shutdown events.
+    """
+    # Startup
+    yield
+    
+    # Shutdown - Clean shutdown handler for Autumn ASGI app
+    await autumn_app.close()
 
 
 app = FastAPI(
+    lifespan=lifespan,
     servers=[
         {"url": "https://api.comfydeploy.com/api", "description": "Production server"},
         {
@@ -24,6 +48,71 @@ basic_public_api_router = APIRouter()  # Remove the prefix here
 # add_pagination(app)
 
 app.openapi_schema = None  # Clear any existing schema
+
+EmailAndName = TypedDict("EmailAndName", {"email": Optional[str], "name": str})
+
+@multi_level_cached(
+    key_prefix="customer_clerk_customer_name",
+    ttl_seconds=60,
+    redis_ttl_seconds=120,
+    version="1.0",
+    key_builder=lambda customer_id: f"customer_clerk_customer_name:{customer_id}",
+)
+async def get_customer_clerk_name_cached(customer_id: str) -> EmailAndName:
+    async with Clerk(
+        bearer_auth=os.getenv("CLERK_SECRET_KEY"),
+    ) as clerk:
+        if customer_id.startswith("org_"):
+            org = await clerk.organizations.get_async(organization_id=customer_id)
+            return EmailAndName(email=None, name=org.name)
+        else:
+            user = await clerk.users.get_async(user_id=customer_id)
+            return EmailAndName(email=user.email_addresses[0].email_address, name=user.first_name + " " + user.last_name)
+
+# Autumn ASGI Configuration
+async def identify(request: "StarletteRequest") -> "AutumnIdentifyData":
+    """
+    Identify the current user from the request state.
+    
+    This function extracts user information that was set by the auth middleware
+    and returns it in the format expected by Autumn.
+    
+    Returns:
+        AutumnIdentifyData: User identification data with customer_id and customer_data
+    """
+    
+    # print(request.state)
+    
+    current_user = getattr(request.state, 'current_user', None)
+    
+    if not current_user:
+        # Return a default/anonymous user if no authentication is present
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    user_id = current_user.get("user_id", "unknown")
+    org_id = current_user.get("org_id")
+    
+    # Use org_id as customer_id if available, otherwise use user_id
+    customer_id = org_id if org_id else user_id
+    
+    customer_data = await get_customer_clerk_name_cached(customer_id)
+    
+    # # Extract user data for Autumn
+    customer_data = {
+        "name": customer_data["name"],
+        "email": customer_data["email"],
+    }
+
+    return {
+        "customer_id": customer_id,
+        "customer_data": customer_data
+    }
+
+# Initialize Autumn ASGI app
+autumn_app = AutumnASGI(
+    token=os.environ.get("AUTUMN_SECRET_KEY"),
+    identify=identify
+)
 
 docs = """
 ### Overview
@@ -214,3 +303,6 @@ async def scalar_html_simple():
         hide_models=True,
         servers=[{"url": server["url"]} for server in app.servers],
     )
+
+# Mount Autumn ASGI app at /api/autumn
+app.mount("/api/autumn", autumn_app)
