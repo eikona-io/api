@@ -753,6 +753,82 @@ def generate_presigned_url(
 
     return response
 
+async def initiate_multipart_upload(request: Request, db: AsyncSession, key: str, content_type: str) -> str:
+    user_settings = await get_user_settings_cached_as_object(request, db)
+    s3_config = await retrieve_s3_config(user_settings)
+    s3 = boto3.client(
+        "s3",
+        region_name=s3_config.region,
+        aws_access_key_id=s3_config.access_key,
+        aws_secret_access_key=s3_config.secret_key,
+        aws_session_token=getattr(s3_config, "session_token", None),
+        config=Config(signature_version="s3v4"),
+    )
+    resp = s3.create_multipart_upload(Bucket=s3_config.bucket, Key=key, ContentType=content_type)
+    return resp["UploadId"]
+
+
+async def generate_part_upload_url(request: Request, db: AsyncSession, key: str, upload_id: str, part_number: int, expires: int = 3600) -> str:
+    user_settings = await get_user_settings_cached_as_object(request, db)
+    s3_config = await retrieve_s3_config(user_settings)
+    s3 = boto3.client(
+        "s3",
+        region_name=s3_config.region,
+        aws_access_key_id=s3_config.access_key,
+        aws_secret_access_key=s3_config.secret_key,
+        aws_session_token=getattr(s3_config, "session_token", None),
+        config=Config(signature_version="s3v4"),
+    )
+    return s3.generate_presigned_url(
+        "upload_part",
+        Params={
+            "Bucket": s3_config.bucket,
+            "Key": key,
+            "UploadId": upload_id,
+            "PartNumber": int(part_number),
+        },
+        ExpiresIn=expires,
+        HttpMethod="PUT",
+    )
+
+
+async def complete_multipart_upload(request: Request, db: AsyncSession, key: str, upload_id: str, parts: List[Dict[str, Any]]):
+    user_settings = await get_user_settings_cached_as_object(request, db)
+    s3_config = await retrieve_s3_config(user_settings)
+    s3 = boto3.client(
+        "s3",
+        region_name=s3_config.region,
+        aws_access_key_id=s3_config.access_key,
+        aws_secret_access_key=s3_config.secret_key,
+        aws_session_token=getattr(s3_config, "session_token", None),
+        config=Config(signature_version="s3v4"),
+    )
+    sorted_parts = sorted(
+        [{"ETag": p["eTag"], "PartNumber": int(p["partNumber"])} for p in parts],
+        key=lambda p: p["PartNumber"],
+    )
+    return s3.complete_multipart_upload(
+        Bucket=s3_config.bucket,
+        Key=key,
+        MultipartUpload={"Parts": sorted_parts},
+        UploadId=upload_id,
+    )
+
+
+async def abort_multipart_upload(request: Request, db: AsyncSession, key: str, upload_id: str):
+    user_settings = await get_user_settings_cached_as_object(request, db)
+    s3_config = await retrieve_s3_config(user_settings)
+    s3 = boto3.client(
+        "s3",
+        region_name=s3_config.region,
+        aws_access_key_id=s3_config.access_key,
+        aws_secret_access_key=s3_config.secret_key,
+        aws_session_token=getattr(s3_config, "session_token", None),
+        config=Config(signature_version="s3v4"),
+    )
+    return s3.abort_multipart_upload(Bucket=s3_config.bucket, Key=key, UploadId=upload_id)
+
+
 
 def delete_s3_object(
     bucket: str,
