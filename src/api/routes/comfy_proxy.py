@@ -81,7 +81,7 @@ def check_enterprise_plan(request: Request):
     if plan not in enterprise_plans:
         raise HTTPException(
             status_code=403, 
-            detail="Enterprise plan required to access Comfy.org API proxy"
+            detail="Enterprise plan required to access Comfy.org API proxy, use your own Comfy API key with API_KEY_COMFY_ORG in the machine secrets! Check https://docs.comfydeploy.com/docs/integration/comfy-org-api-nodes for setup!"
         )
     
     return True
