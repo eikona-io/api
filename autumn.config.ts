@@ -67,34 +67,17 @@ export const h100DiscountCredits = feature({
 	],
 });
 
-export const seats = feature({
-	id: "seats",
-	name: "seats",
+// Features
+export const selfHostedMachines = feature({
+	id: "self_hosted_machines",
+	name: "Self Hosted Machines",
+	type: "boolean",
+});
+
+export const machineLimit = feature({
+	id: "machine_limit",
+	name: "Machine Limit",
 	type: "continuous_use",
-});
-
-export const gpuConcurrencyLimit = feature({
-	id: "gpu_concurrency_limit",
-	name: "gpu_concurrency_limit",
-	type: "continuous_use",
-});
-
-export const workflowLimit = feature({
-	id: "workflow_limit",
-	name: "workflow_limit",
-	type: "continuous_use",
-});
-
-export const cpu = feature({
-	id: "cpu",
-	name: "cpu",
-	type: "single_use",
-});
-
-export const gpuH100 = feature({
-	id: "gpu-h100",
-	name: "gpu-h100",
-	type: "single_use",
 });
 
 export const gpuA10080gb = feature({
@@ -103,15 +86,9 @@ export const gpuA10080gb = feature({
 	type: "single_use",
 });
 
-export const gpuA100 = feature({
-	id: "gpu-a100",
-	name: "gpu-a100",
-	type: "single_use",
-});
-
-export const gpuL4 = feature({
-	id: "gpu-l4",
-	name: "gpu-l4",
+export const gpuA10g = feature({
+	id: "gpu-a10g",
+	name: "gpu-a10g",
 	type: "single_use",
 });
 
@@ -121,10 +98,28 @@ export const gpuT4 = feature({
 	type: "single_use",
 });
 
-export const gpuL40s = feature({
-	id: "gpu-l40s",
-	name: "gpu-l40s",
+export const gpuConcurrencyLimit = feature({
+	id: "gpu_concurrency_limit",
+	name: "GPU Concurrency Limit",
+	type: "continuous_use",
+});
+
+export const gpuL4 = feature({
+	id: "gpu-l4",
+	name: "gpu-l4",
 	type: "single_use",
+});
+
+export const gpuA100 = feature({
+	id: "gpu-a100",
+	name: "gpu-a100",
+	type: "single_use",
+});
+
+export const seats = feature({
+	id: "seats",
+	name: "Seats",
+	type: "continuous_use",
 });
 
 export const gpuCredit = feature({
@@ -175,13 +170,61 @@ export const gpuCredit = feature({
 	],
 });
 
-export const gpuA10g = feature({
-	id: "gpu-a10g",
-	name: "gpu-a10g",
+export const cpu = feature({
+	id: "cpu",
+	name: "cpu",
 	type: "single_use",
 });
 
+export const gpuL40s = feature({
+	id: "gpu-l40s",
+	name: "gpu-l40s",
+	type: "single_use",
+});
+
+export const gpuH100 = feature({
+	id: "gpu-h100",
+	name: "gpu-h100",
+	type: "single_use",
+});
+
+export const workflowLimit = feature({
+	id: "workflow_limit",
+	name: "Workflow Limit",
+	type: "continuous_use",
+});
+
 // Products
+export const credit = product({
+	id: "credit",
+	name: "Credit",
+	items: [
+		pricedFeatureItem({
+			feature_id: gpuCredit.id,
+			price: 0.01,
+			included_usage: 0,
+			billing_units: 1,
+			usage_model: "prepaid",
+		}),
+	],
+});
+
+export const free = product({
+	id: "free",
+	name: "Free",
+	items: [
+		featureItem({
+			feature_id: machineLimit.id,
+			included_usage: 1,
+		}),
+
+		featureItem({
+			feature_id: workflowLimit.id,
+			included_usage: 10,
+		}),
+	],
+});
+
 export const creatorMonthly = product({
 	id: "creator_monthly",
 	name: "Creator (Monthly)",
@@ -271,17 +314,23 @@ export const businessMonthly = product({
 		}),
 
 		featureItem({
+			feature_id: machineLimit.id,
+			included_usage: 10,
+		}),
+
+		featureItem({
 			feature_id: seats.id,
-			included_usage: "inf",
-			interval: "month",
-			reset_usage_when_enabled: true,
+			included_usage: 100,
+		}),
+
+		featureItem({
+			feature_id: selfHostedMachines.id,
+			included_usage: undefined,
 		}),
 
 		featureItem({
 			feature_id: workflowLimit.id,
-			included_usage: "inf",
-			interval: "month",
-			reset_usage_when_enabled: true,
+			included_usage: 300,
 		}),
 	],
 });
