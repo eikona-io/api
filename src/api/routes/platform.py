@@ -1634,7 +1634,7 @@ async def topup_credits(
                 customer_id=customer_id,
                 product_id="credit",
                 options=[
-                    {"feature_id": "gpu-credit", "quantity": credit_quantity}
+                    {"feature_id": "gpu-credit-topup", "quantity": credit_quantity}
                 ],
             )
             if response_data:
@@ -1649,7 +1649,7 @@ async def topup_credits(
                 product_id="credit",  # Credit product ID in Autumn
                 options=[
                     {
-                        "feature_id": "gpu-credit",
+                        "feature_id": "gpu-credit-topup",
                         "quantity": credit_quantity
                     }
                 ],
