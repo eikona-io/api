@@ -12,6 +12,15 @@ from typing import List, Dict, Any
 
 AUTUMN_GUARD_RULES: List[Dict[str, Any]] = [
     {
+        "pattern": "/api/workflow/*",
+        "methods": ["POST"],
+        "only_free": False,
+        "mode": "all",
+        "checks": [
+            {"feature_id": "workflow_limit"},
+        ],
+    },
+    {
         # Gate creating self-hosted/custom machines behind a boolean feature
         "pattern": "/api/machine/custom",
         "methods": ["POST"],
