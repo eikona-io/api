@@ -47,7 +47,7 @@ AUTUMN_GUARD_RULES: List[Dict[str, Any]] = [
         "mode": "all",
         "checks": [
             # Static pre-check; the route performs a dynamic count-aware check.
-            {"feature_id": "machine_limit", "required_balance": 1},
+            {"feature_id": "machine_limit", "required_balance": 500},
         ],
     },
     {
@@ -56,7 +56,7 @@ AUTUMN_GUARD_RULES: List[Dict[str, Any]] = [
         "only_free": True,
         "mode": "all",
         "checks": [
-            {"feature_id": "gpu-credit", "required_balance": 1},
+            {"feature_id": "gpu-credit", "required_balance": 500},
         ],
     }
 ]

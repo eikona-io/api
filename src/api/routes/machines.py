@@ -488,6 +488,9 @@ async def create_machine_version(
 def hash_machine_dependencies(docker_commands: DockerCommandResponse):
     return hashlib.sha256(json.dumps(docker_commands.model_dump()).encode()).hexdigest()
 
+from autumn import Autumn
+
+autumn = Autumn(token=os.getenv("AUTUMN_SECRET_KEY"))
 
 async def validate_free_plan_restrictions(
     request: Request,
@@ -500,6 +503,23 @@ async def validate_free_plan_restrictions(
     Validates restrictions for free plan users.
     Raises HTTPException if restrictions are violated.
     """
+    current_user = request.state.current_user
+    customer_id = current_user.get("org_id") or current_user.get("user_id")
+    
+    check_result = await autumn.customers.get(customer_id)
+    max_gpu = 1
+    for [id,feature] in check_result.features.items():
+        if id == "gpu_concurrency_limit":
+            max_gpu = feature.included_usage
+            break
+    
+    # print(max_gpu)
+    if (machine_data.get("concurrency_limit", 1) > max_gpu):
+        raise HTTPException(
+            status_code=403,
+            detail="You have reached your concurrency limit. Please upgrade to use this feature.",
+        )
+    
     plan = request.state.current_user.get("plan")
     if plan != "free":
         return

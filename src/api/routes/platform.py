@@ -1258,6 +1258,32 @@ async def gpu_pricing():
     """Return the GPU pricing table"""
     return PRICING_LOOKUP_TABLE
 
+
+@router.get("/platform/gpu-credit-schema")
+async def get_gpu_credit_schema():
+    """Return the GPU credit schema for gpu-credit and gpu-credit-topup features"""
+    try:
+        features_data = await autumn_client.get_features()
+        
+        if not features_data or "list" not in features_data:
+            raise HTTPException(status_code=500, detail="Failed to fetch features from Autumn")
+        
+        credit_schemas = {}
+        
+        for feature in features_data["list"]:
+            if feature["id"] in ["gpu-credit", "gpu-credit-topup"] and feature["type"] == "credit_system":
+                credit_schemas[feature["id"]] = {
+                    "name": feature["name"],
+                    "display": feature["display"],
+                    "schema": feature.get("credit_schema", [])
+                }
+        
+        return credit_schemas
+        
+    except Exception as e:
+        logfire.error(f"Error fetching GPU credit schema: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch GPU credit schema: {str(e)}")
+
 @router.get("/platform/usage-details")
 async def get_usage_details_by_day(
     request: Request,

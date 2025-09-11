@@ -508,6 +508,15 @@ class AutumnClient:
             Response with billing portal URL or None if error
         """
         return await self._make_request("GET", f"customers/{customer_id}/billing_portal")
+    
+    async def get_features(self) -> Optional[Dict[str, Any]]:
+        """
+        Get all features from Autumn.
+        
+        Returns:
+            Features data or None if error
+        """
+        return await self._make_request("GET", "features")
 
 
 # Create a default client instance

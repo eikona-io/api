@@ -7,15 +7,15 @@ import {
 } from "atmn";
 
 // Features
-export const gpuB200 = feature({
-	id: "gpu-b200",
-	name: "gpu-b200",
-	type: "single_use",
-});
-
 export const gpuH200 = feature({
 	id: "gpu-h200",
 	name: "gpu-h200",
+	type: "single_use",
+});
+
+export const gpuB200 = feature({
+	id: "gpu-b200",
+	name: "gpu-b200",
 	type: "single_use",
 });
 
@@ -67,7 +67,6 @@ export const h100DiscountCredits = feature({
 	],
 });
 
-// Features
 export const selfHostedMachines = feature({
 	id: "self_hosted_machines",
 	name: "Self Hosted Machines",
@@ -170,6 +169,54 @@ export const gpuCredit = feature({
 	],
 });
 
+export const gpuCreditTopUp = feature({
+	id: "gpu-credit-topup",
+	name: "GPU Credit Top Up (cents)",
+	type: "credit_system",
+	credit_schema: [
+		{
+			metered_feature_id: "gpu-t4",
+			credit_cost: 0.018 * 2,
+		},
+		{
+			metered_feature_id: "gpu-l4",
+			credit_cost: 0.032,
+		},
+		{
+			metered_feature_id: "gpu-a10g",
+			credit_cost: 0.0337,
+		},
+		{
+			metered_feature_id: "gpu-l40s",
+			credit_cost: 0.0596,
+		},
+		{
+			metered_feature_id: "gpu-a100",
+			credit_cost: 0.114,
+		},
+		{
+			metered_feature_id: "gpu-a100-80gb",
+			credit_cost: 0.1708,
+		},
+		{
+			metered_feature_id: "gpu-h100",
+			credit_cost: 0.2338,
+		},
+		{
+			metered_feature_id: "cpu",
+			credit_cost: 0.0042,
+		},
+		{
+			metered_feature_id: "gpu-h200",
+			credit_cost: 0.1892,
+		},
+		{
+			metered_feature_id: "gpu-b200",
+			credit_cost: 0.2604,
+		},
+	],
+});
+
 export const cpu = feature({
 	id: "cpu",
 	name: "cpu",
@@ -200,7 +247,7 @@ export const credit = product({
 	name: "Credit",
 	items: [
 		pricedFeatureItem({
-			feature_id: gpuCredit.id,
+			feature_id: gpuCreditTopUp.id,
 			price: 0.01,
 			included_usage: 0,
 			billing_units: 1,
@@ -215,12 +262,34 @@ export const free = product({
 	items: [
 		featureItem({
 			feature_id: machineLimit.id,
-			included_usage: 1,
+			included_usage: 3,
 		}),
 
 		featureItem({
 			feature_id: workflowLimit.id,
-			included_usage: 10,
+			included_usage: 100,
+		}),
+
+		featureItem({
+			feature_id: gpuConcurrencyLimit.id,
+			included_usage: 1,
+		}),
+	],
+});
+
+export const pro = product({
+	id: "pro",
+	name: "Pro",
+	items: [
+		priceItem({
+			price: 25,
+			interval: "month",
+		}),
+
+		featureItem({
+			feature_id: gpuCredit.id,
+			included_usage: 2500,
+			interval: "month",
 		}),
 	],
 });
@@ -302,7 +371,7 @@ export const businessMonthly = product({
 			feature_id: gpuCredit.id,
 			price: 0.01,
 			interval: "month",
-			included_usage: 500,
+			included_usage: 0,
 			billing_units: 1,
 			usage_model: "pay_per_use",
 		}),
@@ -412,7 +481,7 @@ export const businessYearly = product({
 			feature_id: gpuCredit.id,
 			price: 0.01,
 			interval: "month",
-			included_usage: 500,
+			included_usage: 0,
 			billing_units: 1,
 			usage_model: "pay_per_use",
 		}),
@@ -426,14 +495,12 @@ export const businessYearly = product({
 		featureItem({
 			feature_id: seats.id,
 			included_usage: "inf",
-			interval: "month",
 			reset_usage_when_enabled: true,
 		}),
 
 		featureItem({
 			feature_id: workflowLimit.id,
 			included_usage: "inf",
-			interval: "month",
 			reset_usage_when_enabled: true,
 		}),
 	],

@@ -185,7 +185,7 @@ dev = [
 requires-dist = [
     { name = "aioboto3", specifier = ">=7.0.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
-    { name = "autumn-py", extras = ["aio"], specifier = ">=2.7.2" },
+    { name = "autumn-py", extras = ["aio"], specifier = ">=3.0.2" },
     { name = "boto3", specifier = ">=1.35.5" },
     { name = "cachetools", specifier = ">=5.3.0" },
     { name = "clerk-backend-api", specifier = ">=3.3.0" },
@@ -261,15 +261,16 @@ wheels = [
 
 [[package]]
 name = "autumn-py"
-version = "2.7.2"
+version = "3.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/25/59751b31baa2e2120b4269a0263f07183e248e9069c3d9335ca4a3812517/autumn_py-2.7.2.tar.gz", hash = "sha256:7c8b60e1bdcb0a14de6ed6412b48967868f99574e6be3ce2f1cd890487aed2d7", size = 23234 }
+sdist = { url = "https://files.pythonhosted.org/packages/06/9a/9cd337d8791c7c32a648f349be862feb89c7d7f455c8f3aac851c8eda534/autumn_py-3.0.2.tar.gz", hash = "sha256:481d41a14532093b24b43380c72f807fd9c91a2592fd7f3fb37f928c9cf8bd79", size = 24113 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/9f/995d943f19679df6c4d188ee258773982caf247fba89e2cfe293e8ec2f76/autumn_py-2.7.2-py3-none-any.whl", hash = "sha256:5ee082e88d6c422da72129db986971b8fc43e99493e8841149024081022c4bb1", size = 26407 },
+    { url = "https://files.pythonhosted.org/packages/75/9c/511963f907a672bc5e5e43ff1533b400367e825c14783e727b3000efd89c/autumn_py-3.0.2-py3-none-any.whl", hash = "sha256:973b0d71d6aab53a6e8f4fbdf5b3ccc9db99b459cba6477af668443f6990b721", size = 28440 },
 ]
 
 [package.optional-dependencies]
