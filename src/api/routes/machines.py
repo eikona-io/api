@@ -507,11 +507,16 @@ async def validate_free_plan_restrictions(
     customer_id = current_user.get("org_id", None) or current_user.get("user_id", None)
     
     check_result = await autumn.customers.get(customer_id)
+    
     max_gpu = 1
+    max_always_on = 0
     for [id,feature] in check_result.features.items():
         if id == "gpu_concurrency_limit":
             max_gpu = feature.included_usage
-            break
+            continue
+        if id == "max_always_on_machine":
+            max_always_on = feature.included_usage
+            continue
     
     # print(max_gpu)
     concurrency_limit = machine_data.get("concurrency_limit", None)
@@ -519,6 +524,13 @@ async def validate_free_plan_restrictions(
         raise HTTPException(
             status_code=403,
             detail="You have reached your concurrency limit. Please upgrade to use this feature.",
+        )
+        
+    keep_warm = machine_data.get("keep_warm", None)
+    if (keep_warm is not None and keep_warm > max_always_on):
+        raise HTTPException(
+            status_code=403,
+            detail="You have reached your always on machine limit. Please upgrade to use this feature.",
         )
     
     plan = request.state.current_user.get("plan")
