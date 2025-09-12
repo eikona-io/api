@@ -514,7 +514,8 @@ async def validate_free_plan_restrictions(
             break
     
     # print(max_gpu)
-    if (machine_data.get("concurrency_limit", 1) > max_gpu):
+    concurrency_limit = machine_data.get("concurrency_limit", None)
+    if (concurrency_limit is not None and concurrency_limit > max_gpu):
         raise HTTPException(
             status_code=403,
             detail="You have reached your concurrency limit. Please upgrade to use this feature.",
