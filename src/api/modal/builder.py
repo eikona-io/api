@@ -144,7 +144,7 @@ class BuildMachineItem(BaseModel):
     legacy_mode: Optional[bool] = Field(default=False)
     install_custom_node_with_gpu: Optional[bool] = Field(default=False)
     gpu: GPUType = Field(default=GPUType.T4)
-    concurrency_limit: Optional[int] = Field(default=2)
+    concurrency_limit: Optional[int] = Field(default=1)
     allow_concurrent_inputs: Optional[int] = Field(default=50)
     deps: Optional[Any] = None
     docker_commands: Optional[List[List[str]]] = None

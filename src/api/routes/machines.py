@@ -395,7 +395,7 @@ class ServerlessMachineModel(BaseModel):
     gpu: MachineGPU
     docker_command_steps: Optional[Dict[str, Any]] = {"steps": []}
     allow_concurrent_inputs: int = 1
-    concurrency_limit: int = 2
+    concurrency_limit: int = 1
     install_custom_node_with_gpu: bool = False
     # ws_timeout: int = 2
     run_timeout: int = 300
