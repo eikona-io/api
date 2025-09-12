@@ -504,7 +504,7 @@ async def validate_free_plan_restrictions(
     Raises HTTPException if restrictions are violated.
     """
     current_user = request.state.current_user
-    customer_id = current_user.get("org_id") or current_user.get("user_id")
+    customer_id = current_user.get("org_id", None) or current_user.get("user_id", None)
     
     check_result = await autumn.customers.get(customer_id)
     max_gpu = 1
