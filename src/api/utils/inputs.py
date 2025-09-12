@@ -62,6 +62,10 @@ custom_input_nodes: Dict[str, Dict[str, str]] = {
         "type": "string",
         "description": "Public audio URL",
     },
+    "ComfyUIDeployExternalFile": {
+        "type": "string",
+        "description": "Public file download URL",
+    },
 }
 
 # This is a type hint for the CustomInputNodesTypeMap
