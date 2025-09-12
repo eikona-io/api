@@ -73,6 +73,18 @@ export const selfHostedMachines = feature({
 	type: "boolean",
 });
 
+export const maxAlwaysOnMachine = feature({
+	id: "max_always_on_machine",
+	name: "Max Always On Machine",
+	type: "continuous_use",
+});
+
+export const customS3 = feature({
+	id: "custom_s3",
+	name: "Custom S3",
+	type: "boolean",
+});
+
 export const machineLimit = feature({
 	id: "machine_limit",
 	name: "Machine Limit",
@@ -267,7 +279,7 @@ export const free = product({
 
 		featureItem({
 			feature_id: workflowLimit.id,
-			included_usage: 100,
+			included_usage: 20,
 		}),
 
 		featureItem({
