@@ -4,17 +4,57 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from scalar_fastapi import get_scalar_api_reference
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 import os
 from autumn.asgi import AutumnASGI
 from typing import TYPE_CHECKING, Optional, TypedDict
 from contextlib import asynccontextmanager
 from clerk_backend_api import Clerk
+import re
 
 from api.utils.multi_level_cache import multi_level_cached
 
 if TYPE_CHECKING:
     from starlette.requests import Request as StarletteRequest
     from autumn.asgi import AutumnIdentifyData
+
+
+class TrailingSlashMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to handle trailing slash normalization for Autumn ASGI routes.
+    This prevents 307 redirects by ensuring trailing slashes are properly handled.
+    """
+    async def dispatch(self, request: Request, call_next):
+        # Only handle requests to /api/autumn/*
+        if request.url.path.startswith("/api/autumn/"):
+            path = request.url.path
+            
+            # Since ALL Autumn ASGI routes start with /api/autumn/ and most need trailing slashes,
+            # we'll add trailing slashes to all routes except specific exceptions
+            autumn_route_exceptions = [
+                # Add any routes that specifically DON'T need trailing slashes
+                r"^/api/autumn/customers/[^/]+/entities/[^/]+$",  # DELETE route doesn't use trailing slash
+            ]
+            
+            # Check if this path needs a trailing slash
+            if not path.endswith("/"):
+                # Check if it's in the exception list
+                is_exception = any(
+                    re.match(pattern, path) for pattern in autumn_route_exceptions
+                )
+                
+                if not is_exception:
+                    # Add trailing slash to ALL /api/autumn/* routes by default
+                    expected_path = f"{path}/"
+                    scope = request.scope.copy()
+                    scope["path"] = expected_path
+                    scope["raw_path"] = expected_path.encode()
+                    request._url = None  # Force URL rebuild
+                    request.scope.update(scope)
+        
+        response = await call_next(request)
+        return response
 
 
 @asynccontextmanager
@@ -40,6 +80,9 @@ app = FastAPI(
         {"url": "http://localhost:3011/api", "description": "Local development server"},
     ]
 )
+
+# Add trailing slash middleware to handle Autumn ASGI routing
+app.add_middleware(TrailingSlashMiddleware)
 
 api_router = APIRouter()  # Remove the prefix here
 public_api_router = APIRouter()  # Remove the prefix here
