@@ -187,7 +187,7 @@ else:
             "https://staging.app.comfydeploy.com",
             "https://staging.studio.comfydeploy.com",
             
-            "https://prod-staging.comfydeploy.com",
+            "https://beta.app.comfydeploy.com",
         ]
     )
 
