@@ -188,7 +188,7 @@ export const gpuCreditTopUp = feature({
 	credit_schema: [
 		{
 			metered_feature_id: "gpu-t4",
-			credit_cost: 0.018 * 2,
+			credit_cost: 0.018,
 		},
 		{
 			metered_feature_id: "gpu-l4",
@@ -259,6 +259,7 @@ export const credit = product({
 	name: "Credit",
 	items: [
 		pricedFeatureItem({
+			reset_usage_when_enabled: false,
 			feature_id: gpuCreditTopUp.id,
 			price: 0.01,
 			included_usage: 0,
@@ -271,37 +272,24 @@ export const credit = product({
 export const free = product({
 	id: "free",
 	name: "Free",
+	is_default: true,
 	items: [
 		featureItem({
 			feature_id: machineLimit.id,
 			included_usage: 3,
+			reset_usage_when_enabled: false,
 		}),
 
 		featureItem({
 			feature_id: workflowLimit.id,
 			included_usage: 20,
+			reset_usage_when_enabled: false,
 		}),
 
 		featureItem({
 			feature_id: gpuConcurrencyLimit.id,
 			included_usage: 1,
-		}),
-	],
-});
-
-export const pro = product({
-	id: "pro",
-	name: "Pro",
-	items: [
-		priceItem({
-			price: 25,
-			interval: "month",
-		}),
-
-		featureItem({
-			feature_id: gpuCredit.id,
-			included_usage: 2500,
-			interval: "month",
+			reset_usage_when_enabled: false,
 		}),
 	],
 });
@@ -386,32 +374,31 @@ export const businessMonthly = product({
 			included_usage: 0,
 			billing_units: 1,
 			usage_model: "pay_per_use",
+			reset_usage_when_enabled: false,
 		}),
 
 		featureItem({
 			feature_id: gpuConcurrencyLimit.id,
 			included_usage: 10,
-			reset_usage_when_enabled: true,
+			reset_usage_when_enabled: false,
 		}),
 
 		featureItem({
 			feature_id: machineLimit.id,
-			included_usage: 10,
+			included_usage: 25,
+			reset_usage_when_enabled: false,
 		}),
 
 		featureItem({
 			feature_id: seats.id,
-			included_usage: 100,
-		}),
-
-		featureItem({
-			feature_id: selfHostedMachines.id,
-			included_usage: undefined,
+			included_usage: 10,
+			reset_usage_when_enabled: false,
 		}),
 
 		featureItem({
 			feature_id: workflowLimit.id,
 			included_usage: 300,
+			reset_usage_when_enabled: false,
 		}),
 	],
 });
