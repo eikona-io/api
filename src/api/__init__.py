@@ -173,7 +173,6 @@ elif os.getenv("ENV") == "staging":
             "http://localhost:3001",
             "https://staging.app.comfydeploy.com",
             "https://staging.studio.comfydeploy.com",
-            "https://prod-staging.comfydeploy.com",
         ]
     )
     # Allow preview deployments hosted on Vercel and GitHub Codespaces
@@ -187,6 +186,8 @@ else:
             # Staging
             "https://staging.app.comfydeploy.com",
             "https://staging.studio.comfydeploy.com",
+            
+            "https://prod-staging.comfydeploy.com",
         ]
     )
 
