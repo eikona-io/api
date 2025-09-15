@@ -127,11 +127,11 @@ class AutumnAccessMiddleware(BaseHTTPMiddleware):
                 
                 # Return simple message based on feature type
                 has_gpu_credit_failure = False
-                if failing and failing.get("balances"):
-                    has_gpu_credit_failure = any(
-                        balance.get("feature_id") == "gpu-credit" 
-                        for balance in failing.get("balances", [])
-                    )
+                for check in checks:
+                    if check.get("feature_id") == "gpu-credit":
+                        has_gpu_credit_failure = True
+                        break
+                    
                 
                 if has_gpu_credit_failure:
                     message = "Insufficient balance for requested operation"
