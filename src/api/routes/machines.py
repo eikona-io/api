@@ -2953,17 +2953,34 @@ async def get_error_logs(
     try:
         # Get logs from Redis stream
         logs = await redis.get(f"error_start_log:{str(version_id)}")
+        
+        # Handle null or empty logs
         if logs is None:
-            # No logs yet; return empty list instead of error
             return JSONResponse(content={"logs": []})
 
-        # logs is stored as JSON string; parse safely
+        # Handle bytes/bytearray conversion
         if isinstance(logs, (bytes, bytearray)):
             logs = logs.decode("utf-8")
+        
+        # Handle empty string after decoding
+        if not logs or logs.strip() == "":
+            return JSONResponse(content={"logs": []})
 
-        return JSONResponse(content={"logs": json.loads(logs)})
+        # Parse JSON with additional safety checks
+        try:
+            parsed_logs = json.loads(logs)
+            # Ensure parsed result is a list
+            if not isinstance(parsed_logs, list):
+                logger.warning(f"Expected list but got {type(parsed_logs)} for version {version_id}")
+                return JSONResponse(content={"logs": []})
+            
+            return JSONResponse(content={"logs": parsed_logs})
+        except json.JSONDecodeError as json_error:
+            logger.error(f"JSON decode error for version {version_id}: {json_error}, logs content: {logs[:100]}")
+            return JSONResponse(content={"logs": []})
+            
     except Exception as e:
-        logger.error(f"Error getting error logs: {str(e)}")
+        logger.error(f"Error getting error logs for version {version_id}: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get error logs: {str(e)}"
