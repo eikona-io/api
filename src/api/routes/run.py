@@ -297,12 +297,12 @@ async def perform_run_feature_gate_check(
     try:
         res = await autumn_client.check(
             customer_id=customer_id,
-            feature_id="gpu-credit",
+            feature_id="gpu-credit-topup",
             required_balance=500,
         )
     except Exception as e:
         # If Autumn is misconfigured or unreachable, fail-open (allow).
-        logger.error(f"Autumn check failed for gpu-credit: {e}")
+        logger.error(f"Autumn check failed for gpu-credit-topup: {e}")
         return
     
     # If result is None (e.g., misconfiguration or network), allow request

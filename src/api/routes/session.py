@@ -586,8 +586,8 @@ async def get_user_credit_balance(user_id: str, org_id: str) -> float:
         customer_id = org_id or user_id
         autumn_data = await get_autumn_customer(customer_id, include_features=True)
         
-        if autumn_data and autumn_data.get("features") and autumn_data["features"].get("gpu-credit"):
-            gpu_credit_feature = autumn_data["features"]["gpu-credit"]
+        if autumn_data and autumn_data.get("features") and autumn_data["features"].get("gpu-credit-topup"):
+            gpu_credit_feature = autumn_data["features"]["gpu-credit-topup"]
             # Balance is stored in cents, convert to dollars
             balance_cents = gpu_credit_feature.get("balance", 0)
             return balance_cents / 100.0

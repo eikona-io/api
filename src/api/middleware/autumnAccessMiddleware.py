@@ -128,7 +128,7 @@ class AutumnAccessMiddleware(BaseHTTPMiddleware):
                 # Return simple message based on feature type
                 has_gpu_credit_failure = False
                 for check in checks:
-                    if check.get("feature_id") == "gpu-credit":
+                    if check.get("feature_id") == "gpu-credit-topup":
                         has_gpu_credit_failure = True
                         break
                     

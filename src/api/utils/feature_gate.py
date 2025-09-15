@@ -56,7 +56,7 @@ AUTUMN_GUARD_RULES: List[Dict[str, Any]] = [
         "only_free": True,
         "mode": "all",
         "checks": [
-            {"feature_id": "gpu-credit", "required_balance": 500},
+            {"feature_id": "gpu-credit-topup", "required_balance": 500},
         ],
     }
 ]
