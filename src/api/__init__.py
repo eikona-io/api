@@ -37,6 +37,7 @@ from api.routes import (
     clerk_webhook,
     autumn_webhook,
 )
+from api.autumn_mount import autumn_app
 from api.modal import builder
 
 
@@ -128,6 +129,9 @@ api_router.include_router(image_optimization.router)
 api_router.include_router(auth_response.router)
 api_router.include_router(clerk_webhook.router)
 api_router.include_router(autumn_webhook.router)
+
+# Mount Autumn ASGI app at /api/autumn
+app.mount("/api/autumn", autumn_app)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)

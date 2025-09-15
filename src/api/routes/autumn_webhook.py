@@ -256,7 +256,7 @@ async def handle_customer_products_updated(data: Dict[str, Any], db: AsyncSessio
 
 
 # Main webhook endpoint
-@router.post("/autumn/webhook", include_in_schema=False, response_model=WebhookResponse)
+@router.post("/webhooks/autumn", include_in_schema=False, response_model=WebhookResponse)
 async def handle_autumn_webhook(
     webhook_payload: AutumnWebhookPayload,
     db: AsyncSession = Depends(get_db),
