@@ -18,7 +18,7 @@ async def test_session_for_free_user(
         )
         print(f"Response status: {response.status_code}")
         assert response.status_code == 403
-        assert("Access denied for requested operation" in response.json()["detail"])
+        assert("Insufficient balance for requested operation" in response.json()["detail"])
 
 
 @pytest.mark.asyncio
