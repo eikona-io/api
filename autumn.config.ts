@@ -269,6 +269,21 @@ export const credit = product({
 	],
 });
 
+export const customS3Addon = product({
+	id: "custom_s3_addon",
+	name: "Custom S3 Addon",
+	is_add_on: true,
+	items: [
+		featureItem({
+			feature_id: customS3.id,
+		}),
+		priceItem({
+			price: 100,
+			interval: "month",
+		}),
+	],
+});
+
 export const free = product({
 	id: "free",
 	name: "Free",
