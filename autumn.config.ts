@@ -284,6 +284,21 @@ export const customS3Addon = product({
 	],
 });
 
+export const customMachineAddon = product({
+	id: "self_hosted_machine_addon",
+	name: "Self Hosted Machine Addon",
+	is_add_on: true,
+	items: [
+		featureItem({
+			feature_id: selfHostedMachines.id,
+		}),
+		priceItem({
+			price: 100,
+			interval: "month",
+		}),
+	],
+});
+
 export const free = product({
 	id: "free",
 	name: "Free",

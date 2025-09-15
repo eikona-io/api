@@ -287,7 +287,7 @@ async def paid_user():
     
     await autumn_client.attach(
         customer_id=user_id,
-        product_ids=["business_monthly", "custom_s3_addon"],
+        product_ids=["business_monthly", "self_hosted_machine_addon"],
         enable_product_immediately=True,
         finalize_invoice=False,
         invoice=True,
@@ -336,7 +336,7 @@ async def paid_user_2():
     
     await autumn_client.attach(
         customer_id=user_id,
-        product_ids=["business_monthly", "custom_s3_addon"],
+        product_ids=["business_monthly", "self_hosted_machine_addon"],
         enable_product_immediately=True,
         finalize_invoice=False,
         invoice=True,
