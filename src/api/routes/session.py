@@ -1436,27 +1436,27 @@ async def snapshot_session(
                 Machine.org_id.is_(None),
             )
 
-        current_count_result = await db.execute(machine_count_query)
-        current_count = current_count_result.scalar()
+        # current_count_result = await db.execute(machine_count_query)
+        # current_count = current_count_result.scalar()
 
-        check_result = await autumn_client.check(
-            customer_id=customer_id,
-            feature_id="machine_limit",
-            required_balance=current_count + 1,
-            with_preview=True,
-        )
+        # check_result = await autumn_client.check(
+        #     customer_id=customer_id,
+        #     feature_id="machine_limit",
+        #     required_balance=current_count + 1,
+        #     with_preview=True,
+        # )
 
-        if not check_result or not check_result.get("allowed", False):
-            preview_data = check_result.get("preview", {}) if check_result else {}
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "error": "Machine limit reached",
-                    "message": f"You have reached your machine limit of {current_count} machines.",
-                    "current_count": current_count,
-                    "preview": preview_data,
-                },
-            )
+        # if not check_result or not check_result.get("allowed", False):
+        #     preview_data = check_result.get("preview", {}) if check_result else {}
+        #     raise HTTPException(
+        #         status_code=403,
+        #         detail={
+        #             "error": "Machine limit reached",
+        #             "message": f"You have reached your machine limit of {current_count} machines.",
+        #             "current_count": current_count,
+        #             "preview": preview_data,
+        #         },
+        #     )
         machine = Machine(
             id=uuid4(),
             type=MachineType.COMFY_DEPLOY_SERVERLESS,
