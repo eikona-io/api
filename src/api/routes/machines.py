@@ -633,48 +633,48 @@ async def create_serverless_machine(
         request=request, machine_data=machine.model_dump(), db=db
     )
 
-    # Check machine limit using autumn
-    from api.utils.autumn import autumn_client
+    # # Check machine limit using autumn
+    # from api.utils.autumn import autumn_client
     
-    current_user = request.state.current_user
-    customer_id = current_user.get("org_id") or current_user.get("user_id")
+    # current_user = request.state.current_user
+    # customer_id = current_user.get("org_id") or current_user.get("user_id")
     
-    # Count current machines
-    machine_count_query = (
-        select(func.count())
-        .select_from(Machine)
-        .where(~Machine.deleted)
-    )
-    if current_user.get("org_id"):
-        machine_count_query = machine_count_query.where(Machine.org_id == current_user["org_id"])
-    else:
-        machine_count_query = machine_count_query.where(
-            Machine.user_id == current_user["user_id"],
-            Machine.org_id.is_(None)
-        )
+    # # Count current machines
+    # machine_count_query = (
+    #     select(func.count())
+    #     .select_from(Machine)
+    #     .where(~Machine.deleted)
+    # )
+    # if current_user.get("org_id"):
+    #     machine_count_query = machine_count_query.where(Machine.org_id == current_user["org_id"])
+    # else:
+    #     machine_count_query = machine_count_query.where(
+    #         Machine.user_id == current_user["user_id"],
+    #         Machine.org_id.is_(None)
+    #     )
     
-    current_count = await db.execute(machine_count_query)
-    current_count = current_count.scalar()
+    # current_count = await db.execute(machine_count_query)
+    # current_count = current_count.scalar()
     
     # Check if user can create another machine
-    check_result = await autumn_client.check(
-        customer_id=customer_id,
-        feature_id="machine_limit",
-        required_balance=current_count + 1,  # Check if they can have one more
-        with_preview=True
-    )
+    # check_result = await autumn_client.check(
+    #     customer_id=customer_id,
+    #     feature_id="machine_limit",
+    #     required_balance=current_count + 1,  # Check if they can have one more
+    #     with_preview=True
+    # )
     
-    if not check_result or not check_result.get("allowed", False):
-        preview_data = check_result.get("preview", {}) if check_result else {}
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "Machine limit reached",
-                "message": f"You have reached your machine limit of {current_count} machines.",
-                "current_count": current_count,
-                "preview": preview_data
-            }
-        )
+    # if not check_result or not check_result.get("allowed", False):
+    #     preview_data = check_result.get("preview", {}) if check_result else {}
+    #     raise HTTPException(
+    #         status_code=403,
+    #         detail={
+    #             "error": "Machine limit reached",
+    #             "message": f"You have reached your machine limit of {current_count} machines.",
+    #             "current_count": current_count,
+    #             "preview": preview_data
+    #         }
+    #     )
 
     wait_for_build = machine.wait_for_build
 
@@ -2114,28 +2114,28 @@ async def create_custom_machine(
             Machine.org_id.is_(None)
         )
     
-    current_count = await db.execute(machine_count_query)
-    current_count = current_count.scalar()
+    # current_count = await db.execute(machine_count_query)
+    # current_count = current_count.scalar()
     
-    # Check if user can create another machine
-    check_result = await autumn_client.check(
-        customer_id=customer_id,
-        feature_id="machine_limit",
-        required_balance=current_count + 1,  # Check if they can have one more
-        with_preview=True
-    )
+    # # Check if user can create another machine
+    # check_result = await autumn_client.check(
+    #     customer_id=customer_id,
+    #     feature_id="machine_limit",
+    #     required_balance=current_count + 1,  # Check if they can have one more
+    #     with_preview=True
+    # )
     
-    if not check_result or not check_result.get("allowed", False):
-        preview_data = check_result.get("preview", {}) if check_result else {}
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "Machine limit reached",
-                "message": f"You have reached your machine limit of {current_count} machines.",
-                "current_count": current_count,
-                "preview": preview_data
-            }
-        )
+    # if not check_result or not check_result.get("allowed", False):
+    #     preview_data = check_result.get("preview", {}) if check_result else {}
+    #     raise HTTPException(
+    #         status_code=403,
+    #         detail={
+    #             "error": "Machine limit reached",
+    #             "message": f"You have reached your machine limit of {current_count} machines.",
+    #             "current_count": current_count,
+    #             "preview": preview_data
+    #         }
+    #     )
 
     machine = Machine(
         id=uuid.uuid4(),
@@ -2722,27 +2722,27 @@ async def import_machine(
                 Machine.org_id.is_(None)
             )
 
-        current_count = await db.execute(machine_count_query)
-        current_count = current_count.scalar()
+        # current_count = await db.execute(machine_count_query)
+        # current_count = current_count.scalar()
 
-        check_result = await autumn_client.check(
-            customer_id=customer_id,
-            feature_id="machine_limit",
-            required_balance=current_count + 1,
-            with_preview=True
-        )
+        # check_result = await autumn_client.check(
+        #     customer_id=customer_id,
+        #     feature_id="machine_limit",
+        #     required_balance=current_count + 1,
+        #     with_preview=True
+        # )
 
-        if not check_result or not check_result.get("allowed", False):
-            preview_data = check_result.get("preview", {}) if check_result else {}
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "error": "Machine limit reached",
-                    "message": f"You have reached your machine limit of {current_count} machines.",
-                    "current_count": current_count,
-                    "preview": preview_data
-                }
-            )
+        # if not check_result or not check_result.get("allowed", False):
+        #     preview_data = check_result.get("preview", {}) if check_result else {}
+        #     raise HTTPException(
+        #         status_code=403,
+        #         detail={
+        #             "error": "Machine limit reached",
+        #             "message": f"You have reached your machine limit of {current_count} machines.",
+        #             "current_count": current_count,
+        #             "preview": preview_data
+        #         }
+        #     )
 
         required_fields = ["name", "type"]
         for field in required_fields:
