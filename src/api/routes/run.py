@@ -134,12 +134,15 @@ async def get_run(request: Request, run_id: UUID, queue_position: bool = False, 
 
     # Permission check
     if deployment is not None and (deployment.environment == "public-share" or deployment.environment == "community-share"):
-        # Public share, no permission check
-        if run.user_id == user_id:
+        # Public share - check if current user owns the deployment
+        if org_id is not None and deployment.org_id == org_id:
+            # Current user's org owns the deployment
             pass
-        elif org_id is not None and run.org_id == org_id:
+        elif deployment.user_id == user_id:
+            # Current user owns the deployment
             pass
         else:
+            # Not the owner, check public access permissions
             apply_org_check_direct(deployment, request)
     else:
         apply_org_check_direct(run, request)
