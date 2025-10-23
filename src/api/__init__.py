@@ -187,6 +187,7 @@ else:
             # Production
             "https://app.comfydeploy.com",
             "https://studio.comfydeploy.com",
+            "https://comfy-app-production.up.railway.app/",
             # Staging
             "https://staging.app.comfydeploy.com",
             "https://staging.studio.comfydeploy.com",
