@@ -406,7 +406,6 @@ async def sync_deployment_run(
     },
     summary="Deployment - Stream",
     description="Create a new deployment run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
-    description="Create a new deployment run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     openapi_extra={
         "x-speakeasy-group": "run.deployment",
@@ -501,7 +500,7 @@ async def create_run_workflow_stream(
     deprecated=True,
     response_model=CreateRunResponse,
     summary="Queue a workflow",
-    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     include_in_schema=False,
     openapi_extra={
@@ -522,7 +521,7 @@ async def create_run_queue(
     response_model=List[WorkflowRunOutputModel],
     deprecated=True,
     summary="Run a workflow in sync",
-    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     include_in_schema=False,
     openapi_extra={
@@ -558,7 +557,7 @@ async def create_run_sync(
         }
     },
     summary="Run a workflow in stream",
-    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     # include_in_schema=False,
     openapi_extra={
