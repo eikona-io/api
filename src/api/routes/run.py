@@ -333,7 +333,7 @@ async def perform_run_feature_gate_check(
         WorkflowRunNativeOutputModel,
     ],
     summary="Run a workflow",
-    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     include_in_schema=False,
     # openapi_extra={
@@ -405,7 +405,8 @@ async def sync_deployment_run(
         }
     },
     summary="Deployment - Stream",
-    description="Create a new deployment run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    description="Create a new deployment run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
+    description="Create a new deployment run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     openapi_extra={
         "x-speakeasy-group": "run.deployment",
@@ -478,7 +479,7 @@ async def sync_workflow_run(
         }
     },
     summary="Workflow - Stream",
-    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/\{callback_url\}).",
+    description="Create a new workflow run with the given parameters. This function sets up the run and initiates the execution process. For callback information, see [Callbacks](#tag/callbacks/POST/{callback_url}).",
     callbacks=webhook_router.routes,
     openapi_extra={
         "x-speakeasy-group": "run.workflow",
