@@ -7,6 +7,8 @@ config({
   path: ".local.env",
 });
 
+const migrationsFolderName = process.env.MIGRATIONS_FOLDER || "drizzle";
+
 const dbUrl = (process.env.DATABASE_URL || process.env.POSTGRES_URL || "").trim();
 
 // Strip any query params (?ssl=true, ?sslmode=require, etc.)
@@ -36,6 +38,8 @@ try {
   ssl = { rejectUnauthorized: false };
 }
 
+const migrationsFolderPath = new URL(`./${migrationsFolderName}`, import.meta.url).pathname;
+
 const isDevContainer = process.env.REMOTE_CONTAINERS !== undefined;
 if (isDevContainer)
   connectionString = connectionString.replace(
@@ -63,7 +67,7 @@ while (retries) {
 }
 
 console.log("Migrating... DB 1");
-await migrate(db, { migrationsFolder: migrationsFolderName });
+await migrate(db, { migrationsFolder: migrationsFolderPath });
 
 console.log("Done!");
 process.exit();
