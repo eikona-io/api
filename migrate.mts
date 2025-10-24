@@ -7,16 +7,34 @@ config({
   path: ".local.env",
 });
 
-const migrationsFolderName = process.env.MIGRATIONS_FOLDER || "drizzle";
-let sslMode: string | boolean = process.env.SSL || "require";
+const dbUrl = (process.env.DATABASE_URL || process.env.POSTGRES_URL || "").trim();
 
-if (sslMode === "false") sslMode = false;
+// Strip any query params (?ssl=true, ?sslmode=require, etc.)
+let connectionString = dbUrl.split("?")[0];
 
-const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL
+let ssl: boolean | { rejectUnauthorized: false } = true;
+try {
+  const parsed = new URL(dbUrl);
+  const host = parsed.hostname;
 
-let connectionString = dbUrl!;
-
-// console.log(connectionString)
+  // If user explicitly disables SSL via env, honor it
+  if (
+    process.env.SSL === "false" ||
+    process.env.POSTGRES_SSL === "false" ||
+    process.env.POSTGRES_SSL === "disable"
+  ) {
+    ssl = false;
+  } else if (host.endsWith("railway.internal") || process.env.ALLOW_SELF_SIGNED === "true") {
+    // Keep TLS, ignore Railway's self-signed cert on internal host
+    ssl = { rejectUnauthorized: false };
+  } else {
+    // Default: enable TLS with verification when not using internal host
+    ssl = true;
+  }
+} catch {
+  // If URL parsing fails, fall back to safe default
+  ssl = { rejectUnauthorized: false };
+}
 
 const isDevContainer = process.env.REMOTE_CONTAINERS !== undefined;
 if (isDevContainer)
@@ -25,7 +43,7 @@ if (isDevContainer)
     "host.docker.internal",
   );
 
-const sql = postgres(connectionString, { max: 1, ssl: sslMode as any });
+const sql = postgres(connectionString, { max: 1, ssl });
 const db = drizzle(sql, {
   // logger: true,
 });
