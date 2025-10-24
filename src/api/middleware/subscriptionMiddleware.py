@@ -1,6 +1,7 @@
 import json
 import logging
 from api.routes.platform import get_customer_plan_cached
+import os
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -34,6 +35,16 @@ class SubscriptionMiddleware(BaseHTTPMiddleware):
             not hasattr(request.state, "current_user")
             or request.state.current_user is None
         ):
+            return
+
+        # Bypass Autumn and force plan when explicitly disabled
+        if os.getenv("DISABLE_AUTUMN") == "true":
+            fake = os.getenv("FAKE_ALL_USERS_PLAN", "business")
+            tier = f"{fake}_monthly" if "_" not in fake else fake
+            try:
+                request.state.current_user["plan"] = tier
+            except Exception:
+                pass
             return
 
         org_id = request.state.current_user.get("org_id")

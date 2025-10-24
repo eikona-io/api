@@ -1837,6 +1837,28 @@ async def calculate_usage_charges(
 async def get_customer_plan_v2(
     user_or_org_id: str,
 ):
+    # Bypass Autumn if disabled or key missing
+    if os.getenv("DISABLE_AUTUMN") == "true" or not os.getenv("AUTUMN_SECRET_KEY"):
+        fake = os.getenv("FAKE_ALL_USERS_PLAN", "business")
+        plan_key = f"{fake}_monthly" if "_" not in fake else fake
+        return {
+            "plans": [plan_key],
+            "names": [fake],
+            "prices": [],
+            "amount": [],
+            "charges": [],
+            "cancel_at_period_end": False,
+            "canceled_at": None,
+            "payment_issue": False,
+            "payment_issue_reason": "",
+            "autumn_data": {},
+            "last_invoice_timestamp": None,
+            "source": "bypass",
+            "last_update": int(datetime.now().timestamp()),
+            "stripe_customer_id": None,
+            "subscription_id": None,
+        }
+
     # logfire.info(f"Fetching fresh data from Autumn for {user_or_org_id}")
     # Fetch raw data from Autumn
     autumn_data = await get_autumn_customer(user_or_org_id)
