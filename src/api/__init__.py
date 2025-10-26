@@ -43,6 +43,7 @@ from api.modal import builder
 
 import logfire
 import logging
+import sys
 
 # import all you need from fastapi-pagination
 # from fastapi_pagination import Page, add_pagination, paginate
@@ -61,7 +62,42 @@ logfire.configure(
     send_to_logfire=False,
 )
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging so that INFO/DEBUG go to stdout and WARNING+ go to stderr
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Remove any pre-existing handlers to avoid duplicates when reloading
+for handler in list(root_logger.handlers):
+    root_logger.removeHandler(handler)
+
+formatter = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
+
+class MaxLevelFilter(logging.Filter):
+    def __init__(self, exclusive_max_level: int) -> None:
+        super().__init__()
+        self.exclusive_max_level = exclusive_max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno < self.exclusive_max_level
+
+# INFO and below → stdout
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.DEBUG)
+stdout_handler.addFilter(MaxLevelFilter(logging.WARNING))
+stdout_handler.setFormatter(formatter)
+
+# WARNING and above → stderr
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.WARNING)
+stderr_handler.setFormatter(formatter)
+
+root_logger.addHandler(stdout_handler)
+root_logger.addHandler(stderr_handler)
+
+# Keep noisy third-party loggers reasonable and ensure they use our handlers
+httpx_logger = logging.getLogger("httpx")
+httpx_logger.setLevel(logging.WARNING if os.getenv("ENV", "production") == "production" else logging.INFO)
+httpx_logger.propagate = True
 
 # logger = logging.getLogger(__name__)
 
@@ -130,8 +166,9 @@ api_router.include_router(auth_response.router)
 api_router.include_router(clerk_webhook.router)
 api_router.include_router(autumn_webhook.router)
 
-# Mount Autumn ASGI app at /api/autumn
-app.mount("/api/autumn", autumn_app)
+# Mount Autumn ASGI app only if not disabled
+if os.getenv("DISABLE_AUTUMN") != "true":
+    app.mount("/api/autumn", autumn_app)
 
 # This is for the docs generation
 public_api_router.include_router(run.router)
@@ -156,7 +193,9 @@ app.include_router(api_router, prefix="/api")  # Add the prefix here instead
 
 # Add CORS middleware
 # app.add_middleware(SpendLimitMiddleware)
-app.add_middleware(AutumnAccessMiddleware)
+# Add Autumn access middleware only if not disabled
+if os.getenv("DISABLE_AUTUMN") != "true":
+    app.add_middleware(AutumnAccessMiddleware)
 app.add_middleware(SubscriptionMiddleware)
 app.add_middleware(AuthMiddleware)
 
