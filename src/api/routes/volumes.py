@@ -46,7 +46,7 @@ from .utils import (
     complete_multipart_upload,
     abort_multipart_upload
 )
-from api.database import get_db
+from api.database import get_db, get_db_context
 from api.models import Model as ModelDB, UserVolume
 from api.utils.storage_helper import get_s3_config
 
