@@ -533,39 +533,40 @@ async def handle_file_download(
                     "huggingface" if "huggingface.co" in download_url else upload_type,
                     hugging_face_token,
                 ):
-                    # Update database with the event status
-                    if event.get("status") == "progress":
-                        model_status_query = (
-                            update(ModelDB)
-                            .where(ModelDB.id == db_model_id)
-                            .values(
-                                updated_at=datetime.now(),
-                                download_progress=event.get("download_progress", 0),
+                    # Use a fresh DB session in background task
+                    async with get_db_context() as db_ctx:
+                        if event.get("status") == "progress":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == db_model_id)
+                                .values(
+                                    updated_at=datetime.now(),
+                                    download_progress=event.get("download_progress", 0),
+                                )
                             )
-                        )
-                    elif event.get("status") == "success":
-                        model_status_query = (
-                            update(ModelDB)
-                            .where(ModelDB.id == db_model_id)
-                            .values(
-                                status="success",
-                                updated_at=datetime.now(),
-                                download_progress=100,
+                        elif event.get("status") == "success":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == db_model_id)
+                                .values(
+                                    status="success",
+                                    updated_at=datetime.now(),
+                                    download_progress=100,
+                                )
                             )
-                        )
-                    elif event.get("status") == "failed":
-                        model_status_query = (
-                            update(ModelDB)
-                            .where(ModelDB.id == db_model_id)
-                            .values(
-                                status="failed",
-                                error_log=event.get("error_log"),
-                                updated_at=datetime.now(),
+                        elif event.get("status") == "failed":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == db_model_id)
+                                .values(
+                                    status="failed",
+                                    error_log=event.get("error_log"),
+                                    updated_at=datetime.now(),
+                                )
                             )
-                        )
 
-                    await db.execute(model_status_query)
-                    await db.commit()
+                        await db_ctx.execute(model_status_query)
+                        await db_ctx.commit()
 
                     # yield json.dumps(event) + "\n"
             except Exception as e:
@@ -577,17 +578,18 @@ async def handle_file_download(
                 }
                 # yield json.dumps(error_event) + "\n"
 
-                model_status_query = (
-                    update(ModelDB)
-                    .where(ModelDB.id == db_model_id)
-                    .values(
-                        status="failed",
-                        error_log=str(e),
-                        updated_at=datetime.now(),
+                async with get_db_context() as db_ctx:
+                    model_status_query = (
+                        update(ModelDB)
+                        .where(ModelDB.id == db_model_id)
+                        .values(
+                            status="failed",
+                            error_log=str(e),
+                            updated_at=datetime.now(),
+                        )
                     )
-                )
-                await db.execute(model_status_query)
-                await db.commit()
+                    await db_ctx.execute(model_status_query)
+                    await db_ctx.commit()
                 raise e
 
         if s3_temp_object:
@@ -1340,38 +1342,39 @@ async def add_huggingface_repo(
                     token
                 ):
                     # Update database with the event status
-                    if event.get("status") == "progress":
-                        model_status_query = (
-                            update(ModelDB)
-                            .where(ModelDB.id == model.id)
-                            .values(
-                                updated_at=datetime.now(),
-                                download_progress=event.get("download_progress", 0),
+                    async with get_db_context() as db_ctx:
+                        if event.get("status") == "progress":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == model.id)
+                                .values(
+                                    updated_at=datetime.now(),
+                                    download_progress=event.get("download_progress", 0),
+                                )
                             )
-                        )
-                    elif event.get("status") == "success":
-                        model_status_query = (
-                            update(ModelDB)
-                            .where(ModelDB.id == model.id)
-                            .values(
-                                status="success",
-                                updated_at=datetime.now(),
-                                download_progress=100,
+                        elif event.get("status") == "success":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == model.id)
+                                .values(
+                                    status="success",
+                                    updated_at=datetime.now(),
+                                    download_progress=100,
+                                )
                             )
-                        )
-                    elif event.get("status") == "failed":
-                        model_status_query = (
-                            update(ModelDB)
-                            .where(ModelDB.id == model.id)
-                            .values(
-                                status="failed",
-                                error_log=event.get("error_log"),
-                                updated_at=datetime.now(),
+                        elif event.get("status") == "failed":
+                            model_status_query = (
+                                update(ModelDB)
+                                .where(ModelDB.id == model.id)
+                                .values(
+                                    status="failed",
+                                    error_log=event.get("error_log"),
+                                    updated_at=datetime.now(),
+                                )
                             )
-                        )
 
-                    await db.execute(model_status_query)
-                    await db.commit()
+                        await db_ctx.execute(model_status_query)
+                        await db_ctx.commit()
             except Exception as e:
                 error_event = {
                     "status": "failed",
@@ -1379,18 +1382,18 @@ async def add_huggingface_repo(
                     "model_id": str(model.id),
                     "download_progress": 0,
                 }
-
-                model_status_query = (
-                    update(ModelDB)
-                    .where(ModelDB.id == model.id)
-                    .values(
-                        status="failed",
-                        error_log=str(e),
-                        updated_at=datetime.now(),
+                async with get_db_context() as db_ctx:
+                    model_status_query = (
+                        update(ModelDB)
+                        .where(ModelDB.id == model.id)
+                        .values(
+                            status="failed",
+                            error_log=str(e),
+                            updated_at=datetime.now(),
+                        )
                     )
-                )
-                await db.execute(model_status_query)
-                await db.commit()
+                    await db_ctx.execute(model_status_query)
+                    await db_ctx.commit()
                 raise e
                 
         background_tasks.add_task(download_repo_task)
