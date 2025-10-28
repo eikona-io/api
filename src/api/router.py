@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     servers=[
-        {"url": "https://api.comfydeploy.com/api", "description": "Production server"},
+        {"url": "https://comfy-api-production.up.railway.app/api", "description": "Production server"},
         {
             "url": "https://staging.api.comfydeploy.com/api",
             "description": "Staging server",
