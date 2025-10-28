@@ -867,6 +867,10 @@ PLAN_FEATURE_MAPPING = {
     "business_yearly": "business",
     "deployment_monthly": "business",  # deployment plans have same limits as business
     "deployment_yearly": "business",
+
+    # Plain plan keys (dashboard or manual assignments)
+    "business": "business",
+    "creator": "creator",
 }
 
 def get_feature_set_for_plan(plan_key: str) -> str:
